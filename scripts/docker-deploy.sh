@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_DIR"
 
-if [[ ! -f .env.docker ]]; then
+if [[ ! -f .env.docker ]] || grep -q 'CHANGE_ME' .env.docker; then
   cp .env.docker.example .env.docker
   password="$(openssl rand -hex 24)"
   sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${password}/" .env.docker
