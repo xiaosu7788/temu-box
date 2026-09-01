@@ -163,10 +163,10 @@ chmod +x scripts/docker-deploy.sh
 ./scripts/docker-deploy.sh
 ```
 
-脚本会自动创建 `.env.docker`、生成 PostgreSQL 随机密码、创建数据目录并启动 PostgreSQL、FastAPI 和前端 Nginx。默认访问端口为 `8080`：
+脚本会自动创建 `.env.docker`、生成 PostgreSQL 随机密码、创建数据目录并启动 PostgreSQL、FastAPI 和前端 Nginx。默认对外端口为 `8089`：
 
 ```text
-http://服务器IP:8080
+http://服务器IP:8089
 ```
 
 库存表放在宿主机的 `data/inventories/库存统计表.xlsx`，任务文件和结果也会保存在宿主机 `data/` 中；PostgreSQL 数据保存在 Docker volume `temu-box_postgres_data`。
@@ -187,7 +187,7 @@ git pull origin main
 docker compose --env-file .env.docker up -d --build
 ```
 
-如果用宝塔绑定域名，在宝塔站点中将 `/` 反向代理到 `http://127.0.0.1:8080`，再由宝塔负责 SSL；不要再把域名代理到旧项目的 `8088` 或新版 systemd 的 `8089`。
+如果用宝塔绑定域名，在宝塔站点中将 `/` 反向代理到 `http://127.0.0.1:8089`，再由宝塔负责 SSL。Docker 部署时不要同时启动占用 `8089` 的 `sales-tool-v2.service`，也不要把域名代理到旧项目的 `8088`。
 
 停止或重启容器：
 
