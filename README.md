@@ -169,6 +169,21 @@ chmod +x scripts/docker-deploy.sh
 http://服务器IP:8089
 ```
 
+默认使用 Docker 自带的 PostgreSQL，不需要在宝塔另外创建数据库。如果宝塔创建的是 PostgreSQL，也可以在 `.env.docker` 中配置外部数据库：
+
+```ini
+DATABASE_URL=postgresql+psycopg://用户名:密码@host.docker.internal:5432/数据库名
+```
+
+此时一键脚本不会启动内置 PostgreSQL 容器，而是让后端连接宝塔数据库。宝塔数据库必须允许 Docker 容器访问，且服务器上 PostgreSQL 端口通常为 `5432`。可以先检查：
+
+```bash
+sudo ss -ltnp | grep 5432
+sudo -u postgres psql -c '\\l'
+```
+
+如果宝塔创建的是 MySQL 或 MariaDB，不能直接连接本项目，应该删除 `.env.docker` 中的 `DATABASE_URL` 配置，使用 Docker 自带 PostgreSQL。数据库密码建议使用字母、数字和下划线，避免 URL 特殊字符未编码。
+
 库存表放在宿主机的 `data/inventories/库存统计表.xlsx`，任务文件和结果也会保存在宿主机 `data/` 中；PostgreSQL 数据保存在 Docker volume `temu-box_postgres_data`。
 
 查看状态和日志：

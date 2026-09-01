@@ -1,5 +1,6 @@
 services:
   db:
+    profiles: ["internal-db"]
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -27,15 +28,14 @@ services:
       PRICE_CACHE_PATH: /app/data/price_cache.json
       HALF_HEADCOST_PATH: /app/data/half_headcost_skus.json
       HALF_HEADCOST_SEED_PATH: /app/data/头程减半初始名单.xlsx
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sales_tool}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sales_tool}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-sales_tool}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sales_tool}}
       TASK_WORKERS: ${TASK_WORKERS:-2}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-536870912}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./data:/app/data
-    depends_on:
-      db:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8089/api/health', timeout=5)"]
       interval: 10s
