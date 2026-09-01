@@ -58,7 +58,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\dev.ps1
 ## Linux 部署
 
 ```bash
-cd "/var/www/成本计算工具/temu-box/backend"
+cd "/var/www/temu-box/backend"
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
@@ -70,8 +70,8 @@ npm run build
 复制并启用 systemd 服务：
 
 ```bash
-sudo cp "/var/www/成本计算工具/temu-box/deploy/sales-tool-v2.service" /etc/systemd/system/
-sudo chown -R www-data:www-data "/var/www/成本计算工具/temu-box/data"
+sudo cp "/var/www/temu-box/deploy/sales-tool-v2.service" /etc/systemd/system/
+sudo chown -R www-data:www-data "/var/www/temu-box/data"
 sudo systemctl daemon-reload
 sudo systemctl enable --now sales-tool-v2
 sudo systemctl status sales-tool-v2 --no-pager -l
@@ -110,7 +110,7 @@ CREATE USER sales_tool WITH PASSWORD '替换为强密码';
 CREATE DATABASE sales_tool OWNER sales_tool;
 \\q
 cp .env.example .env
-# 编辑 .env，填写 DATABASE_URL，并确认所有路径指向 temu-box
+# 编辑 .env，填写 DATABASE_URL，并确认路径使用 /var/www/temu-box
 cd backend
 .venv/bin/alembic upgrade head
 ```
@@ -119,8 +119,8 @@ cd backend
 `sales-tool-v2.service` 每次启动前会自动执行 `alembic upgrade head`，用于以后平滑升级数据库结构。
 
 ```bash
-sudo chown root:www-data /var/www/成本计算工具/temu-box/.env
-sudo chmod 640 /var/www/成本计算工具/temu-box/.env
+sudo chown root:www-data /var/www/temu-box/.env
+sudo chmod 640 /var/www/temu-box/.env
 sudo systemctl daemon-reload
 sudo systemctl restart sales-tool-v2
 curl http://127.0.0.1:8089/api/health

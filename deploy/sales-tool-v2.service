@@ -6,12 +6,12 @@ After=network.target
 Type=simple
 User=www-data
 Group=www-data
-WorkingDirectory=/var/www/成本计算工具/temu-box/backend
-EnvironmentFile=/var/www/成本计算工具/temu-box/.env
+WorkingDirectory=/var/www/temu-box/backend
+EnvironmentFile=/var/www/temu-box/.env
 Environment=PYTHONUNBUFFERED=1
-Environment=SALES_TOOL_DATA_DIR=/var/www/成本计算工具/temu-box/data
-ExecStartPre=/var/www/成本计算工具/temu-box/backend/.venv/bin/alembic -c alembic.ini upgrade head
-ExecStart=/var/www/成本计算工具/temu-box/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8089 --workers 1
+Environment=SALES_TOOL_DATA_DIR=/var/www/temu-box/data
+ExecStartPre=/var/www/temu-box/backend/.venv/bin/alembic -c alembic.ini upgrade head
+ExecStart=/var/www/temu-box/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8089 --workers 1
 Restart=always
 RestartSec=5
 StandardOutput=append:/var/log/sales-tool-v2.log
