@@ -12,6 +12,11 @@ from typing import Dict, Union
 from openpyxl import load_workbook
 
 from app.config import HALF_HEADCOST_PATH, HALF_HEADCOST_SEED_PATH
+from app.database import (
+    delete_half_entry,
+    load_half_entries,
+    merge_half_entries,
+)
 from app.services.inventory import CODE_RE, extract_set_type
 
 
@@ -79,11 +84,11 @@ def _write(values: Dict[str, str]) -> None:
 
 def load_entries() -> Dict[str, str]:
     with _LOCK:
-        values = _read()
-        if not HALF_HEADCOST_PATH.exists() and HALF_HEADCOST_SEED_PATH.exists():
+        values = load_half_entries()
+        if not values and HALF_HEADCOST_SEED_PATH.exists():
             seeds = extract_sku_types(HALF_HEADCOST_SEED_PATH)
-            for sku, set_type in seeds.items():
-                values.setdefault(sku, set_type)
+            merge_half_entries(seeds)
+            values = load_half_entries()
             _write(values)
         return values
 
@@ -93,22 +98,19 @@ def merge_upload(source: Union[Path, bytes, bytearray]) -> dict:
     if not incoming:
         raise ValueError("上传表格中未识别到 MB131- 开头的 SKU")
     with _LOCK:
-        values = _read()
-        before = set(values)
-        values.update(incoming)
+        added, total = merge_half_entries(incoming)
+        values = load_half_entries()
         _write(values)
     return {
         "incoming": len(incoming),
-        "added": len(set(incoming) - before),
-        "total": len(values),
+        "added": added,
+        "total": total,
     }
 
 
 def delete_entry(sku: str) -> bool:
     with _LOCK:
-        values = _read()
-        existed = sku in values
+        existed = delete_half_entry(sku)
         if existed:
-            values.pop(sku)
-            _write(values)
+            _write(load_half_entries())
         return existed

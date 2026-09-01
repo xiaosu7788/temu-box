@@ -12,6 +12,13 @@ from typing import Callable, Dict, Optional, Tuple, Union
 from openpyxl import load_workbook
 
 from app.config import INVENTORY_PATH, PRICE_CACHE_PATH
+from app.database import (
+    current_inventory_metadata,
+    get_inventory_catalog,
+    invalidate_inventory_catalog,
+    inventory_signature_matches,
+    save_inventory_catalog,
+)
 
 
 LogFn = Optional[Callable[[str], None]]
@@ -234,6 +241,7 @@ def inventory_signature(path: Path = INVENTORY_PATH) -> dict:
 
 
 def invalidate_cache() -> None:
+    invalidate_inventory_catalog()
     try:
         PRICE_CACHE_PATH.unlink()
     except FileNotFoundError:
@@ -242,14 +250,25 @@ def invalidate_cache() -> None:
 
 def load_price_catalog(path: Path = INVENTORY_PATH, log: LogFn = None) -> Dict[str, dict]:
     if not path.exists():
+        catalog = get_inventory_catalog() if path == INVENTORY_PATH else {}
+        if catalog:
+            _log(log, f"库存原始表暂不可用，使用数据库库存数据，共 {len(catalog)} 个 SKU。")
+            return catalog
         raise FileNotFoundError(f"库存统计表不存在：{path}")
     signature = inventory_signature(path)
     with _CACHE_LOCK:
+        if path == INVENTORY_PATH and inventory_signature_matches(signature):
+            catalog = get_inventory_catalog()
+            if catalog:
+                _log(log, f"使用数据库库存数据，共 {len(catalog)} 个 SKU。")
+                return catalog
         try:
             with PRICE_CACHE_PATH.open("r", encoding="utf-8") as handle:
                 cached = json.load(handle)
             if cached.get("signature") == signature:
                 catalog = cached.get("catalog", {})
+                if path == INVENTORY_PATH and catalog:
+                    save_inventory_catalog(signature, catalog)
                 _log(log, f"使用库存缓存，共 {len(catalog)} 个 SKU。")
                 return catalog
         except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError):
@@ -258,6 +277,8 @@ def load_price_catalog(path: Path = INVENTORY_PATH, log: LogFn = None) -> Dict[s
         started = time.time()
         _log(log, "库存缓存无效，正在重新扫描库存统计表...")
         catalog = build_price_catalog(path, log)
+        if path == INVENTORY_PATH:
+            save_inventory_catalog(signature, catalog)
         payload = {
             "signature": signature,
             "catalog": catalog,
@@ -273,14 +294,20 @@ def load_price_catalog(path: Path = INVENTORY_PATH, log: LogFn = None) -> Dict[s
 
 
 def inventory_status() -> dict:
+    metadata = current_inventory_metadata()
     status = {
         "path": str(INVENTORY_PATH),
         "exists": INVENTORY_PATH.exists(),
         "cache_exists": PRICE_CACHE_PATH.exists(),
-        "sku_count": 0,
+        "legacy_cache_valid": False,
+        "sku_count": metadata["sku_count"] if metadata else 0,
         "size": None,
         "modified_at": None,
-        "cache_valid": False,
+        "cache_valid": bool(metadata and INVENTORY_PATH.exists() and inventory_signature(INVENTORY_PATH) == {key: metadata[key] for key in ("path", "size", "mtime_ns", "parser_version")}),
+        "database": {
+            "configured": True,
+            "has_inventory": metadata is not None,
+        },
     }
     if INVENTORY_PATH.exists():
         stat = INVENTORY_PATH.stat()
@@ -289,8 +316,7 @@ def inventory_status() -> dict:
     try:
         with PRICE_CACHE_PATH.open("r", encoding="utf-8") as handle:
             cached = json.load(handle)
-        status["sku_count"] = len(cached.get("catalog", {}))
-        status["cache_valid"] = (
+        status["legacy_cache_valid"] = (
             INVENTORY_PATH.exists()
             and cached.get("signature") == inventory_signature(INVENTORY_PATH)
         )

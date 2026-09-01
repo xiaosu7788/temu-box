@@ -5,6 +5,8 @@ data/tasks/
 data/logs/
 data/activities/
 data/price_cache.json
+data/*.db
+data/*.sqlite
 data/inventories/*.xlsx
 data/half_headcost_skus.json
 data/头程减半初始名单.xlsx

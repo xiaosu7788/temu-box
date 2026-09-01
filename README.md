@@ -5,7 +5,8 @@
 - 前端：Vue 3 + TypeScript + Vite + Element Plus
 - 后端：FastAPI + Uvicorn
 - Excel：openpyxl
-- 任务：后台线程池，任务状态和日志持久化到磁盘
+- 数据库：PostgreSQL（本地未配置时自动使用 SQLite）
+- 任务：后台线程池，任务状态、日志和统计信息持久化到数据库，原始文件保存到磁盘
 - 部署：Nginx + systemd
 
 ## 目录
@@ -97,4 +98,37 @@ data/tasks/<task_id>/
 
 ## 后续扩展
 
-当前任务持久化采用目录和 JSON，适合单机部署。增加账号、权限、多人协作和复杂报表时，再将用户、任务和操作日志迁移到 PostgreSQL；任务执行可迁移到 Redis + Celery/RQ，前端 API 不需要重写。
+## 数据库配置
+
+数据库是库存、头程名单、任务和活动任务的主数据源。原始 Excel、任务上传文件和生成结果仍保存于 `data/`，`price_cache.json` 和 `half_headcost_skus.json` 仅作为旧版本兼容镜像。
+
+本地不设置 `DATABASE_URL` 时，默认使用 `data/sales_tool.db`；服务器建议使用 PostgreSQL：
+
+```bash
+sudo -u postgres psql
+CREATE USER sales_tool WITH PASSWORD '替换为强密码';
+CREATE DATABASE sales_tool OWNER sales_tool;
+\\q
+cp .env.example .env
+# 编辑 .env，填写 DATABASE_URL，并确认所有路径指向 temu-box
+cd backend
+.venv/bin/alembic upgrade head
+```
+
+首次启动会自动建表，并迁移已有的 `price_cache.json`、`half_headcost_skus.json` 和 `data/tasks/*/task.json`。后续启动不会覆盖数据库中的新数据。
+`sales-tool-v2.service` 每次启动前会自动执行 `alembic upgrade head`，用于以后平滑升级数据库结构。
+
+```bash
+sudo chown root:www-data /var/www/成本计算工具/temu-box/.env
+sudo chmod 640 /var/www/成本计算工具/temu-box/.env
+sudo systemctl daemon-reload
+sudo systemctl restart sales-tool-v2
+curl http://127.0.0.1:8089/api/health
+```
+
+生产环境备份至少包括 PostgreSQL 数据库和 `data/` 文件目录：
+
+```bash
+sudo -u postgres pg_dump -Fc sales_tool > sales_tool_$(date +%F).dump
+tar -czf temu-box-data-$(date +%F).tar.gz data
+```

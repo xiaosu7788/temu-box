@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from app.config import TASK_HISTORY_LIMIT, TASK_WORKERS, TASKS_DIR
+from app.database import load_task_records, save_task_record
 from app.services.half_headcost import load_entries, merge_upload
 from app.services.inventory import load_price_catalog
 from app.services.orders import build_delivery_sku_map, generate_summary
@@ -32,6 +33,9 @@ class TaskManager:
 
     def _load_existing(self) -> None:
         TASKS_DIR.mkdir(parents=True, exist_ok=True)
+        for task in load_task_records():
+            if task.get("id"):
+                self._tasks[task["id"]] = task
         for metadata_path in TASKS_DIR.glob("*/task.json"):
             try:
                 task = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -43,6 +47,7 @@ class TaskManager:
                     })
                     self._write(task)
                 self._tasks[task["id"]] = task
+                save_task_record(task)
             except (OSError, json.JSONDecodeError, KeyError):
                 logger.exception("Cannot load task metadata: %s", metadata_path)
 
@@ -56,6 +61,7 @@ class TaskManager:
         temp = task_dir / "task.json.tmp"
         temp.write_text(json.dumps(task, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(temp, target)
+        save_task_record(task)
 
     def create(self, sales_name: str, delivery_name: str, half_name: Optional[str]) -> dict:
         task_id = uuid.uuid4().hex

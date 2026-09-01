@@ -12,6 +12,9 @@ INVENTORY_DIR = DATA_DIR / "inventories"
 TASKS_DIR = DATA_DIR / "tasks"
 LOGS_DIR = DATA_DIR / "logs"
 ACTIVITY_DIR = DATA_DIR / "activities"
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+if not DATABASE_URL:
+    DATABASE_URL = f"sqlite:///{(DATA_DIR / 'sales_tool.db').as_posix()}"
 
 INVENTORY_PATH = Path(
     os.environ.get("INVENTORY_PATH", INVENTORY_DIR / "库存统计表.xlsx")

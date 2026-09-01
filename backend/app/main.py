@@ -19,6 +19,7 @@ from app.config import (
     MAX_UPLOAD_BYTES,
     ensure_directories,
 )
+from app.database import database_status, save_activity_job
 from app.schemas import SkuQueryRequest
 from app.services.half_headcost import delete_entry, load_entries, merge_upload
 from app.services.activity import process_activity_workbook
@@ -75,7 +76,8 @@ async def save_upload(upload: UploadFile, destination: Path) -> int:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "version": app.version}
+    database = database_status()
+    return {"status": "ok" if database["status"] == "ok" else "degraded", "version": app.version, "database": database}
 
 
 @app.get("/api/status")
@@ -139,12 +141,17 @@ async def process_bulk_activity(file: UploadFile = File(...)):
     job_id = uuid.uuid4().hex
     output_dir = ACTIVITY_DIR / job_id
     output_path = output_dir / "批量报名活动处理结果.xlsx"
+    upload_name = file.filename or "报名活动.xlsx"
+    save_activity_job(job_id, upload_name, None, {}, status="running")
     try:
         stats = await run_in_threadpool(process_activity_workbook, content, output_path)
     except ValueError as exc:
+        save_activity_job(job_id, upload_name, None, {"error": str(exc)}, status="failed")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        save_activity_job(job_id, upload_name, None, {"error": str(exc)}, status="failed")
         raise HTTPException(status_code=400, detail=f"报名表处理失败：{exc}") from exc
+    save_activity_job(job_id, upload_name, str(output_path), stats)
     return {
         "message": "批量报名活动处理完成",
         "job_id": job_id,
