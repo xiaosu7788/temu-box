@@ -1,8 +1,12 @@
 from io import BytesIO
 
+from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
 
+from app.database import create_user
+from app.main import app
 from app.services.activity import activity_base_price, parse_skc, process_activity_workbook
+from app.services.auth import hash_password
 
 
 def make_activity_workbook() -> bytes:
@@ -63,3 +67,27 @@ def test_process_activity_workbook_updates_filters_and_preserves_sheets(tmp_path
     assert rows[2] == ("y1-4piece", 42)
     assert rows[3][0] == "y1-5piece"
     assert 45 < rows[3][1] <= 45.5
+
+
+def test_activity_task_is_visible_after_submission():
+    create_user("activity_owner", hash_password("activitypass123"), status="approved")
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SKC货号", "活动申报价格"])
+    sheet.append(["MB131-A-5", 17])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "activity_owner", "password": "activitypass123"})
+        assert login.status_code == 200
+        response = client.post(
+            "/api/activities/bulk",
+            files={"file": ("activity.xlsx", content.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert response.status_code == 202
+        job_id = response.json()["id"]
+        listed = client.get("/api/activities")
+        assert listed.status_code == 200
+        assert job_id in {item["id"] for item in listed.json()["items"]}

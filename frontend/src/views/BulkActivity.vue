@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Delete, Download, RefreshRight, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
-import { activityDownloadUrl, deleteActivityTask, errorMessage, getActivityTask, getActivityTasks, processBulkActivity } from '../api'
+import { activityDownloadUrl, deleteActivityTask, errorMessage, getActivityTask, getActivityTasks, getMe, processBulkActivity } from '../api'
 import type { ActivityTaskItem } from '../types'
 
 const files = ref<UploadUserFile[]>([])
@@ -11,7 +11,9 @@ const tasks = ref<ActivityTaskItem[]>([])
 const loading = ref(false)
 const loadingTasks = ref(false)
 const deleting = ref<string | null>(null)
+const currentUserId = ref<number | null>(null)
 let pollTimer: ReturnType<typeof setInterval> | undefined
+const activityTaskStore = new Map<number, ActivityTaskItem[]>()
 
 const canSubmit = computed(() => files.value.length === 1 && !!files.value[0]?.raw)
 const activeTasks = computed(() => tasks.value.filter((task) => task.status === 'queued' || task.status === 'running'))
@@ -24,12 +26,25 @@ function mergeTask(task: ActivityTaskItem) {
   const index = tasks.value.findIndex((item) => item.id === task.id)
   if (index === -1) tasks.value.unshift(task)
   else tasks.value[index] = task
+  if (currentUserId.value !== null) {
+    const stored = activityTaskStore.get(currentUserId.value) || []
+    const storedIndex = stored.findIndex((item) => item.id === task.id)
+    if (storedIndex === -1) stored.unshift(task)
+    else stored[storedIndex] = task
+    activityTaskStore.set(currentUserId.value, stored)
+  }
 }
 
 async function loadTasks() {
   loadingTasks.value = true
   try {
-    tasks.value = await getActivityTasks()
+    const serverTasks = await getActivityTasks()
+    const localActive = (activityTaskStore.get(currentUserId.value || -1) || [])
+      .filter((task) => task.status === 'queued' || task.status === 'running')
+    const merged = new Map(localActive.map((task) => [task.id, task]))
+    serverTasks.forEach((task) => merged.set(task.id, task))
+    tasks.value = [...merged.values()].sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)))
+    activityTaskStore.set(currentUserId.value || -1, tasks.value)
     startPolling()
   } catch (error) {
     ElMessage.error(errorMessage(error))
@@ -88,6 +103,7 @@ async function remove(task: ActivityTaskItem) {
     deleting.value = task.id
     await deleteActivityTask(task.id)
     tasks.value = tasks.value.filter((item) => item.id !== task.id)
+    if (currentUserId.value !== null) activityTaskStore.set(currentUserId.value, tasks.value)
     ElMessage.success('活动任务记录已删除')
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') ElMessage.error(errorMessage(error))
@@ -111,7 +127,16 @@ function formatTime(value?: string) {
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
-onMounted(loadTasks)
+async function bootstrap() {
+  try {
+    currentUserId.value = (await getMe()).id
+    await loadTasks()
+  } catch (error) {
+    ElMessage.error(errorMessage(error))
+  }
+}
+
+onMounted(bootstrap)
 onBeforeUnmount(stopPolling)
 </script>
 

@@ -105,8 +105,8 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="admin-page admin-inventory-page">
-    <section class="section-band">
+  <div class="admin-page admin-inventory-page admin-inventory-page--fixed">
+    <section class="section-band admin-inventory-overview">
       <div class="section-heading">
         <div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>库存管理</h2><p>管理员可以更新库存表、重建缓存和维护库存明细</p></div></div>
         <div class="admin-settings-actions">
@@ -124,14 +124,15 @@ onMounted(load)
       </div>
     </section>
 
-    <section class="section-band admin-inventory-table">
+    <section class="section-band admin-inventory-table admin-inventory-data-panel">
       <div class="section-heading"><div><h2>库存明细</h2><p>共 {{ total }} 个 SKU，可单独删除不需要的库存记录</p></div></div>
       <div class="toolbar-row inventory-search-row">
         <el-input v-model="query" clearable placeholder="输入 SKU 查询" :prefix-icon="Search" @keyup.enter="searchItems" @clear="clearSearch" />
         <el-button type="primary" :icon="Search" :loading="itemsLoading" @click="searchItems">查询</el-button>
         <el-button :disabled="!query" @click="clearSearch">显示全部</el-button>
       </div>
-      <el-table v-loading="itemsLoading" :data="items" stripe>
+      <div class="inventory-table-scroll">
+        <el-table v-loading="itemsLoading" :data="items" stripe>
         <el-table-column prop="sku" label="SKU" min-width="180" />
         <el-table-column label="价格" width="120"><template #default="scope">{{ scope.row.price?.toFixed(2) || '-' }}</template></el-table-column>
         <el-table-column prop="set_type" label="类型" width="120" />
@@ -139,8 +140,9 @@ onMounted(load)
         <el-table-column prop="source_row" label="行号" width="80" />
         <el-table-column prop="source_column" label="价格列" width="90" />
         <el-table-column label="操作" width="110" fixed="right"><template #default="scope"><el-button link type="danger" :icon="Delete" :loading="deleting === scope.row.sku" @click="remove(scope.row)">删除</el-button></template></el-table-column>
-      </el-table>
-      <el-pagination v-if="total > pageSize" v-model:current-page="page" class="pagination" layout="prev, pager, next" :page-size="pageSize" :total="total" @current-change="loadItems" />
+        </el-table>
+      </div>
+      <el-pagination v-if="total > pageSize" v-model:current-page="page" class="pagination inventory-pagination" layout="prev, pager, next" :page-size="pageSize" :total="total" @current-change="loadItems" />
     </section>
   </div>
 </template>

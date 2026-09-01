@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Collection, Lock, User as UserIcon } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
 import { errorMessage, login, register } from '../api'
 import type { User } from '../types'
 
@@ -12,13 +11,16 @@ const password = ref('')
 const displayName = ref('')
 const loading = ref(false)
 const formError = ref('')
+const formNotice = ref('')
 
 function clearFormError() {
   formError.value = ''
+  formNotice.value = ''
 }
 
 async function submit() {
   formError.value = ''
+  formNotice.value = ''
   if (!username.value.trim()) {
     formError.value = '请输入用户名'
     return
@@ -35,14 +37,14 @@ async function submit() {
   try {
     if (registerMode.value) {
       await register(username.value, password.value, displayName.value)
-      ElMessage.success('注册成功，请等待管理员审核')
+      formNotice.value = '注册成功，请等待管理员审核'
       registerMode.value = false
       password.value = ''
     } else {
       emit('authenticated', await login(username.value, password.value))
     }
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    formError.value = errorMessage(error)
   } finally {
     loading.value = false
   }
@@ -59,9 +61,10 @@ async function submit() {
         <el-form-item v-if="registerMode"><el-input v-model="displayName" placeholder="显示名称（可选）" size="large" /></el-form-item>
         <el-form-item><el-input v-model="password" type="password" show-password placeholder="密码" size="large" :prefix-icon="Lock" autocomplete="current-password" @input="clearFormError" @keyup.enter="submit" /></el-form-item>
         <p v-if="formError" class="auth-form-error" role="alert">{{ formError }}</p>
+        <p v-if="formNotice" class="auth-form-notice" role="status">{{ formNotice }}</p>
         <el-button class="auth-submit" type="primary" size="large" :loading="loading" @click="submit">{{ registerMode ? '提交注册' : '登录' }}</el-button>
       </el-form>
-      <button class="auth-switch" type="button" @click="registerMode = !registerMode">{{ registerMode ? '已有账号，返回登录' : '注册新账号' }}</button>
+      <button class="auth-switch" type="button" @click="registerMode = !registerMode; clearFormError()">{{ registerMode ? '已有账号，返回登录' : '注册新账号' }}</button>
     </section>
   </main>
 </template>

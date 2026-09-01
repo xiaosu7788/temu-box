@@ -22,6 +22,7 @@ const mobileMenu = ref(false)
 const authLoading = ref(true)
 const user = ref<User | null>(null)
 const pageTitle = computed(() => String(route.meta.title || '工作台'))
+const fixedDataPage = computed(() => route.path === '/inventory' || route.path === '/admin/inventory')
 
 const menuItems = [
   { path: '/orders', label: '订单计算', icon: DataAnalysis },
@@ -105,7 +106,7 @@ onMounted(bootstrap)
         </div>
         <el-tag v-if="user.role === 'admin'" class="role-tag" type="warning">管理员</el-tag>
       </header>
-      <main class="page-content" :class="{ 'page-content--fixed': route.path === '/inventory' }">
+      <main class="page-content" :class="{ 'page-content--fixed': fixedDataPage }">
         <router-view />
       </main>
     </div>

@@ -105,6 +105,14 @@ button, input, textarea { font: inherit; }
 .inventory-tabs--fixed .inventory-search-row { flex: 0 0 auto; }
 .inventory-table-scroll { min-height: 0; flex: 1 1 auto; overflow: auto; }
 .inventory-pagination { flex: 0 0 auto; margin-bottom: 0; padding-top: 4px; background: white; }
+.inventory-tabs--fixed > .el-tabs__header { flex: 0 0 auto; }
+.admin-inventory-page--fixed { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 20px; overflow: hidden; }
+.admin-inventory-page--fixed > .section-band { margin-bottom: 0; }
+.admin-inventory-page--fixed .admin-inventory-overview { flex: 0 0 auto; }
+.admin-inventory-page--fixed .admin-inventory-data-panel { min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; overflow: hidden; }
+.admin-inventory-page--fixed .admin-inventory-data-panel .section-heading { flex: 0 0 auto; }
+.admin-inventory-page--fixed .admin-inventory-data-panel .inventory-search-row { flex: 0 0 auto; }
+.admin-inventory-page--fixed .admin-inventory-data-panel .inventory-table-scroll { min-height: 0; flex: 1 1 auto; overflow: auto; }
 .activity-upload-panel .el-upload { width: 100%; }
 .activity-upload-panel .el-upload-dragger { width: 100%; min-height: 180px; padding: 30px 12px; }
 .activity-result-panel .section-heading { align-items: center; }
@@ -135,6 +143,7 @@ button, input, textarea { font: inherit; }
 .auth-heading p { margin: 7px 0 22px; color: var(--muted); font-size: 13px; }
 .auth-submit { width: 100%; margin-top: 4px; }
 .auth-form-error { margin: -4px 0 12px; color: #d92d20; font-size: 12px; line-height: 1.5; }
+.auth-form-notice { margin: -4px 0 12px; color: var(--success); font-size: 12px; line-height: 1.5; }
 .auth-switch { width: 100%; margin-top: 18px; padding: 0; color: var(--primary); background: transparent; border: 0; cursor: pointer; font-size: 13px; }
 .admin-page { width: 100%; }
 .admin-home { max-width: 980px; }
