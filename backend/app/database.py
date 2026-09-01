@@ -67,6 +67,7 @@ class HalfHeadcostSku(Base):
 class TaskRecord(Base):
     __tablename__ = "tasks"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[str] = mapped_column(String(32))
     payload: Mapped[str] = mapped_column(Text)
@@ -76,11 +77,46 @@ class TaskRecord(Base):
 class ActivityJob(Base):
     __tablename__ = "activity_jobs"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default="completed")
     filename: Mapped[str] = mapped_column(String(255))
     output_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     stats: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    display_name: Mapped[str] = mapped_column(String(120), default="")
+    role: Mapped[str] = mapped_column(String(20), default="user")
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+    key: Mapped[str] = mapped_column(String(120), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+DEFAULT_SETTINGS = {
+    "order": {
+        "headcost": {"单品": 5, "4件套": 5, "5件套": 5, "6件套": 5, "8件套": 10, "10件套": 10, "12件套": 15},
+        "operation_fee": 7,
+        "extra_item_fee": 2,
+    },
+    "activity": {
+        "headcost": 5,
+        "operation_fee": 7,
+        "set_prices": {"4": 42, "5": 45, "6": 48, "8": 71, "10": 75, "12": 92},
+        "single_tiers": [{"min_price": 0, "profit": 0}],
+    },
+}
 
 
 def _json(path: Path, default):
@@ -122,6 +158,9 @@ def init_database() -> None:
                 payload = _json(metadata_path, None)
                 if isinstance(payload, dict) and payload.get("id"):
                     session.add(TaskRecord(id=payload["id"], status=payload.get("status", "unknown"), created_at=payload.get("created_at", ""), payload=json.dumps(payload, ensure_ascii=False)))
+        if session.scalar(select(AppSetting.key).limit(1)) is None:
+            for key, value in DEFAULT_SETTINGS.items():
+                session.add(AppSetting(key=key, value=json.dumps(value, ensure_ascii=False)))
 
 
 @contextmanager
@@ -210,7 +249,7 @@ def delete_half_entry(sku: str) -> bool:
 def save_task_record(task: dict) -> None:
     with db_session() as session:
         row = session.get(TaskRecord, task["id"])
-        values = {"status": task.get("status", ""), "created_at": task.get("created_at", ""), "payload": json.dumps(task, ensure_ascii=False)}
+        values = {"owner_id": task.get("owner_id"), "status": task.get("status", ""), "created_at": task.get("created_at", ""), "payload": json.dumps(task, ensure_ascii=False)}
         if row:
             for key, value in values.items(): setattr(row, key, value)
             row.updated_at = datetime.now(timezone.utc)
@@ -227,14 +266,104 @@ def load_task_records() -> list[dict]:
         return result
 
 
-def save_activity_job(job_id: str, filename: str, output_path: Optional[str], stats: dict, status: str = "completed") -> None:
+def save_activity_job(job_id: str, filename: str, output_path: Optional[str], stats: dict, status: str = "completed", owner_id: Optional[int] = None) -> None:
     with db_session() as session:
         row = session.get(ActivityJob, job_id)
         values = {"filename": filename, "output_path": output_path, "stats": json.dumps(stats, ensure_ascii=False), "status": status}
+        if owner_id is not None:
+            values["owner_id"] = owner_id
         if row:
             for key, value in values.items(): setattr(row, key, value)
         else:
             session.add(ActivityJob(id=job_id, **values))
+
+
+def activity_owner(job_id: str) -> Optional[int]:
+    with db_session() as session:
+        row = session.get(ActivityJob, job_id)
+        return row.owner_id if row else None
+
+
+def get_settings() -> dict:
+    with db_session() as session:
+        settings = dict(DEFAULT_SETTINGS)
+        for row in session.scalars(select(AppSetting)).all():
+            try:
+                settings[row.key] = json.loads(row.value)
+            except json.JSONDecodeError:
+                logger.warning("Invalid setting ignored: %s", row.key)
+        return settings
+
+
+def save_settings(settings: dict) -> dict:
+    with db_session() as session:
+        for key, value in settings.items():
+            row = session.get(AppSetting, key)
+            encoded = json.dumps(value, ensure_ascii=False)
+            if row:
+                row.value = encoded
+                row.updated_at = datetime.now(timezone.utc)
+            else:
+                session.add(AppSetting(key=key, value=encoded))
+    return get_settings()
+
+
+def get_user_by_username(username: str) -> Optional[dict]:
+    with db_session() as session:
+        row = session.scalar(select(User).where(User.username == username))
+        return {**user_dict(row), "password_hash": row.password_hash} if row else None
+
+
+def get_user(user_id: int) -> Optional[dict]:
+    with db_session() as session:
+        row = session.get(User, user_id)
+        return user_dict(row) if row else None
+
+
+def user_dict(row: Optional[User]) -> Optional[dict]:
+    if not row:
+        return None
+    return {"id": row.id, "username": row.username, "display_name": row.display_name, "role": row.role, "status": row.status, "created_at": row.created_at.isoformat() if row.created_at else None, "approved_at": row.approved_at.isoformat() if row.approved_at else None}
+
+
+def create_user(username: str, password_hash: str, display_name: str = "", role: str = "user", status: str = "pending") -> dict:
+    with db_session() as session:
+        row = User(username=username, password_hash=password_hash, display_name=display_name, role=role, status=status, approved_at=datetime.now(timezone.utc) if status == "approved" else None)
+        session.add(row)
+        session.flush()
+        return {**user_dict(row), "password_hash": row.password_hash}
+
+
+def update_user_status(user_id: int, status: str) -> Optional[dict]:
+    with db_session() as session:
+        row = session.get(User, user_id)
+        if not row:
+            return None
+        row.status = status
+        row.approved_at = datetime.now(timezone.utc) if status == "approved" else None
+        return user_dict(row)
+
+
+def list_users() -> list[dict]:
+    with db_session() as session:
+        return [user_dict(row) for row in session.scalars(select(User).order_by(User.id.desc())).all()]
+
+
+def ensure_admin_user(username: str, password_hash: str) -> Optional[dict]:
+    if not username or not password_hash:
+        return None
+    with db_session() as session:
+        row = session.scalar(select(User).where(User.username == username))
+        if row:
+            if row.role != "admin" or row.status != "approved":
+                row.role = "admin"
+                row.status = "approved"
+                row.approved_at = datetime.now(timezone.utc)
+            return user_dict(row)
+        row = User(username=username, password_hash=password_hash, display_name="管理员", role="admin", status="approved", approved_at=datetime.now(timezone.utc))
+        session.add(row)
+        session.flush()
+        return user_dict(row)
 
 
 def database_status() -> dict:

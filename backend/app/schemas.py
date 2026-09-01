@@ -35,3 +35,19 @@ class TaskSummary(BaseModel):
 class HalfHeadcostEntry(BaseModel):
     sku: str
     set_type: str
+
+
+class RegisterRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=80)
+    password: str = Field(min_length=8, max_length=128)
+    display_name: str = Field(default="", max_length=120)
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class SettingsPayload(BaseModel):
+    order: Dict[str, object]
+    activity: Dict[str, object]

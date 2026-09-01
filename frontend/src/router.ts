@@ -4,6 +4,7 @@ const OrderWorkspace = () => import('./views/OrderWorkspace.vue')
 const InventoryManage = () => import('./views/InventoryManage.vue')
 const BulkActivity = () => import('./views/BulkActivity.vue')
 const TaskHistory = () => import('./views/TaskHistory.vue')
+const AdminManage = () => import('./views/AdminManage.vue')
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -15,5 +16,6 @@ export const router = createRouter({
     { path: '/half-headcost', redirect: '/inventory?tab=half-headcost' },
     { path: '/activities', component: BulkActivity, meta: { title: '批量报名活动' } },
     { path: '/tasks', component: TaskHistory, meta: { title: '任务记录' } },
+    { path: '/admin', component: AdminManage, meta: { title: '后台管理' } },
   ],
 })

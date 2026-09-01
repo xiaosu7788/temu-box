@@ -6,24 +6,41 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from openpyxl import load_workbook
 
 from app.config import (
+    ADMIN_PASSWORD,
+    ADMIN_USERNAME,
     HALF_HEADCOST_PATH,
     ACTIVITY_DIR,
+    COOKIE_SECURE,
     INVENTORY_PATH,
     MAX_UPLOAD_BYTES,
+    SESSION_COOKIE_NAME,
+    SESSION_MAX_AGE,
     ensure_directories,
 )
-from app.database import database_status, save_activity_job
-from app.schemas import SkuQueryRequest
+from app.database import (
+    activity_owner,
+    create_user,
+    database_status,
+    ensure_admin_user,
+    get_user,
+    get_user_by_username,
+    list_users,
+    save_activity_job,
+    update_user_status,
+)
+from app.schemas import LoginRequest, RegisterRequest, SettingsPayload, SkuQueryRequest
+from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
 from app.services.half_headcost import delete_entry, load_entries, merge_upload
 from app.services.activity import process_activity_workbook
 from app.services.inventory import invalidate_cache, inventory_status, load_price_catalog
+from app.services.settings import settings_public, update_settings
 from app.services.tasks import task_manager
 
 
@@ -46,6 +63,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def bootstrap_admin() -> None:
+    if ADMIN_PASSWORD:
+        ensure_admin_user(ADMIN_USERNAME, hash_password(ADMIN_PASSWORD))
+    elif not get_user_by_username(ADMIN_USERNAME):
+        logging.getLogger("sales_tool.auth").warning("ADMIN_PASSWORD 未配置，管理员账号尚未创建")
 
 
 def validate_excel(upload: UploadFile) -> None:
@@ -80,19 +105,54 @@ def health():
     return {"status": "ok" if database["status"] == "ok" else "degraded", "version": app.version, "database": database}
 
 
+@app.post("/api/auth/register")
+def register(request: RegisterRequest):
+    try:
+        username = validate_username(request.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if get_user_by_username(username):
+        raise HTTPException(status_code=409, detail="用户名已存在")
+    try:
+        create_user(username, hash_password(request.password), request.display_name.strip())
+    except Exception as exc:
+        if get_user_by_username(username):
+            raise HTTPException(status_code=409, detail="用户名已存在") from exc
+        raise
+    return {"message": "注册成功，请等待管理员审核"}
+
+
+@app.post("/api/auth/login")
+def login(request: LoginRequest, response: Response):
+    user = login_user(request.username, request.password)
+    response.set_cookie(SESSION_COOKIE_NAME, make_session(user["id"]), max_age=SESSION_MAX_AGE, httponly=True, samesite="lax", secure=COOKIE_SECURE)
+    return public_user(user)
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response):
+    response.delete_cookie(SESSION_COOKIE_NAME)
+    return {"message": "已退出登录"}
+
+
+@app.get("/api/auth/me")
+def me(user: dict = Depends(current_user)):
+    return public_user(user)
+
+
 @app.get("/api/status")
-def status():
+def status(user: dict = Depends(current_user)):
     half_count = len(load_entries())
     return {
         "version": app.version,
         "inventory": inventory_status(),
         "half_headcost_count": half_count,
-        "tasks": task_manager.list(8),
+        "tasks": task_manager.list(8, user["id"]),
     }
 
 
 @app.get("/api/inventory")
-def get_inventory_status():
+def get_inventory_status(_user: dict = Depends(current_user)):
     return inventory_status()
 
 
@@ -101,6 +161,7 @@ def list_inventory_items(
     query: str = Query("", max_length=80),
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=10, le=200),
+    user: dict = Depends(current_user),
 ):
     catalog = load_price_catalog()
     keyword = query.strip().upper()
@@ -114,7 +175,7 @@ def list_inventory_items(
 
 
 @app.post("/api/inventory")
-async def upload_inventory(file: UploadFile = File(...)):
+async def upload_inventory(file: UploadFile = File(...), _admin: dict = Depends(admin_user)):
     candidate = INVENTORY_PATH.with_name("库存统计表.candidate.xlsx")
     await save_upload(file, candidate)
     try:
@@ -131,7 +192,7 @@ async def upload_inventory(file: UploadFile = File(...)):
 
 
 @app.post("/api/activities/bulk")
-async def process_bulk_activity(file: UploadFile = File(...)):
+async def process_bulk_activity(file: UploadFile = File(...), user: dict = Depends(current_user)):
     validate_excel(file)
     content = await file.read(MAX_UPLOAD_BYTES + 1)
     await file.close()
@@ -142,9 +203,9 @@ async def process_bulk_activity(file: UploadFile = File(...)):
     output_dir = ACTIVITY_DIR / job_id
     output_path = output_dir / "批量报名活动处理结果.xlsx"
     upload_name = file.filename or "报名活动.xlsx"
-    save_activity_job(job_id, upload_name, None, {}, status="running")
+    save_activity_job(job_id, upload_name, None, {}, status="running", owner_id=user["id"])
     try:
-        stats = await run_in_threadpool(process_activity_workbook, content, output_path)
+        stats = await run_in_threadpool(process_activity_workbook, content, output_path, settings_public())
     except ValueError as exc:
         save_activity_job(job_id, upload_name, None, {"error": str(exc)}, status="failed")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -162,7 +223,9 @@ async def process_bulk_activity(file: UploadFile = File(...)):
 
 
 @app.get("/api/activities/{job_id}/download")
-def download_activity(job_id: str):
+def download_activity(job_id: str, user: dict = Depends(current_user)):
+    if activity_owner(job_id) != user["id"]:
+        raise HTTPException(status_code=404, detail="处理结果不存在或已过期")
     output_path = ACTIVITY_DIR / job_id / "批量报名活动处理结果.xlsx"
     if not output_path.is_file():
         raise HTTPException(status_code=404, detail="处理结果不存在或已过期")
@@ -174,14 +237,14 @@ def download_activity(job_id: str):
 
 
 @app.post("/api/inventory/rebuild")
-async def rebuild_inventory():
+async def rebuild_inventory(_admin: dict = Depends(admin_user)):
     invalidate_cache()
     catalog = await run_in_threadpool(load_price_catalog)
     return {"message": "库存缓存已重建", "sku_count": len(catalog), **inventory_status()}
 
 
 @app.post("/api/skus/query")
-async def query_skus(request: SkuQueryRequest):
+async def query_skus(request: SkuQueryRequest, _user: dict = Depends(current_user)):
     normalized = list(dict.fromkeys(sku.strip().upper() for sku in request.skus if sku.strip()))
     if not normalized:
         raise HTTPException(status_code=400, detail="请输入至少一个 SKU")
@@ -198,6 +261,7 @@ def list_half_headcost(
     query: str = Query("", max_length=80),
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=10, le=200),
+    _user: dict = Depends(current_user),
 ):
     entries = load_entries()
     keyword = query.strip().upper()
@@ -211,7 +275,7 @@ def list_half_headcost(
 
 
 @app.post("/api/half-headcost/import")
-async def import_half_headcost(file: UploadFile = File(...)):
+async def import_half_headcost(file: UploadFile = File(...), _admin: dict = Depends(admin_user)):
     validate_excel(file)
     content = await file.read(MAX_UPLOAD_BYTES + 1)
     await file.close()
@@ -225,7 +289,7 @@ async def import_half_headcost(file: UploadFile = File(...)):
 
 
 @app.delete("/api/half-headcost/{sku}")
-def remove_half_headcost(sku: str):
+def remove_half_headcost(sku: str, _admin: dict = Depends(admin_user)):
     normalized = sku.strip().upper()
     if not delete_entry(normalized):
         raise HTTPException(status_code=404, detail="SKU 不在头程减半名单中")
@@ -237,6 +301,7 @@ async def create_task(
     sales: UploadFile = File(...),
     delivery: UploadFile = File(...),
     half_headcost: Optional[UploadFile] = File(None),
+    user: dict = Depends(current_user),
 ):
     if not INVENTORY_PATH.exists():
         raise HTTPException(status_code=409, detail="服务器尚未配置库存统计表")
@@ -248,6 +313,7 @@ async def create_task(
         sales.filename or "销售订单.xlsx",
         delivery.filename or "派送订单.xlsx",
         half_headcost.filename if half_headcost else None,
+        user["id"],
     )
     try:
         await save_upload(sales, task_manager.file_path(task["id"], "sales"))
@@ -257,25 +323,25 @@ async def create_task(
     except Exception:
         raise
     task_manager.queue(task["id"])
-    return task_manager.get(task["id"])
+    return task_manager.get(task["id"], user["id"])
 
 
 @app.get("/api/tasks")
-def list_tasks(limit: int = Query(30, ge=1, le=100)):
-    return {"items": task_manager.list(limit)}
+def list_tasks(limit: int = Query(30, ge=1, le=100), user: dict = Depends(current_user)):
+    return {"items": task_manager.list(limit, user["id"])}
 
 
 @app.get("/api/tasks/{task_id}")
-def get_task(task_id: str):
-    task = task_manager.get(task_id)
+def get_task(task_id: str, user: dict = Depends(current_user)):
+    task = task_manager.get(task_id, user["id"])
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return task
 
 
 @app.get("/api/tasks/{task_id}/download")
-def download_task(task_id: str):
-    result = task_manager.result_path(task_id)
+def download_task(task_id: str, user: dict = Depends(current_user)):
+    result = task_manager.result_path(task_id, user["id"])
     if not result:
         raise HTTPException(status_code=404, detail="结果文件尚未生成")
     return FileResponse(
@@ -283,3 +349,43 @@ def download_task(task_id: str):
         filename="销售订单汇总表.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+@app.get("/api/admin/users")
+def admin_users(_admin: dict = Depends(admin_user)):
+    return {"items": list_users()}
+
+
+@app.post("/api/admin/users/{user_id}/approve")
+def approve_user(user_id: int, _admin: dict = Depends(admin_user)):
+    target = get_user(user_id)
+    if not target or target["role"] == "admin":
+        raise HTTPException(status_code=404, detail="普通用户不存在")
+    user = update_user_status(user_id, "approved")
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return public_user(user)
+
+
+@app.post("/api/admin/users/{user_id}/reject")
+def reject_user(user_id: int, _admin: dict = Depends(admin_user)):
+    target = get_user(user_id)
+    if not target or target["role"] == "admin":
+        raise HTTPException(status_code=404, detail="普通用户不存在")
+    user = update_user_status(user_id, "rejected")
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return public_user(user)
+
+
+@app.get("/api/admin/settings")
+def admin_get_settings(_admin: dict = Depends(admin_user)):
+    return settings_public()
+
+
+@app.put("/api/admin/settings")
+def admin_update_settings(payload: SettingsPayload, _admin: dict = Depends(admin_user)):
+    try:
+        return update_settings(payload.model_dump())
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

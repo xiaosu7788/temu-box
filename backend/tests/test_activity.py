@@ -34,6 +34,12 @@ def test_parse_activity_skc_rules():
     assert activity_base_price(("set", 12.0)) == 92.0
 
 
+def test_activity_price_uses_admin_settings():
+    settings = {"activity": {"headcost": 6, "operation_fee": 8, "set_prices": {"4": 50}, "single_tiers": [{"min_price": 0, "profit": 0}, {"min_price": 15, "profit": 4}]}}
+    assert activity_base_price(("single", 15.0), settings) == 33.0
+    assert activity_base_price(("set", 4.0), settings) == 50.0
+
+
 def test_process_activity_workbook_updates_filters_and_preserves_sheets(tmp_path):
     output = tmp_path / "result.xlsx"
     stats = process_activity_workbook(make_activity_workbook(), output)

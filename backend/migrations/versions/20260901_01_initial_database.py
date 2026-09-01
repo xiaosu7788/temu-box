@@ -20,9 +20,13 @@ def upgrade() -> None:
     if _missing("half_headcost_skus"):
         op.create_table("half_headcost_skus", sa.Column("sku", sa.String(255), primary_key=True), sa.Column("set_type", sa.String(64), nullable=False), sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False))
     if _missing("tasks"):
-        op.create_table("tasks", sa.Column("id", sa.String(64), primary_key=True), sa.Column("status", sa.String(32), nullable=False), sa.Column("created_at", sa.String(32), nullable=False), sa.Column("payload", sa.Text(), nullable=False), sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False))
+        op.create_table("tasks", sa.Column("id", sa.String(64), primary_key=True), sa.Column("owner_id", sa.Integer()), sa.Column("status", sa.String(32), nullable=False), sa.Column("created_at", sa.String(32), nullable=False), sa.Column("payload", sa.Text(), nullable=False), sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False))
     if _missing("activity_jobs"):
-        op.create_table("activity_jobs", sa.Column("id", sa.String(64), primary_key=True), sa.Column("status", sa.String(32), nullable=False), sa.Column("filename", sa.String(255), nullable=False), sa.Column("output_path", sa.String(1024)), sa.Column("stats", sa.Text(), nullable=False), sa.Column("created_at", sa.DateTime(timezone=True), nullable=False))
+        op.create_table("activity_jobs", sa.Column("id", sa.String(64), primary_key=True), sa.Column("owner_id", sa.Integer()), sa.Column("status", sa.String(32), nullable=False), sa.Column("filename", sa.String(255), nullable=False), sa.Column("output_path", sa.String(1024)), sa.Column("stats", sa.Text(), nullable=False), sa.Column("created_at", sa.DateTime(timezone=True), nullable=False))
+    if _missing("users"):
+        op.create_table("users", sa.Column("id", sa.Integer(), primary_key=True), sa.Column("username", sa.String(80), nullable=False, unique=True), sa.Column("password_hash", sa.String(255), nullable=False), sa.Column("display_name", sa.String(120), nullable=False), sa.Column("role", sa.String(20), nullable=False), sa.Column("status", sa.String(20), nullable=False), sa.Column("created_at", sa.DateTime(timezone=True), nullable=False), sa.Column("approved_at", sa.DateTime(timezone=True)))
+    if _missing("app_settings"):
+        op.create_table("app_settings", sa.Column("key", sa.String(120), primary_key=True), sa.Column("value", sa.Text(), nullable=False), sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False))
 
 
 def downgrade() -> None:

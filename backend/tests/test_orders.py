@@ -11,3 +11,8 @@ def test_order_cost_uses_half_headcost_and_fees():
 
 def test_order_cost_is_none_when_price_missing():
     assert calc_order_cost([(None, "单品", 1, "MB131-X")]) is None
+
+
+def test_order_cost_uses_admin_settings():
+    settings = {"order": {"headcost": {"6件套": 8}, "operation_fee": 9, "extra_item_fee": 3}}
+    assert calc_order_cost([(17.1, "6件套", 1, "MB131-491")], settings=settings) == 34.1

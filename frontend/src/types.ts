@@ -64,3 +64,27 @@ export interface BulkActivityResult {
   download_url: string
   stats: BulkActivityStats
 }
+
+export interface User {
+  id: number
+  username: string
+  display_name: string
+  role: 'admin' | 'user'
+  status: 'pending' | 'approved' | 'rejected'
+  created_at?: string
+  approved_at?: string
+}
+
+export interface AppSettings {
+  order: {
+    headcost: Record<string, number>
+    operation_fee: number
+    extra_item_fee: number
+  }
+  activity: {
+    headcost: number
+    operation_fee: number
+    set_prices: Record<string, number>
+    single_tiers: Array<{ min_price: number; profit: number }>
+  }
+}

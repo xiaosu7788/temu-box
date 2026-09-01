@@ -55,6 +55,9 @@ def test_duplicate_sku_uses_lowest_price(tmp_path):
 
 
 def test_inventory_items_endpoint_filters_and_paginates(monkeypatch):
+    from app.services.auth import current_user
+
+    app.dependency_overrides[current_user] = lambda: {"id": 1, "role": "user", "status": "approved"}
     monkeypatch.setattr(
         "app.main.load_price_catalog",
         lambda: {
@@ -63,10 +66,13 @@ def test_inventory_items_endpoint_filters_and_paginates(monkeypatch):
         },
     )
 
-    response = TestClient(app).get(
-        "/api/inventory/items",
-        params={"query": "mb131-b", "page": 1, "page_size": 10},
-    )
+    try:
+        response = TestClient(app).get(
+            "/api/inventory/items",
+            params={"query": "mb131-b", "page": 1, "page_size": 10},
+        )
+    finally:
+        app.dependency_overrides.clear()
 
     assert response.status_code == 200
     assert response.json() == {

@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Refresh, Search, Upload } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { UploadFile } from 'element-plus'
-import { errorMessage, getInventory, getInventoryItems, rebuildInventory, uploadInventory } from '../api'
+import { errorMessage, getInventory, getInventoryItems, getMe, rebuildInventory, uploadInventory } from '../api'
 import type { InventoryStatus, SkuResult } from '../types'
 import HalfHeadcost from './HalfHeadcost.vue'
 
@@ -26,6 +26,7 @@ const page = ref(1)
 const pageSize = 30
 const loading = ref(false)
 const itemsLoading = ref(false)
+const isAdmin = ref(false)
 
 function formatSize(size: number | null) {
   if (size === null) return '-'
@@ -96,8 +97,12 @@ watch(() => route.query.tab, (value) => {
   activeTab.value = normalizeTab(value)
 })
 
-onMounted(() => {
-  Promise.all([refresh(), loadItems()]).catch((error) => ElMessage.error(errorMessage(error)))
+onMounted(async () => {
+  try {
+    const user = await getMe()
+    isAdmin.value = user.role === 'admin'
+    await Promise.all([refresh(), loadItems()])
+  } catch (error) { ElMessage.error(errorMessage(error)) }
 })
 </script>
 
@@ -110,10 +115,10 @@ onMounted(() => {
             <div><h2>当前库存</h2><p>服务器当前库存数据</p></div>
             <div class="inventory-actions">
               <el-button :icon="Refresh" :loading="loading" @click="refresh">刷新</el-button>
-              <el-upload :show-file-list="false" :auto-upload="false" accept=".xlsx,.xlsm" @change="handleInventoryFile">
+              <el-upload v-if="isAdmin" :show-file-list="false" :auto-upload="false" accept=".xlsx,.xlsm" @change="handleInventoryFile">
                 <el-button type="primary" :icon="Upload" :loading="loading">更新库存</el-button>
               </el-upload>
-              <el-button :icon="Refresh" :loading="loading" @click="rebuild">重建缓存</el-button>
+              <el-button v-if="isAdmin" :icon="Refresh" :loading="loading" @click="rebuild">重建缓存</el-button>
             </div>
           </div>
           <div class="metric-strip inventory-metrics">

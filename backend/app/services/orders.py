@@ -26,23 +26,28 @@ OPERATION_FEE = 7
 EXTRA_ITEM_FEE = 2
 
 
-def calc_order_cost(sku_items, half_headcost_skus=None):
+def calc_order_cost(sku_items, half_headcost_skus=None, settings=None):
     if not sku_items:
         return None
     half_headcost_skus = half_headcost_skus or {}
+    settings = settings or {}
+    order_settings = settings.get("order", {})
+    headcost_map = {**HEADCOST_MAP, **order_settings.get("headcost", {})}
+    operation_fee = float(order_settings.get("operation_fee", OPERATION_FEE))
+    extra_item_fee = float(order_settings.get("extra_item_fee", EXTRA_ITEM_FEE))
     total = 0.0
     total_qty = 0
     for price, set_type, quantity, sku in sku_items:
         if price is None:
             return None
-        headcost = HEADCOST_MAP.get(set_type, 5)
+        headcost = float(headcost_map.get(set_type, 5))
         if sku in half_headcost_skus:
             headcost /= 2
         total += quantity * (price + headcost)
         total_qty += quantity
-    total += OPERATION_FEE
+    total += operation_fee
     if total_qty > 1:
-        total += (total_qty - 1) * EXTRA_ITEM_FEE
+        total += (total_qty - 1) * extra_item_fee
     return round(total, 2)
 
 
@@ -115,6 +120,7 @@ def generate_summary(
     output_path: Path,
     half_headcost_skus=None,
     log: LogFn = None,
+    settings=None,
 ):
     half_headcost_skus = half_headcost_skus or {}
     if isinstance(sales_source, (bytes, bytearray)):
@@ -177,7 +183,7 @@ def generate_summary(
                 "/".join(skus),
                 price_display,
                 total_qty,
-                calc_order_cost(cost_items, half_headcost_skus),
+                calc_order_cost(cost_items, half_headcost_skus, settings),
                 amount,
                 "/".join(unique_types),
             ))

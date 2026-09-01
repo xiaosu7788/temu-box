@@ -8,13 +8,19 @@ import {
   Collection,
   DataAnalysis,
   Menu as MenuIcon,
+  Setting,
+  UserFilled,
 } from '@element-plus/icons-vue'
-import { getStatus } from './api'
+import { getMe, getStatus, logout } from './api'
+import type { User } from './types'
+import AuthView from './views/AuthView.vue'
 
 const route = useRoute()
 const router = useRouter()
 const online = ref(false)
 const mobileMenu = ref(false)
+const authLoading = ref(true)
+const user = ref<User | null>(null)
 const pageTitle = computed(() => String(route.meta.title || '工作台'))
 
 const menuItems = [
@@ -25,6 +31,7 @@ const menuItems = [
 ]
 
 async function checkHealth() {
+  if (!user.value) return
   try {
     await getStatus()
     online.value = true
@@ -33,16 +40,33 @@ async function checkHealth() {
   }
 }
 
+async function bootstrap() {
+  try { user.value = await getMe() } catch { user.value = null } finally { authLoading.value = false }
+  if (user.value) checkHealth()
+}
+
+function authenticated(nextUser: User) {
+  user.value = nextUser
+  checkHealth()
+}
+
+async function signOut() {
+  await logout()
+  user.value = null
+  router.replace('/orders')
+}
+
 function navigate(path: string) {
   router.push(path)
   mobileMenu.value = false
 }
 
-onMounted(checkHealth)
+onMounted(bootstrap)
 </script>
 
 <template>
-  <div class="app-shell">
+  <AuthView v-if="!authLoading && !user" @authenticated="authenticated" />
+  <div v-else-if="user" class="app-shell">
     <aside class="sidebar" :class="{ open: mobileMenu }">
       <div class="brand">
         <div class="brand-mark"><el-icon><Collection /></el-icon></div>
@@ -63,11 +87,13 @@ onMounted(checkHealth)
           <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.label }}</span>
         </button>
+        <button v-if="user.role === 'admin'" class="nav-item" :class="{ active: route.path === '/admin' }" type="button" @click="navigate('/admin')"><el-icon><Setting /></el-icon><span>后台管理</span></button>
       </nav>
       <div class="sidebar-status">
         <span class="status-dot" :class="{ online }" />
         <span>{{ online ? 'API 正常' : 'API 离线' }}</span>
       </div>
+      <div class="sidebar-user"><el-icon><UserFilled /></el-icon><span>{{ user.display_name || user.username }}</span><el-button text type="info" @click="signOut">退出</el-button></div>
     </aside>
 
     <div class="workspace">
@@ -77,6 +103,7 @@ onMounted(checkHealth)
           <h1>{{ pageTitle }}</h1>
           <p>销售订单货值/成本计算工具</p>
         </div>
+        <el-tag v-if="user.role === 'admin'" class="role-tag" type="warning">管理员</el-tag>
       </header>
       <main class="page-content" :class="{ 'page-content--fixed': route.path === '/inventory' }">
         <router-view />

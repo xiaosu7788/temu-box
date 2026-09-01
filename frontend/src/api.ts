@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { BulkActivityResult, HalfHeadcostItem, InventoryStatus, SkuResult, TaskItem } from './types'
+import type { AppSettings, BulkActivityResult, HalfHeadcostItem, InventoryStatus, SkuResult, TaskItem, User } from './types'
 
 const http = axios.create({
   baseURL: '/api',
@@ -11,6 +11,25 @@ export function errorMessage(error: unknown): string {
     return error.response?.data?.detail || error.message
   }
   return error instanceof Error ? error.message : '请求失败'
+}
+
+export async function getMe() {
+  const { data } = await http.get<User>('/auth/me')
+  return data
+}
+
+export async function login(username: string, password: string) {
+  const { data } = await http.post<User>('/auth/login', { username, password })
+  return data
+}
+
+export async function register(username: string, password: string, displayName: string) {
+  const { data } = await http.post<{ message: string }>('/auth/register', { username, password, display_name: displayName })
+  return data
+}
+
+export async function logout() {
+  await http.post('/auth/logout')
 }
 
 export async function getStatus() {
@@ -104,4 +123,24 @@ export async function processBulkActivity(file: File) {
 
 export function activityDownloadUrl(jobId: string) {
   return `/api/activities/${encodeURIComponent(jobId)}/download`
+}
+
+export async function getAdminUsers() {
+  const { data } = await http.get<{ items: User[] }>('/admin/users')
+  return data.items
+}
+
+export async function updateUserStatus(id: number, status: 'approve' | 'reject') {
+  const { data } = await http.post<User>(`/admin/users/${id}/${status}`)
+  return data
+}
+
+export async function getAdminSettings() {
+  const { data } = await http.get<AppSettings>('/admin/settings')
+  return data
+}
+
+export async function saveAdminSettings(settings: AppSettings) {
+  const { data } = await http.put<AppSettings>('/admin/settings', settings)
+  return data
 }

@@ -22,6 +22,9 @@ temu-box/
 
 ## 当前功能
 
+- 管理员初始化、用户注册、管理员审核和 Cookie 登录
+- 用户任务记录按账号隔离，普通用户不能读取其他用户的任务结果
+- 后台管理：用户审核、订单成本参数和批量报名活动参数
 - 使用服务器库存表计算销售订单货值和成本
 - 库存表更新及缓存重建
 - SKU 批量价格查询，显示价格来源工作表、行号和列号
@@ -118,6 +121,8 @@ cd backend
 首次启动会自动建表，并迁移已有的 `price_cache.json`、`half_headcost_skus.json` 和 `data/tasks/*/task.json`。后续启动不会覆盖数据库中的新数据。
 `sales-tool-v2.service` 每次启动前会自动执行 `alembic upgrade head`，用于以后平滑升级数据库结构。
 
+管理员账号通过环境变量初始化：`ADMIN_USERNAME` 和 `ADMIN_PASSWORD`。Docker 一键脚本首次生成管理员密码时会在终端输出，请及时记录；普通用户注册后默认是待审核状态，管理员登录后台后在“用户审核”中批准。
+
 ```bash
 sudo chown root:www-data /var/www/temu-box/.env
 sudo chmod 640 /var/www/temu-box/.env
@@ -163,7 +168,7 @@ chmod +x scripts/docker-deploy.sh
 ./scripts/docker-deploy.sh
 ```
 
-脚本会自动创建 `.env.docker`、生成 PostgreSQL 随机密码、创建数据目录并启动 PostgreSQL、FastAPI 和前端 Nginx。默认对外端口为 `8089`：
+脚本会自动创建 `.env.docker`、生成 PostgreSQL 和管理员随机密码、创建数据目录并启动 PostgreSQL、FastAPI 和前端 Nginx。默认对外端口为 `8089`：
 
 ```text
 http://服务器IP:8089
@@ -202,7 +207,7 @@ git pull origin main
 docker compose --env-file .env.docker up -d --build
 ```
 
-如果用宝塔绑定域名，在宝塔站点中将 `/` 反向代理到 `http://127.0.0.1:8089`，再由宝塔负责 SSL。Docker 部署时不要同时启动占用 `8089` 的 `sales-tool-v2.service`，也不要把域名代理到旧项目的 `8088`。
+如果用宝塔绑定域名，在宝塔站点中将 `/` 反向代理到 `http://127.0.0.1:8089`，再由宝塔负责 SSL。使用 HTTPS 域名时，将 `.env.docker` 的 `COOKIE_SECURE` 改为 `true` 后重建后端。Docker 部署时不要同时启动占用 `8089` 的 `sales-tool-v2.service`，也不要把域名代理到旧项目的 `8088`。
 
 停止或重启容器：
 

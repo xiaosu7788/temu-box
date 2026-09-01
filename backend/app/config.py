@@ -32,6 +32,12 @@ HALF_HEADCOST_SEED_PATH = Path(
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 512 * 1024 * 1024))
 TASK_WORKERS = max(1, int(os.environ.get("TASK_WORKERS", "2")))
 TASK_HISTORY_LIMIT = max(20, int(os.environ.get("TASK_HISTORY_LIMIT", "100")))
+AUTH_SECRET = os.environ.get("AUTH_SECRET", "change-this-secret-in-production")
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin").strip()
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "").strip()
+SESSION_COOKIE_NAME = "sales_tool_session"
+SESSION_MAX_AGE = max(3600, int(os.environ.get("SESSION_MAX_AGE", "604800")))
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() in {"1", "true", "yes"}
 
 
 def ensure_directories() -> None:

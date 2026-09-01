@@ -12,6 +12,7 @@ from typing import Dict, Optional
 
 from app.config import TASK_HISTORY_LIMIT, TASK_WORKERS, TASKS_DIR
 from app.database import load_task_records, save_task_record
+from app.database import get_settings
 from app.services.half_headcost import load_entries, merge_upload
 from app.services.inventory import load_price_catalog
 from app.services.orders import build_delivery_sku_map, generate_summary
@@ -63,10 +64,11 @@ class TaskManager:
         os.replace(temp, target)
         save_task_record(task)
 
-    def create(self, sales_name: str, delivery_name: str, half_name: Optional[str]) -> dict:
+    def create(self, sales_name: str, delivery_name: str, half_name: Optional[str], owner_id: Optional[int]) -> dict:
         task_id = uuid.uuid4().hex
         task = {
             "id": task_id,
+            "owner_id": owner_id,
             "status": "preparing",
             "progress": 0,
             "message": "正在接收文件",
@@ -128,6 +130,7 @@ class TaskManager:
                     45,
                 )
             half_entries = load_entries()
+            settings = get_settings()
             self._log(task_id, "正在解析派送订单", 55)
             po_map = build_delivery_sku_map(
                 self.file_path(task_id, "delivery"),
@@ -142,6 +145,7 @@ class TaskManager:
                 result_path,
                 half_entries,
                 log=lambda message: self._log(task_id, message, 95),
+                settings=settings,
             )
             self._update(
                 task_id,
@@ -162,22 +166,25 @@ class TaskManager:
                 message=f"处理失败：{exc}",
             )
 
-    def get(self, task_id: str) -> Optional[dict]:
+    def get(self, task_id: str, owner_id: Optional[int] = None) -> Optional[dict]:
         with self._lock:
             task = self._tasks.get(task_id)
-            return self.public(task) if task else None
+            if not task or (owner_id is not None and task.get("owner_id") != owner_id):
+                return None
+            return self.public(task)
 
-    def list(self, limit: int = 30):
+    def list(self, limit: int = 30, owner_id: Optional[int] = None):
         with self._lock:
             tasks = sorted(
-                self._tasks.values(), key=lambda item: item["created_at"], reverse=True
+                (task for task in self._tasks.values() if owner_id is None or task.get("owner_id") == owner_id),
+                key=lambda item: item["created_at"], reverse=True
             )[: min(limit, TASK_HISTORY_LIMIT)]
             return [self.public(task) for task in tasks]
 
-    def result_path(self, task_id: str) -> Optional[Path]:
+    def result_path(self, task_id: str, owner_id: Optional[int] = None) -> Optional[Path]:
         with self._lock:
             task = self._tasks.get(task_id)
-            if not task or task.get("status") != "completed" or not task.get("result_file"):
+            if not task or (owner_id is not None and task.get("owner_id") != owner_id) or task.get("status") != "completed" or not task.get("result_file"):
                 return None
             path = self._task_dir(task_id) / task["result_file"]
             return path if path.exists() else None

@@ -61,11 +61,15 @@ def parse_skc(skc: object) -> Optional[Tuple[str, float]]:
     return None
 
 
-def activity_base_price(parsed: Tuple[str, float]) -> float:
+def activity_base_price(parsed: Tuple[str, float], settings=None) -> float:
     kind, value = parsed
+    activity_settings = (settings or {}).get("activity", {})
     if kind == "set":
-        return ACTIVITY_PRICE_BASE[int(value)]
-    return value + 5.0 + 7.0
+        set_prices = activity_settings.get("set_prices", {})
+        return float(set_prices.get(str(int(value)), ACTIVITY_PRICE_BASE[int(value)]))
+    tiers = activity_settings.get("single_tiers", [{"min_price": 0, "profit": 0}])
+    profit = max((float(tier.get("profit", 0)) for tier in tiers if value >= float(tier.get("min_price", 0))), default=0)
+    return value + float(activity_settings.get("headcost", 5)) + float(activity_settings.get("operation_fee", 7)) + profit
 
 
 def _reference_price(value: object) -> Optional[float]:
@@ -86,7 +90,7 @@ def _uplifted_price(base: float, reference: float) -> float:
     return round(base + uplift_cents / 100, 2)
 
 
-def process_activity_workbook(source: bytes, output_path: Path) -> dict:
+def process_activity_workbook(source: bytes, output_path: Path, settings=None) -> dict:
     if not source:
         raise ValueError("上传的报名表为空")
 
@@ -114,7 +118,7 @@ def process_activity_workbook(source: bytes, output_path: Path) -> dict:
                 continue
 
             processed += 1
-            base = activity_base_price(parsed)
+            base = activity_base_price(parsed, settings)
             if reference < base:
                 rows_to_delete.append(row)
                 continue
