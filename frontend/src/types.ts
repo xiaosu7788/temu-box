@@ -1,0 +1,66 @@
+export interface InventoryStatus {
+  path: string
+  exists: boolean
+  cache_exists: boolean
+  cache_valid: boolean
+  sku_count: number
+  size: number | null
+  modified_at: string | null
+}
+
+export interface TaskStats {
+  total?: number
+  matched?: number
+  unmatched?: number
+  unmatched_pos?: string[]
+  missing_skus?: string[]
+  type_stats?: Record<string, number>
+}
+
+export interface TaskItem {
+  id: string
+  status: 'preparing' | 'queued' | 'running' | 'completed' | 'failed'
+  progress: number
+  message: string
+  created_at: string
+  started_at?: string
+  finished_at?: string
+  stats: TaskStats
+  logs: string[]
+  download_ready: boolean
+}
+
+export interface SkuResult {
+  sku: string
+  found: boolean
+  price?: number
+  set_type?: string
+  source_sheet?: string
+  source_row?: number
+  source_column?: number
+}
+
+export interface HalfHeadcostItem {
+  sku: string
+  set_type: string
+}
+
+export interface BulkActivityStats {
+  sheet: string
+  header_row: number
+  input_data_rows: number
+  processed_rows: number
+  updated_rows: number
+  unchanged_rows: number
+  removed_rows: number
+  skipped_rows: number
+  remaining_data_rows: number
+}
+
+export interface BulkActivityResult {
+  message: string
+  job_id: string
+  filename: string
+  download_url: string
+  stats: BulkActivityStats
+}

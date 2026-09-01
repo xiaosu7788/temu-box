@@ -1,0 +1,16 @@
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+data/tasks/
+data/logs/
+data/activities/
+data/price_cache.json
+data/inventories/*.xlsx
+data/half_headcost_skus.json
+data/头程减半初始名单.xlsx
+data/inventories/*.upload
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.tsbuildinfo
+.env
