@@ -7,7 +7,7 @@ Type=simple
 User=www-data
 Group=www-data
 WorkingDirectory=/var/www/成本计算工具/temu-box/backend
-EnvironmentFile=-/var/www/成本计算工具/temu-box/.env
+EnvironmentFile=/var/www/成本计算工具/temu-box/.env
 Environment=PYTHONUNBUFFERED=1
 Environment=SALES_TOOL_DATA_DIR=/var/www/成本计算工具/temu-box/data
 ExecStartPre=/var/www/成本计算工具/temu-box/backend/.venv/bin/alembic -c alembic.ini upgrade head
