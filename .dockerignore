@@ -1,0 +1,10 @@
+.git
+.gitignore
+.env
+.env.docker
+backend/.venv
+frontend/node_modules
+frontend/dist
+data
+__pycache__
+*.py[cod]

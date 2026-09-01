@@ -132,3 +132,68 @@ curl http://127.0.0.1:8089/api/health
 sudo -u postgres pg_dump -Fc sales_tool > sales_tool_$(date +%F).dump
 tar -czf temu-box-data-$(date +%F).tar.gz data
 ```
+
+## Docker 一键部署
+
+Docker 部署不使用旧项目目录。以下命令会在全新的 `/var/www/temu-box` 目录部署，旧的 `/var/www/成本计算工具` 不参与运行。
+
+如果服务器还没有 Docker：
+
+```bash
+sudo apt update
+sudo apt install -y docker.io docker-compose-plugin
+sudo systemctl enable --now docker
+docker --version
+docker compose version
+```
+
+拉取新版项目：
+
+```bash
+sudo mkdir -p /var/www
+cd /var/www
+sudo git clone https://github.com/xiaosu7788/temu-box.git temu-box
+cd /var/www/temu-box
+```
+
+执行一键部署：
+
+```bash
+chmod +x scripts/docker-deploy.sh
+./scripts/docker-deploy.sh
+```
+
+脚本会自动创建 `.env.docker`、生成 PostgreSQL 随机密码、创建数据目录并启动 PostgreSQL、FastAPI 和前端 Nginx。默认访问端口为 `8080`：
+
+```text
+http://服务器IP:8080
+```
+
+库存表放在宿主机的 `data/inventories/库存统计表.xlsx`，任务文件和结果也会保存在宿主机 `data/` 中；PostgreSQL 数据保存在 Docker volume `temu-box_postgres_data`。
+
+查看状态和日志：
+
+```bash
+docker compose --env-file .env.docker ps
+docker compose --env-file .env.docker logs -f backend
+docker compose --env-file .env.docker logs -f db
+```
+
+更新版本：
+
+```bash
+cd /var/www/temu-box
+git pull origin main
+docker compose --env-file .env.docker up -d --build
+```
+
+如果用宝塔绑定域名，在宝塔站点中将 `/` 反向代理到 `http://127.0.0.1:8080`，再由宝塔负责 SSL；不要再把域名代理到旧项目的 `8088` 或新版 systemd 的 `8089`。
+
+停止或重启容器：
+
+```bash
+docker compose --env-file .env.docker restart
+docker compose --env-file .env.docker down
+```
+
+不要使用 `docker compose down -v`，否则会删除 PostgreSQL 数据卷。

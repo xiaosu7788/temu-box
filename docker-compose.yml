@@ -1,0 +1,57 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sales_tool}
+      POSTGRES_USER: ${POSTGRES_USER:-sales_tool}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env.docker 中设置 POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    restart: unless-stopped
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 8089
+      SALES_TOOL_DATA_DIR: /app/data
+      INVENTORY_PATH: /app/data/inventories/库存统计表.xlsx
+      PRICE_CACHE_PATH: /app/data/price_cache.json
+      HALF_HEADCOST_PATH: /app/data/half_headcost_skus.json
+      HALF_HEADCOST_SEED_PATH: /app/data/头程减半初始名单.xlsx
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sales_tool}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sales_tool}
+      TASK_WORKERS: ${TASK_WORKERS:-2}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-536870912}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8089/api/health', timeout=5)"]
+      interval: 10s
+      timeout: 8s
+      retries: 12
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
