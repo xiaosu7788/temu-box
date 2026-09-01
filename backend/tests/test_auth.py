@@ -17,6 +17,26 @@ def test_registration_requires_admin_approval():
         assert "审核" in login.json()["detail"]
 
 
+def test_admin_can_see_new_registration():
+    create_user("admin_visibility", hash_password("adminpass123"), role="admin", status="approved")
+    with TestClient(app) as client:
+        registered = client.post(
+            "/api/auth/register",
+            json={"username": "visible_pending", "password": "password123"},
+        )
+        assert registered.status_code == 200
+
+        login = client.post(
+            "/api/auth/login",
+            json={"username": "admin_visibility", "password": "adminpass123"},
+        )
+        assert login.status_code == 200
+        users = client.get("/api/admin/users")
+        assert users.status_code == 200
+        visible = next(item for item in users.json()["items"] if item["username"] == "visible_pending")
+        assert visible["status"] == "pending"
+
+
 def test_admin_can_approve_user_and_change_settings():
     admin = create_user("admin_test", hash_password("adminpass123"), role="admin", status="approved")
     user = create_user("approval_user", hash_password("userpass123"))
@@ -42,3 +62,28 @@ def test_task_history_is_scoped_to_owner():
     assert first["id"] in {task["id"] for task in task_manager.list(owner_id=101)}
     assert second["id"] not in {task["id"] for task in task_manager.list(owner_id=101)}
     assert task_manager.get(second["id"], owner_id=101) is None
+
+
+def test_user_can_delete_own_finished_task_but_admin_can_view_tasks():
+    admin = create_user("task_admin", hash_password("adminpass123"), role="admin", status="approved")
+    user = create_user("task_owner", hash_password("userpass123"), status="approved")
+    task = task_manager.create("sales-delete.xlsx", "delivery-delete.xlsx", None, user["id"])
+    task_manager._update(task["id"], status="completed", progress=100, message="处理完成")
+
+    with TestClient(app) as client:
+        user_login = client.post("/api/auth/login", json={"username": "task_owner", "password": "userpass123"})
+        assert user_login.status_code == 200
+        deleted = client.delete(f"/api/tasks/{task['id']}")
+        assert deleted.status_code == 200
+        assert client.get(f"/api/tasks/{task['id']}").status_code == 404
+
+        client.post("/api/auth/logout")
+        admin_login = client.post("/api/auth/login", json={"username": "task_admin", "password": "adminpass123"})
+        assert admin_login.status_code == 200
+        assert client.get("/api/admin/tasks").status_code == 200
+        assert client.get("/api/admin/activity-tasks").status_code == 200
+
+        client.post("/api/auth/logout")
+        other = create_user("task_other", hash_password("otherpass123"), status="approved")
+        client.post("/api/auth/login", json={"username": "task_other", "password": "otherpass123"})
+        assert client.get("/api/admin/tasks").status_code == 403

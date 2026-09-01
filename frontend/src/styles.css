@@ -111,6 +111,19 @@ button, input, textarea { font: inherit; }
 .activity-result-panel .section-heading p { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .activity-summary { margin: 18px 0 0; color: var(--muted); font-size: 13px; }
+.activity-tasks-panel { min-height: 240px; }
+.activity-task-list { display: grid; gap: 12px; }
+.activity-task-item { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 6px; }
+.activity-task-main { min-width: 0; flex: 1 1 auto; }
+.activity-task-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.activity-task-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-task-main p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.activity-task-main .el-progress { margin-top: 12px; }
+.activity-task-stats { color: #344054 !important; }
+.activity-error { color: #d92d20 !important; }
+.activity-task-action { flex: 0 0 auto; text-align: right; }
+.activity-task-id { color: #98a2b3; font-size: 11px; }
+.table-muted { color: #98a2b3; font-size: 12px; }
 .auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #eef2f6; }
 .auth-panel { width: min(420px, 100%); padding: 34px; background: white; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 18px 40px rgba(16, 24, 40, .08); }
 .auth-brand { display: flex; align-items: center; gap: 11px; margin-bottom: 34px; }
@@ -121,8 +134,33 @@ button, input, textarea { font: inherit; }
 .auth-heading h1 { margin: 0; font-size: 25px; }
 .auth-heading p { margin: 7px 0 22px; color: var(--muted); font-size: 13px; }
 .auth-submit { width: 100%; margin-top: 4px; }
+.auth-form-error { margin: -4px 0 12px; color: #d92d20; font-size: 12px; line-height: 1.5; }
 .auth-switch { width: 100%; margin-top: 18px; padding: 0; color: var(--primary); background: transparent; border: 0; cursor: pointer; font-size: 13px; }
 .admin-page { width: 100%; }
+.admin-home { max-width: 980px; }
+.admin-module-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.admin-module-entry { min-height: 122px; padding: 22px; display: flex; align-items: center; gap: 14px; color: inherit; text-align: left; background: #fff; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
+.admin-module-entry:hover { border-color: #9bb7ef; box-shadow: 0 5px 16px rgba(16, 24, 40, .08); }
+.admin-module-icon { width: 42px; height: 42px; display: grid; place-items: center; flex: 0 0 42px; color: var(--primary); background: #edf3ff; border-radius: 7px; font-size: 21px; }
+.admin-module-copy { min-width: 0; display: grid; gap: 6px; }
+.admin-module-copy strong { font-size: 15px; }
+.admin-module-copy small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.admin-module-arrow { margin-left: auto; color: #98a2b3; }
+.admin-home .admin-module-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.admin-subpage { min-width: 0; }
+.subpage-title { display: flex; align-items: flex-start; gap: 12px; }
+.subpage-title > .el-button { margin: -5px 0 0 -12px; }
+.admin-settings-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.settings-tabs { border: 0; box-shadow: none; }
+.settings-tabs .el-tabs__content { padding: 20px 0 0; }
+.settings-category-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.settings-category { min-width: 0; padding: 18px; border: 1px solid var(--border); border-radius: 6px; }
+.settings-category--wide { margin-top: 20px; }
+.settings-category h3 { margin: 0 0 16px; font-size: 15px; }
+.settings-note { margin: 18px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.admin-inventory-page .section-heading, .admin-tasks-page .section-heading { align-items: center; }
+.admin-inventory-table .el-table, .admin-tasks-table .el-table { min-width: 900px; }
+.admin-task-summary { color: var(--muted); font-size: 12px; }
 .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .settings-block { padding: 20px; border: 1px solid var(--border); border-radius: 6px; }
 .settings-block h3 { margin: 0 0 18px; font-size: 15px; }
@@ -164,6 +202,9 @@ button, input, textarea { font: inherit; }
   .section-band > .el-table { min-width: 680px; }
   .auth-panel { padding: 26px 20px; }
   .settings-grid { grid-template-columns: 1fr; }
+  .admin-module-grid, .settings-category-grid { grid-template-columns: 1fr; }
   .settings-form-grid { grid-template-columns: 1fr 1fr; }
   .tier-row { flex-wrap: wrap; }
+  .activity-task-item { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .activity-task-action { width: 100%; text-align: left; }
 }

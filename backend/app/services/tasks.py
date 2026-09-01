@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import threading
 import time
 import uuid
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from app.config import TASK_HISTORY_LIMIT, TASK_WORKERS, TASKS_DIR
-from app.database import load_task_records, save_task_record
+from app.database import delete_task_record, load_task_records, save_task_record
 from app.database import get_settings
 from app.services.half_headcost import load_entries, merge_upload
 from app.services.inventory import load_price_catalog
@@ -189,10 +190,25 @@ class TaskManager:
             path = self._task_dir(task_id) / task["result_file"]
             return path if path.exists() else None
 
+    def delete(self, task_id: str, owner_id: int) -> str:
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task or task.get("owner_id") != owner_id:
+                return "not_found"
+            if task.get("status") in {"preparing", "queued", "running"}:
+                return "active"
+            self._tasks.pop(task_id)
+            delete_task_record(task_id, owner_id)
+        task_dir = self._task_dir(task_id)
+        if task_dir.exists():
+            shutil.rmtree(task_dir)
+        return "deleted"
+
     @staticmethod
     def public(task: dict) -> dict:
         return {
             "id": task["id"],
+            "owner_id": task.get("owner_id"),
             "status": task["status"],
             "progress": task.get("progress", 0),
             "message": task.get("message", ""),

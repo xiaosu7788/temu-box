@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -16,7 +15,6 @@ from app.config import (
     ADMIN_PASSWORD,
     ADMIN_USERNAME,
     HALF_HEADCOST_PATH,
-    ACTIVITY_DIR,
     COOKIE_SECURE,
     INVENTORY_PATH,
     MAX_UPLOAD_BYTES,
@@ -25,20 +23,19 @@ from app.config import (
     ensure_directories,
 )
 from app.database import (
-    activity_owner,
     create_user,
     database_status,
+    delete_inventory_item,
     ensure_admin_user,
     get_user,
     get_user_by_username,
     list_users,
-    save_activity_job,
     update_user_status,
 )
 from app.schemas import LoginRequest, RegisterRequest, SettingsPayload, SkuQueryRequest
 from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
 from app.services.half_headcost import delete_entry, load_entries, merge_upload
-from app.services.activity import process_activity_workbook
+from app.services.activity_tasks import activity_task_manager
 from app.services.inventory import invalidate_cache, inventory_status, load_price_catalog
 from app.services.settings import settings_public, update_settings
 from app.services.tasks import task_manager
@@ -191,7 +188,7 @@ async def upload_inventory(file: UploadFile = File(...), _admin: dict = Depends(
     return {"message": "库存表已更新，缓存将在下次查询时自动重建", **inventory_status()}
 
 
-@app.post("/api/activities/bulk")
+@app.post("/api/activities/bulk", status_code=202)
 async def process_bulk_activity(file: UploadFile = File(...), user: dict = Depends(current_user)):
     validate_excel(file)
     content = await file.read(MAX_UPLOAD_BYTES + 1)
@@ -199,35 +196,41 @@ async def process_bulk_activity(file: UploadFile = File(...), user: dict = Depen
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="上传文件超过服务器限制")
 
-    job_id = uuid.uuid4().hex
-    output_dir = ACTIVITY_DIR / job_id
-    output_path = output_dir / "批量报名活动处理结果.xlsx"
     upload_name = file.filename or "报名活动.xlsx"
-    save_activity_job(job_id, upload_name, None, {}, status="running", owner_id=user["id"])
-    try:
-        stats = await run_in_threadpool(process_activity_workbook, content, output_path, settings_public())
-    except ValueError as exc:
-        save_activity_job(job_id, upload_name, None, {"error": str(exc)}, status="failed")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        save_activity_job(job_id, upload_name, None, {"error": str(exc)}, status="failed")
-        raise HTTPException(status_code=400, detail=f"报名表处理失败：{exc}") from exc
-    save_activity_job(job_id, upload_name, str(output_path), stats)
+    job = await run_in_threadpool(activity_task_manager.create, upload_name, user["id"], content)
     return {
-        "message": "批量报名活动处理完成",
-        "job_id": job_id,
-        "filename": output_path.name,
-        "download_url": f"/api/activities/{job_id}/download",
-        "stats": stats,
+        **job,
+        "download_url": f"/api/activities/{job['id']}/download",
     }
+
+
+@app.get("/api/activities")
+def list_activity_tasks(limit: int = Query(50, ge=1, le=100), user: dict = Depends(current_user)):
+    return {"items": activity_task_manager.list(user["id"], limit)}
+
+
+@app.get("/api/activities/{job_id}")
+def get_activity_task(job_id: str, user: dict = Depends(current_user)):
+    job = activity_task_manager.get(job_id, user["id"])
+    if not job:
+        raise HTTPException(status_code=404, detail="活动任务不存在")
+    return job
+
+
+@app.delete("/api/activities/{job_id}")
+def delete_activity_task(job_id: str, user: dict = Depends(current_user)):
+    result = activity_task_manager.delete(job_id, user["id"])
+    if result == "active":
+        raise HTTPException(status_code=409, detail="处理中任务暂不能删除，请等待任务完成")
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail="活动任务不存在")
+    return {"message": "活动任务记录已删除", "id": job_id}
 
 
 @app.get("/api/activities/{job_id}/download")
 def download_activity(job_id: str, user: dict = Depends(current_user)):
-    if activity_owner(job_id) != user["id"]:
-        raise HTTPException(status_code=404, detail="处理结果不存在或已过期")
-    output_path = ACTIVITY_DIR / job_id / "批量报名活动处理结果.xlsx"
-    if not output_path.is_file():
+    output_path = activity_task_manager.result_path(job_id, None if user["role"] == "admin" else user["id"])
+    if not output_path:
         raise HTTPException(status_code=404, detail="处理结果不存在或已过期")
     return FileResponse(
         output_path,
@@ -241,6 +244,33 @@ async def rebuild_inventory(_admin: dict = Depends(admin_user)):
     invalidate_cache()
     catalog = await run_in_threadpool(load_price_catalog)
     return {"message": "库存缓存已重建", "sku_count": len(catalog), **inventory_status()}
+
+
+@app.get("/api/admin/inventory")
+def admin_inventory_status(_admin: dict = Depends(admin_user)):
+    return inventory_status()
+
+
+@app.get("/api/admin/inventory/items")
+def admin_inventory_items(
+    query: str = Query("", max_length=80),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(30, ge=10, le=200),
+    _admin: dict = Depends(admin_user),
+):
+    catalog = load_price_catalog()
+    keyword = query.strip().upper()
+    items = [item for sku, item in sorted(catalog.items()) if not keyword or keyword in sku.upper()]
+    start = (page - 1) * page_size
+    return {"total": len(items), "items": items[start:start + page_size]}
+
+
+@app.delete("/api/admin/inventory/items/{sku}")
+def admin_delete_inventory_item(sku: str, _admin: dict = Depends(admin_user)):
+    normalized = sku.strip().upper()
+    if not normalized or not delete_inventory_item(normalized):
+        raise HTTPException(status_code=404, detail="库存 SKU 不存在")
+    return {"message": "库存明细已删除", "sku": normalized, **inventory_status()}
 
 
 @app.post("/api/skus/query")
@@ -339,9 +369,19 @@ def get_task(task_id: str, user: dict = Depends(current_user)):
     return task
 
 
+@app.delete("/api/tasks/{task_id}")
+def delete_task(task_id: str, user: dict = Depends(current_user)):
+    result = task_manager.delete(task_id, user["id"])
+    if result == "active":
+        raise HTTPException(status_code=409, detail="处理中任务暂不能删除，请等待任务完成")
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {"message": "任务记录已删除", "id": task_id}
+
+
 @app.get("/api/tasks/{task_id}/download")
 def download_task(task_id: str, user: dict = Depends(current_user)):
-    result = task_manager.result_path(task_id, user["id"])
+    result = task_manager.result_path(task_id, None if user["role"] == "admin" else user["id"])
     if not result:
         raise HTTPException(status_code=404, detail="结果文件尚未生成")
     return FileResponse(
@@ -349,6 +389,34 @@ def download_task(task_id: str, user: dict = Depends(current_user)):
         filename="销售订单汇总表.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+@app.get("/api/admin/tasks")
+def admin_tasks(limit: int = Query(100, ge=1, le=500), _admin: dict = Depends(admin_user)):
+    users = {user["id"]: user for user in list_users()}
+    items = []
+    for task in task_manager.list(limit):
+        owner = users.get(task.get("owner_id"))
+        items.append({
+            **task,
+            "owner_name": (owner.get("display_name") or owner.get("username")) if owner else "历史用户",
+            "owner_username": owner.get("username") if owner else "-",
+        })
+    return {"items": items}
+
+
+@app.get("/api/admin/activity-tasks")
+def admin_activity_tasks(limit: int = Query(100, ge=1, le=500), _admin: dict = Depends(admin_user)):
+    users = {user["id"]: user for user in list_users()}
+    items = []
+    for task in activity_task_manager.list_admin(limit):
+        owner = users.get(task.get("owner_id"))
+        items.append({
+            **task,
+            "owner_name": (owner.get("display_name") or owner.get("username")) if owner else "历史用户",
+            "owner_username": owner.get("username") if owner else "-",
+        })
+    return {"items": items}
 
 
 @app.get("/api/admin/users")

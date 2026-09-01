@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { AppSettings, BulkActivityResult, HalfHeadcostItem, InventoryStatus, SkuResult, TaskItem, User } from './types'
+import type { ActivityTaskItem, AppSettings, BulkActivityResult, HalfHeadcostItem, InventoryStatus, SkuResult, TaskItem, User } from './types'
 
 const http = axios.create({
   baseURL: '/api',
@@ -57,6 +57,10 @@ export async function getTasks(limit = 50) {
   return data.items
 }
 
+export async function deleteTask(id: string) {
+  await http.delete(`/tasks/${encodeURIComponent(id)}`)
+}
+
 export function downloadUrl(id: string) {
   return `/api/tasks/${id}/download`
 }
@@ -93,6 +97,23 @@ export async function rebuildInventory() {
   return data
 }
 
+export async function getAdminInventory() {
+  const { data } = await http.get<InventoryStatus>('/admin/inventory')
+  return data
+}
+
+export async function getAdminInventoryItems(query = '', page = 1, pageSize = 30) {
+  const { data } = await http.get<{ total: number; items: SkuResult[] }>('/admin/inventory/items', {
+    params: { query, page, page_size: pageSize },
+  })
+  return data
+}
+
+export async function deleteInventoryItem(sku: string) {
+  const { data } = await http.delete<InventoryStatus & { message: string; sku: string }>(`/admin/inventory/items/${encodeURIComponent(sku)}`)
+  return data
+}
+
 export async function getHalfHeadcost(query = '', page = 1, pageSize = 30) {
   const { data } = await http.get<{ total: number; items: HalfHeadcostItem[] }>('/half-headcost', {
     params: { query, page, page_size: pageSize },
@@ -117,8 +138,32 @@ export async function deleteHalfHeadcost(sku: string) {
 export async function processBulkActivity(file: File) {
   const form = new FormData()
   form.append('file', file)
-  const { data } = await http.post<BulkActivityResult>('/activities/bulk', form)
+  const { data } = await http.post<ActivityTaskItem & Pick<BulkActivityResult, 'download_url'>>('/activities/bulk', form)
   return data
+}
+
+export async function getActivityTasks(limit = 50) {
+  const { data } = await http.get<{ items: ActivityTaskItem[] }>('/activities', { params: { limit } })
+  return data.items
+}
+
+export async function getActivityTask(id: string) {
+  const { data } = await http.get<ActivityTaskItem>(`/activities/${encodeURIComponent(id)}`)
+  return data
+}
+
+export async function deleteActivityTask(id: string) {
+  await http.delete(`/activities/${encodeURIComponent(id)}`)
+}
+
+export async function getAdminTasks(limit = 100) {
+  const { data } = await http.get<{ items: TaskItem[] }>('/admin/tasks', { params: { limit } })
+  return data.items
+}
+
+export async function getAdminActivityTasks(limit = 100) {
+  const { data } = await http.get<{ items: ActivityTaskItem[] }>('/admin/activity-tasks', { params: { limit } })
+  return data.items
 }
 
 export function activityDownloadUrl(jobId: string) {

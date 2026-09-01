@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Download, Refresh } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
-import { downloadUrl, errorMessage, getTasks } from '../api'
+import { Delete, Download, Refresh } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { deleteTask, downloadUrl, errorMessage, getTasks } from '../api'
 import type { TaskItem } from '../types'
 
 const tasks = ref<TaskItem[]>([])
 const loading = ref(false)
+const deleting = ref<string | null>(null)
 
 function statusText(status: string) {
   return { preparing: '准备中', queued: '排队中', running: '处理中', completed: '已完成', failed: '失败' }[status] || status
@@ -29,6 +30,21 @@ async function load() {
   }
 }
 
+async function remove(task: TaskItem) {
+  if (task.status === 'preparing' || task.status === 'queued' || task.status === 'running') return
+  try {
+    await ElMessageBox.confirm('删除后将无法恢复这条任务记录，是否继续？', '确认删除', { type: 'warning' })
+    deleting.value = task.id
+    await deleteTask(task.id)
+    tasks.value = tasks.value.filter((item) => item.id !== task.id)
+    ElMessage.success('任务记录已删除')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(errorMessage(error))
+  } finally {
+    deleting.value = null
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -48,6 +64,12 @@ onMounted(load)
         <template #default="scope">
           <el-button v-if="scope.row.download_ready" type="success" link :icon="Download" tag="a" :href="downloadUrl(scope.row.id)">下载</el-button>
           <span v-else>-</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="110" fixed="right">
+        <template #default="scope">
+          <el-button v-if="!['preparing', 'queued', 'running'].includes(scope.row.status)" link type="danger" :icon="Delete" :loading="deleting === scope.row.id" @click="remove(scope.row)">删除</el-button>
+          <span v-else class="table-muted">处理中</span>
         </template>
       </el-table-column>
     </el-table>

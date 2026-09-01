@@ -19,6 +19,9 @@ export interface TaskStats {
 
 export interface TaskItem {
   id: string
+  owner_id?: number
+  owner_name?: string
+  owner_username?: string
   status: 'preparing' | 'queued' | 'running' | 'completed' | 'failed'
   progress: number
   message: string
@@ -63,6 +66,23 @@ export interface BulkActivityResult {
   filename: string
   download_url: string
   stats: BulkActivityStats
+}
+
+export type ActivityTaskStatus = 'queued' | 'running' | 'completed' | 'failed'
+
+export interface ActivityTaskItem {
+  id: string
+  owner_id?: number
+  owner_name?: string
+  owner_username?: string
+  status: ActivityTaskStatus
+  progress: number
+  message: string
+  filename: string
+  created_at?: string
+  stats: BulkActivityStats
+  logs: string[]
+  download_ready: boolean
 }
 
 export interface User {

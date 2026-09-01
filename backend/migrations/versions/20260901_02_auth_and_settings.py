@@ -18,6 +18,10 @@ def upgrade() -> None:
         op.add_column("tasks", sa.Column("owner_id", sa.Integer(), nullable=True))
     if inspector.has_table("activity_jobs") and "owner_id" not in {column["name"] for column in inspector.get_columns("activity_jobs")}:
         op.add_column("activity_jobs", sa.Column("owner_id", sa.Integer(), nullable=True))
+    activity_columns = {column["name"] for column in inspector.get_columns("activity_jobs")} if inspector.has_table("activity_jobs") else set()
+    for name, column in (("progress", sa.Integer(),), ("message", sa.String(255)), ("logs", sa.Text())):
+        if inspector.has_table("activity_jobs") and name not in activity_columns:
+            op.add_column("activity_jobs", sa.Column(name, column, nullable=False, server_default="0" if name == "progress" else ("" if name == "message" else "[]")))
 
 
 def downgrade() -> None:
@@ -26,6 +30,10 @@ def downgrade() -> None:
         op.drop_column("tasks", "owner_id")
     if inspector.has_table("activity_jobs") and "owner_id" in {column["name"] for column in inspector.get_columns("activity_jobs")}:
         op.drop_column("activity_jobs", "owner_id")
+    activity_columns = {column["name"] for column in inspector.get_columns("activity_jobs")} if inspector.has_table("activity_jobs") else set()
+    for name in ("logs", "message", "progress"):
+        if inspector.has_table("activity_jobs") and name in activity_columns:
+            op.drop_column("activity_jobs", name)
     if inspector.has_table("app_settings"):
         op.drop_table("app_settings")
     if inspector.has_table("users"):

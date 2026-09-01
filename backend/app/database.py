@@ -57,6 +57,12 @@ class InventoryItem(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
+class InventoryExclusion(Base):
+    __tablename__ = "inventory_exclusions"
+    sku: Mapped[str] = mapped_column(String(255), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 class HalfHeadcostSku(Base):
     __tablename__ = "half_headcost_skus"
     sku: Mapped[str] = mapped_column(String(255), primary_key=True)
@@ -82,6 +88,9 @@ class ActivityJob(Base):
     filename: Mapped[str] = mapped_column(String(255))
     output_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     stats: Mapped[str] = mapped_column(Text, default="{}")
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(String(255), default="")
+    logs: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
@@ -204,13 +213,29 @@ def invalidate_inventory_catalog() -> None:
 
 def get_inventory_catalog() -> dict:
     with db_session() as session:
+        excluded = set(session.scalars(select(InventoryExclusion.sku)).all())
         rows = session.scalars(select(InventoryItem)).all()
-        return {row.sku: {key: getattr(row, key) for key in ("sku", "price", "set_type", "source_sheet", "source_row", "source_column")} for row in rows}
+        return {row.sku: {key: getattr(row, key) for key in ("sku", "price", "set_type", "source_sheet", "source_row", "source_column")} for row in rows if row.sku not in excluded}
+
+
+def delete_inventory_item(sku: str) -> bool:
+    with db_session() as session:
+        row = session.get(InventoryItem, sku)
+        if not row:
+            return False
+        session.delete(row)
+        if not session.get(InventoryExclusion, sku):
+            session.add(InventoryExclusion(sku=sku))
+        version = session.scalar(select(InventoryVersion).where(InventoryVersion.is_current.is_(True)).order_by(InventoryVersion.id.desc()))
+        if version:
+            version.sku_count = session.query(InventoryItem).count()
+        return True
 
 
 def save_inventory_catalog(signature: dict, catalog: dict) -> None:
     with db_session() as session:
         session.query(InventoryVersion).update({InventoryVersion.is_current: False})
+        session.query(InventoryExclusion).delete()
         version = InventoryVersion(source_path=signature["path"], file_size=signature["size"], mtime_ns=signature["mtime_ns"], parser_version=signature["parser_version"], sku_count=len(catalog), is_current=True)
         session.add(version)
         session.flush()
@@ -257,6 +282,15 @@ def save_task_record(task: dict) -> None:
             session.add(TaskRecord(id=task["id"], **values))
 
 
+def delete_task_record(task_id: str, owner_id: Optional[int] = None) -> bool:
+    with db_session() as session:
+        row = session.get(TaskRecord, task_id)
+        if not row or (owner_id is not None and row.owner_id != owner_id):
+            return False
+        session.delete(row)
+        return True
+
+
 def load_task_records() -> list[dict]:
     with db_session() as session:
         result = []
@@ -282,6 +316,74 @@ def activity_owner(job_id: str) -> Optional[int]:
     with db_session() as session:
         row = session.get(ActivityJob, job_id)
         return row.owner_id if row else None
+
+
+def activity_dict(row: Optional[ActivityJob]) -> Optional[dict]:
+    if not row:
+        return None
+    try:
+        stats = json.loads(row.stats or "{}")
+    except json.JSONDecodeError:
+        stats = {}
+    try:
+        logs = json.loads(row.logs or "[]")
+    except json.JSONDecodeError:
+        logs = []
+    return {"id": row.id, "owner_id": row.owner_id, "status": row.status, "filename": row.filename, "output_path": row.output_path, "progress": row.progress, "message": row.message, "logs": logs, "stats": stats, "created_at": row.created_at.isoformat() if row.created_at else None}
+
+
+def create_activity_job(job_id: str, filename: str, owner_id: int) -> dict:
+    with db_session() as session:
+        row = ActivityJob(id=job_id, owner_id=owner_id, filename=filename, status="queued", progress=5, message="任务已进入处理队列", stats="{}", logs="[]")
+        session.add(row)
+        session.flush()
+        return activity_dict(row)
+
+
+def get_activity_job(job_id: str, owner_id: Optional[int] = None) -> Optional[dict]:
+    with db_session() as session:
+        row = session.get(ActivityJob, job_id)
+        if not row or (owner_id is not None and row.owner_id != owner_id):
+            return None
+        return activity_dict(row)
+
+
+def list_activity_jobs(owner_id: int, limit: int = 50) -> list[dict]:
+    with db_session() as session:
+        rows = session.scalars(select(ActivityJob).where(ActivityJob.owner_id == owner_id).order_by(ActivityJob.created_at.desc()).limit(limit)).all()
+        return [activity_dict(row) for row in rows]
+
+
+def list_all_activity_jobs(limit: int = 100) -> list[dict]:
+    with db_session() as session:
+        rows = session.scalars(select(ActivityJob).order_by(ActivityJob.created_at.desc()).limit(limit)).all()
+        return [activity_dict(row) for row in rows]
+
+
+def delete_activity_job(job_id: str, owner_id: int) -> str:
+    with db_session() as session:
+        row = session.get(ActivityJob, job_id)
+        if not row or row.owner_id != owner_id:
+            return "not_found"
+        if row.status in {"queued", "running"}:
+            return "active"
+        session.delete(row)
+        return "deleted"
+
+
+def update_activity_job(job_id: str, **values) -> Optional[dict]:
+    with db_session() as session:
+        row = session.get(ActivityJob, job_id)
+        if not row:
+            return None
+        for key in ("status", "progress", "message", "output_path"):
+            if key in values:
+                setattr(row, key, values[key])
+        if "logs" in values:
+            row.logs = json.dumps(values["logs"], ensure_ascii=False)
+        if "stats" in values:
+            row.stats = json.dumps(values["stats"], ensure_ascii=False)
+        return activity_dict(row)
 
 
 def get_settings() -> dict:

@@ -87,7 +87,7 @@ onMounted(bootstrap)
           <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.label }}</span>
         </button>
-        <button v-if="user.role === 'admin'" class="nav-item" :class="{ active: route.path === '/admin' }" type="button" @click="navigate('/admin')"><el-icon><Setting /></el-icon><span>后台管理</span></button>
+        <button v-if="user.role === 'admin'" class="nav-item" :class="{ active: route.path.startsWith('/admin') }" type="button" @click="navigate('/admin')"><el-icon><Setting /></el-icon><span>后台管理</span></button>
       </nav>
       <div class="sidebar-status">
         <span class="status-dot" :class="{ online }" />

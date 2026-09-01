@@ -259,9 +259,8 @@ def load_price_catalog(path: Path = INVENTORY_PATH, log: LogFn = None) -> Dict[s
     with _CACHE_LOCK:
         if path == INVENTORY_PATH and inventory_signature_matches(signature):
             catalog = get_inventory_catalog()
-            if catalog:
-                _log(log, f"使用数据库库存数据，共 {len(catalog)} 个 SKU。")
-                return catalog
+            _log(log, f"使用数据库库存数据，共 {len(catalog)} 个 SKU。")
+            return catalog
         try:
             with PRICE_CACHE_PATH.open("r", encoding="utf-8") as handle:
                 cached = json.load(handle)
