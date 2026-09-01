@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from app.database import create_user
 from app.main import app
 from app.services.auth import hash_password
+from app.services.tasks import task_manager
 
 
 def test_registration_requires_admin_approval():
@@ -33,3 +34,11 @@ def test_admin_can_approve_user_and_change_settings():
         saved = client.put("/api/admin/settings", json=payload)
         assert saved.status_code == 200
         assert saved.json()["order"]["operation_fee"] == 8
+
+
+def test_task_history_is_scoped_to_owner():
+    first = task_manager.create("sales-a.xlsx", "delivery-a.xlsx", None, 101)
+    second = task_manager.create("sales-b.xlsx", "delivery-b.xlsx", None, 202)
+    assert first["id"] in {task["id"] for task in task_manager.list(owner_id=101)}
+    assert second["id"] not in {task["id"] for task in task_manager.list(owner_id=101)}
+    assert task_manager.get(second["id"], owner_id=101) is None
