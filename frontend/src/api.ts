@@ -196,6 +196,11 @@ export async function getAdminSettings() {
   return data
 }
 
+export async function getSettings() {
+  const { data } = await http.get<AppSettings>('/settings')
+  return data
+}
+
 export async function saveAdminSettings(settings: AppSettings) {
   const { data } = await http.put<AppSettings>('/admin/settings', settings)
   return data

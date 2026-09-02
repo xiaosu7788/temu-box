@@ -148,6 +148,11 @@ def status(user: dict = Depends(current_user)):
     }
 
 
+@app.get("/api/settings")
+def get_public_settings(_user: dict = Depends(current_user)):
+    return settings_public()
+
+
 @app.get("/api/inventory")
 def get_inventory_status(_user: dict = Depends(current_user)):
     return inventory_status()

@@ -16,6 +16,8 @@ const settings = reactive<AppSettings>({
     headcost: { '单品': 5, '4件套': 5, '5件套': 5, '6件套': 5, '8件套': 10, '10件套': 10, '12件套': 15 },
     operation_fee: 7,
     extra_item_fee: 2,
+    tail_fee: 0,
+    shipping_subsidy: 0,
   },
   activity: {
     headcost: 5,
@@ -78,7 +80,7 @@ onMounted(load)
         <el-tab-pane label="订单计算">
           <div class="settings-category-grid">
             <div class="settings-category"><h3>头程设置</h3><div class="settings-form-grid"><label v-for="type in orderTypes" :key="type">{{ type }}头程<el-input-number v-model="settings.order.headcost[type]" :min="0" :precision="2" controls-position="right" /></label></div></div>
-            <div class="settings-category"><h3>基础费用</h3><div class="settings-form-grid"><label>操作费<el-input-number v-model="settings.order.operation_fee" :min="0" :precision="2" controls-position="right" /></label><label>续件费<el-input-number v-model="settings.order.extra_item_fee" :min="0" :precision="2" controls-position="right" /></label></div><p class="settings-note">单品和多件套的头程在“头程设置”中分别控制。</p></div>
+            <div class="settings-category"><h3>基础费用</h3><div class="settings-form-grid"><label>操作费<el-input-number v-model="settings.order.operation_fee" :min="0" :precision="2" controls-position="right" /></label><label>续件费<el-input-number v-model="settings.order.extra_item_fee" :min="0" :precision="2" controls-position="right" /></label><label>尾程<el-input-number v-model="settings.order.tail_fee" :min="0" :precision="2" controls-position="right" /></label><label>运费补贴<el-input-number v-model="settings.order.shipping_subsidy" :min="0" :precision="2" controls-position="right" /></label></div><p class="settings-note">尾程计入成本，运费补贴从最终成本中扣减。</p></div>
           </div>
         </el-tab-pane>
         <el-tab-pane label="批量报名活动">

@@ -100,6 +100,8 @@ export interface AppSettings {
     headcost: Record<string, number>
     operation_fee: number
     extra_item_fee: number
+    tail_fee: number
+    shipping_subsidy: number
   }
   activity: {
     headcost: number

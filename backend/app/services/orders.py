@@ -24,6 +24,8 @@ HEADCOST_MAP = {
 }
 OPERATION_FEE = 7
 EXTRA_ITEM_FEE = 2
+TAIL_FEE = 0
+SHIPPING_SUBSIDY = 0
 
 
 def calc_order_cost(sku_items, half_headcost_skus=None, settings=None):
@@ -35,6 +37,8 @@ def calc_order_cost(sku_items, half_headcost_skus=None, settings=None):
     headcost_map = {**HEADCOST_MAP, **order_settings.get("headcost", {})}
     operation_fee = float(order_settings.get("operation_fee", OPERATION_FEE))
     extra_item_fee = float(order_settings.get("extra_item_fee", EXTRA_ITEM_FEE))
+    tail_fee = float(order_settings.get("tail_fee", TAIL_FEE))
+    shipping_subsidy = float(order_settings.get("shipping_subsidy", SHIPPING_SUBSIDY))
     total = 0.0
     total_qty = 0
     for price, set_type, quantity, sku in sku_items:
@@ -48,6 +52,7 @@ def calc_order_cost(sku_items, half_headcost_skus=None, settings=None):
     total += operation_fee
     if total_qty > 1:
         total += (total_qty - 1) * extra_item_fee
+    total += tail_fee - shipping_subsidy
     return round(total, 2)
 
 

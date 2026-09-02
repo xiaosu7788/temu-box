@@ -5,6 +5,7 @@ import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
 import { activityDownloadUrl, deleteActivityTask, getActivityTask, getActivityTasks, getMe, processBulkActivity } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { ActivityTaskItem } from '../types'
+import CostRules from '../components/CostRules.vue'
 
 const files = ref<UploadUserFile[]>([])
 const tasks = ref<ActivityTaskItem[]>([])
@@ -168,6 +169,8 @@ onBeforeUnmount(stopPolling)
       <el-button :icon="RefreshRight" :loading="loadingTasks" @click="loadTasks">刷新任务</el-button>
     </div>
   </section>
+
+  <CostRules mode="activity" />
 
   <section class="section-band activity-tasks-panel">
     <div class="section-heading">

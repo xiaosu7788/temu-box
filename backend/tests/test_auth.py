@@ -56,6 +56,18 @@ def test_admin_can_approve_user_and_change_settings():
         assert saved.json()["order"]["operation_fee"] == 8
 
 
+def test_approved_user_can_view_but_not_update_cost_settings():
+    create_user("settings_reader", hash_password("readerpass123"), status="approved")
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "settings_reader", "password": "readerpass123"})
+        assert login.status_code == 200
+        settings = client.get("/api/settings")
+        assert settings.status_code == 200
+        assert settings.json()["order"]["tail_fee"] == 0
+        assert settings.json()["order"]["shipping_subsidy"] == 0
+        assert client.put("/api/admin/settings", json=settings.json()).status_code == 403
+
+
 def test_task_history_is_scoped_to_owner():
     first = task_manager.create("sales-a.xlsx", "delivery-a.xlsx", None, 101)
     second = task_manager.create("sales-b.xlsx", "delivery-b.xlsx", None, 202)

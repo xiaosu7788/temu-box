@@ -124,6 +124,8 @@ DEFAULT_SETTINGS = {
         "headcost": {"单品": 5, "4件套": 5, "5件套": 5, "6件套": 5, "8件套": 10, "10件套": 10, "12件套": 15},
         "operation_fee": 7,
         "extra_item_fee": 2,
+        "tail_fee": 0,
+        "shipping_subsidy": 0,
     },
     "activity": {
         "headcost": 5,

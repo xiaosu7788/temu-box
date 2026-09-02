@@ -16,3 +16,16 @@ def test_order_cost_is_none_when_price_missing():
 def test_order_cost_uses_admin_settings():
     settings = {"order": {"headcost": {"6件套": 8}, "operation_fee": 9, "extra_item_fee": 3}}
     assert calc_order_cost([(17.1, "6件套", 1, "MB131-491")], settings=settings) == 34.1
+
+
+def test_order_cost_adds_tail_fee_and_subtracts_shipping_subsidy():
+    settings = {
+        "order": {
+            "headcost": {"单品": 5},
+            "operation_fee": 7,
+            "extra_item_fee": 2,
+            "tail_fee": 4,
+            "shipping_subsidy": 1.5,
+        }
+    }
+    assert calc_order_cost([(10, "单品", 2, "MB131-TAIL")], settings=settings) == 41.5

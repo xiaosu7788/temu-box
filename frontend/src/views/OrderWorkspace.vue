@@ -5,6 +5,7 @@ import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
 import { createTask, downloadUrl, getTask } from '../api'
 import { notifyError } from '../feedback'
 import type { TaskItem } from '../types'
+import CostRules from '../components/CostRules.vue'
 
 const salesFiles = ref<UploadUserFile[]>([])
 const deliveryFiles = ref<UploadUserFile[]>([])
@@ -120,6 +121,8 @@ onBeforeUnmount(() => pollTimer && window.clearInterval(pollTimer))
       </el-button>
     </div>
   </section>
+
+  <CostRules mode="order" />
 
   <section v-if="task" class="section-band task-panel">
     <div class="section-heading">

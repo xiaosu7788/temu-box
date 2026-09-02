@@ -26,7 +26,7 @@ def validate_settings(payload: dict) -> dict:
         if value < 0 or value > 1000:
             raise ValueError("订单头程参数必须在 0-1000 之间")
         result["order"]["headcost"][key] = round(value, 2)
-    for key in ("operation_fee", "extra_item_fee"):
+    for key in ("operation_fee", "extra_item_fee", "tail_fee", "shipping_subsidy"):
         value = float(order.get(key, result["order"][key]))
         if value < 0 or value > 1000:
             raise ValueError("订单费用参数必须在 0-1000 之间")
