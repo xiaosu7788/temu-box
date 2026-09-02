@@ -26,6 +26,7 @@ const user = ref<User | null>(null)
 const pageTitle = computed(() => String(route.meta.title || '工作台'))
 const fixedDataPage = computed(() => route.path === '/inventory' || route.path === '/admin/inventory')
 const showRegionPicker = computed(() => route.path === '/orders' || route.path === '/activities')
+const adminInventoryPage = computed(() => route.path === '/admin/inventory')
 
 const menuItems = [
   { path: '/orders', label: '订单计算', icon: DataAnalysis },
@@ -106,16 +107,21 @@ onMounted(bootstrap)
     </aside>
 
     <div class="workspace">
-      <header class="topbar">
+      <header class="topbar" :class="{ 'topbar--admin-inventory': adminInventoryPage }">
         <el-button class="menu-button" :icon="MenuIcon" circle @click="mobileMenu = !mobileMenu" />
-        <div class="topbar-title">
-          <h1>{{ pageTitle }}</h1>
-          <p>Temu-Box</p>
-        </div>
-        <RegionPicker v-if="showRegionPicker" v-model="selectedRegionCode" compact />
+        <template v-if="adminInventoryPage">
+          <div id="admin-inventory-topbar-target" class="admin-inventory-topbar-target"></div>
+        </template>
+        <template v-else>
+          <div class="topbar-title">
+            <h1>{{ pageTitle }}</h1>
+            <p>Temu-Box</p>
+          </div>
+          <RegionPicker v-if="showRegionPicker" v-model="selectedRegionCode" compact />
+        </template>
         <el-tag v-if="user.role === 'admin'" class="role-tag" type="warning">管理员</el-tag>
       </header>
-      <main class="page-content" :class="{ 'page-content--fixed': fixedDataPage }">
+      <main class="page-content" :class="{ 'page-content--fixed': fixedDataPage, 'page-content--admin-inventory': adminInventoryPage }">
         <router-view />
       </main>
     </div>

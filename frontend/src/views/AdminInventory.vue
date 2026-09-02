@@ -153,26 +153,30 @@ onMounted(load)
 
 <template>
   <div class="admin-page admin-inventory-page admin-inventory-page--fixed">
-    <section class="section-band admin-inventory-overview">
-      <div class="section-heading">
-        <div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>库存管理</h2><p>管理员可以更新库存表、重建缓存和维护库存明细</p></div></div>
-        <div class="admin-settings-actions">
+    <Teleport to="#admin-inventory-topbar-target">
+      <div class="admin-inventory-topbar">
+        <el-button class="admin-inventory-back" text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button>
+        <div class="admin-inventory-heading">
+          <h1>库存管理</h1>
+          <span>维护库存表和库存明细</span>
+        </div>
+        <div class="admin-inventory-summary">
+          <span>SKU <strong>{{ status?.sku_count || 0 }}</strong></span>
+          <span>文件 <strong>{{ status?.exists ? '正常' : '缺失' }}</strong></span>
+          <span>大小 <strong>{{ formatSize(status?.size ?? null) }}</strong></span>
+          <span>缓存 <strong>{{ status?.cache_valid ? '有效' : '待重建' }}</strong></span>
+          <span>更新 <strong>{{ status?.modified_at || '-' }}</strong></span>
+        </div>
+        <div class="admin-inventory-topbar-actions">
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <el-upload :show-file-list="false" :auto-upload="false" accept=".xlsx,.xlsm" @change="handleInventoryFile"><el-button type="primary" :icon="Upload" :loading="loading">更新库存表</el-button></el-upload>
           <el-button :icon="Refresh" :loading="loading" @click="rebuild">重建缓存</el-button>
           <el-button type="primary" :icon="Plus" @click="openCreateDialog">添加库存</el-button>
         </div>
       </div>
-      <div class="metric-strip inventory-metrics">
-        <div><span>文件状态</span><strong>{{ status?.exists ? '正常' : '缺失' }}</strong></div>
-        <div><span>文件大小</span><strong>{{ formatSize(status?.size ?? null) }}</strong></div>
-        <div><span>SKU 数量</span><strong>{{ status?.sku_count || 0 }}</strong></div>
-        <div><span>缓存状态</span><strong>{{ status?.cache_valid ? '有效' : '待重建' }}</strong></div>
-        <div><span>更新时间</span><strong class="small-value">{{ status?.modified_at || '-' }}</strong></div>
-      </div>
-    </section>
+    </Teleport>
 
-    <section class="section-band admin-inventory-table admin-inventory-data-panel">
+    <section class="section-band admin-inventory-data-panel">
       <div class="section-heading"><div><h2>库存明细</h2><p>共 {{ total }} 个 SKU，可单独添加、编辑或删除库存记录；重新上传 Excel 后以新表为准</p></div></div>
       <div class="toolbar-row inventory-search-row">
         <el-input v-model="query" clearable placeholder="输入 SKU 查询" :prefix-icon="Search" @keyup.enter="searchItems" @clear="clearSearch" />

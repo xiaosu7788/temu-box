@@ -49,7 +49,20 @@ button, input, textarea { font: inherit; }
 .role-tag { margin-left: auto; }
 .topbar .region-picker--compact { width: auto; min-height: 40px; margin: 0 0 0 22px; padding: 0; justify-content: flex-start; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
 .topbar .region-picker--compact > span { font-size: 12px; }
-.topbar .region-picker--compact .el-select { width: 170px; }
+.topbar .region-picker--compact .el-select { width: 170px; }.topbar--admin-inventory { height: 96px; align-items: center; }
+.admin-inventory-topbar-target { min-width: 0; flex: 1 1 auto; }
+.admin-inventory-topbar { min-width: 0; display: flex; align-items: center; gap: 18px; }
+.admin-inventory-back { flex: 0 0 auto; margin-left: -10px; }
+.admin-inventory-heading { min-width: 150px; display: grid; gap: 3px; }
+.admin-inventory-heading h1 { margin: 0; color: #18212f; font-size: 20px; line-height: 1.25; letter-spacing: 0; }
+.admin-inventory-heading span { color: var(--muted); font-size: 12px; }
+.admin-inventory-summary { min-width: 0; display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.admin-inventory-summary span { display: inline-flex; align-items: baseline; gap: 5px; }
+.admin-inventory-summary strong { color: #18212f; font-size: 14px; }
+.admin-inventory-topbar-actions { min-width: 0; margin-left: auto; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.admin-inventory-topbar-actions .el-upload { display: inline-flex; }
+.admin-inventory-topbar-actions .el-button { white-space: nowrap; }
+.page-content--admin-inventory { height: calc(100vh - 96px); padding-top: 20px; padding-bottom: 24px; }
 .page-content { width: 100%; max-width: none; padding: 28px 34px 48px; }
 .page-content--fixed { height: calc(100vh - 76px); overflow: hidden; }
 
@@ -308,6 +321,13 @@ button, input, textarea { font: inherit; }
   .auth-submit { min-height: 42px; }
   .auth-review-note { margin-top: 12px; }
 }
+@media (max-width: 1280px) and (min-width: 721px) {
+  .topbar--admin-inventory { height: 112px; align-items: flex-start; padding-top: 18px; padding-bottom: 18px; }
+  .topbar--admin-inventory .admin-inventory-topbar { align-items: flex-start; flex-wrap: wrap; gap: 8px 14px; }
+  .topbar--admin-inventory .admin-inventory-summary { order: 3; flex: 1 1 100%; }
+  .topbar--admin-inventory .admin-inventory-topbar-actions { order: 4; flex: 1 1 100%; margin-left: 0; justify-content: flex-start; }
+  .page-content--admin-inventory { height: calc(100vh - 112px); }
+}
 @media (max-width: 980px) {
   .upload-grid { grid-template-columns: 1fr 1fr; }
   .upload-panel.optional { grid-column: 1 / -1; }
@@ -323,7 +343,16 @@ button, input, textarea { font: inherit; }
   .sidebar.open { transform: translateX(0); }
   .sidebar-backdrop { position: fixed; inset: 0; z-index: 20; display: block; width: 100%; border: 0; background: rgba(15, 23, 42, .45); }
   .workspace { margin-left: 0; }
-  .topbar { height: 68px; padding: 0 16px; }
+  .topbar { height: 68px; padding: 0 16px; }  .topbar--admin-inventory { height: 132px; align-items: flex-start; padding-top: 14px; padding-bottom: 14px; }
+  .topbar--admin-inventory .admin-inventory-topbar { align-items: flex-start; flex-wrap: wrap; gap: 8px 12px; }
+  .topbar--admin-inventory .admin-inventory-back { margin-left: 0; }
+  .topbar--admin-inventory .admin-inventory-heading { flex: 1 1 130px; }
+  .topbar--admin-inventory .admin-inventory-heading h1 { font-size: 17px; }
+  .topbar--admin-inventory .admin-inventory-summary { order: 3; flex: 1 1 100%; gap: 10px; }
+  .topbar--admin-inventory .admin-inventory-topbar-actions { order: 4; flex: 1 1 100%; margin-left: 0; justify-content: flex-start; gap: 6px; }
+  .topbar--admin-inventory .admin-inventory-topbar-actions .el-button { padding-inline: 10px; }
+  .page-content--admin-inventory { height: calc(100vh - 132px); padding-top: 14px; padding-bottom: 14px; }
+  .page-content--fixed.page-content--admin-inventory { height: calc(100vh - 132px); }
   .topbar .region-picker--compact { margin-left: auto; }
   .topbar .region-picker--compact > span { display: none; }
   .topbar .region-picker--compact .el-select { width: min(150px, 36vw); }
