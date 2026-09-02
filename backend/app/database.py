@@ -15,7 +15,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from app.config import DATA_DIR, DATABASE_URL, DB_CONNECT_TIMEOUT, DB_STATEMENT_TIMEOUT_MS, HALF_HEADCOST_PATH, PRICE_CACHE_PATH, TASKS_DIR
 
-logger = logging.getLogger("sales_tool.database")
+logger = logging.getLogger("temubox.database")
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgres://") :]
 elif DATABASE_URL.startswith("postgresql://"):
@@ -631,5 +631,5 @@ def database_status() -> dict:
         return {"status": "error", "dialect": engine.dialect.name}
 
 
-if os.environ.get("SALES_TOOL_SKIP_DB_INIT") != "1":
+if os.environ.get("TEMUBOX_SKIP_DB_INIT") != "1":
     init_database()

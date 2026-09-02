@@ -1,1 +1,1 @@
-"""Sales Tool API application package."""
+"""Temu-Box API application package."""

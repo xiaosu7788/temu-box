@@ -6,7 +6,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-os.environ["SALES_TOOL_SKIP_DB_INIT"] = "1"
+os.environ["TEMUBOX_SKIP_DB_INIT"] = "1"
 
 from app.config import DATABASE_URL  # noqa: E402
 from app.database import Base  # noqa: E402

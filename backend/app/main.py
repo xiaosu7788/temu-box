@@ -73,7 +73,7 @@ def bootstrap_admin() -> None:
     if ADMIN_PASSWORD:
         ensure_admin_user(ADMIN_USERNAME, hash_password(ADMIN_PASSWORD))
     elif not get_user_by_username(ADMIN_USERNAME):
-        logging.getLogger("sales_tool.auth").warning("ADMIN_PASSWORD 未配置，管理员账号尚未创建")
+        logging.getLogger("temubox.auth").warning("ADMIN_PASSWORD 未配置，管理员账号尚未创建")
 
 
 def validate_excel(upload: UploadFile) -> None:

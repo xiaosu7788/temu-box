@@ -15,7 +15,7 @@ from app.services.activity import normalize_parse_config, process_activity_workb
 from app.services.regions import region_snapshot
 
 
-logger = logging.getLogger("sales_tool.activity_tasks")
+logger = logging.getLogger("temubox.activity_tasks")
 
 
 class ActivityTaskManager:

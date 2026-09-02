@@ -7,14 +7,14 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 API_HOST = os.environ.get("API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("API_PORT", "8089"))
-DATA_DIR = Path(os.environ.get("SALES_TOOL_DATA_DIR", PROJECT_DIR / "data")).resolve()
+DATA_DIR = Path(os.environ.get("TEMUBOX_DATA_DIR", PROJECT_DIR / "data")).resolve()
 INVENTORY_DIR = DATA_DIR / "inventories"
 TASKS_DIR = DATA_DIR / "tasks"
 LOGS_DIR = DATA_DIR / "logs"
 ACTIVITY_DIR = DATA_DIR / "activities"
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 if not DATABASE_URL:
-    DATABASE_URL = f"sqlite:///{(DATA_DIR / 'sales_tool.db').as_posix()}"
+    DATABASE_URL = f"sqlite:///{(DATA_DIR / 'temubox.db').as_posix()}"
 DB_CONNECT_TIMEOUT = max(3, int(os.environ.get("DB_CONNECT_TIMEOUT", "10")))
 DB_STATEMENT_TIMEOUT_MS = max(1000, int(os.environ.get("DB_STATEMENT_TIMEOUT_MS", "30000")))
 
@@ -37,7 +37,7 @@ TASK_HISTORY_LIMIT = max(20, int(os.environ.get("TASK_HISTORY_LIMIT", "100")))
 AUTH_SECRET = os.environ.get("AUTH_SECRET", "change-this-secret-in-production")
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin").strip()
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "").strip()
-SESSION_COOKIE_NAME = "sales_tool_session"
+SESSION_COOKIE_NAME = "temubox_session"
 SESSION_MAX_AGE = max(3600, int(os.environ.get("SESSION_MAX_AGE", "604800")))
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() in {"1", "true", "yes"}
 

@@ -19,7 +19,7 @@ from app.services.inventory import load_price_catalog
 from app.services.orders import build_delivery_sku_map, generate_summary
 
 
-logger = logging.getLogger("sales_tool.tasks")
+logger = logging.getLogger("temubox.tasks")
 
 
 def now_text() -> str:
