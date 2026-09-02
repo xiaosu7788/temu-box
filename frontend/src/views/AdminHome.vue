@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowRight, Box, Clock, SetUp, UserFilled } from '@element-plus/icons-vue'
+import { ArrowRight, Box, Clock, PriceTag, SetUp, UserFilled } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
@@ -24,6 +24,11 @@ function open(path: string) {
         <button class="admin-module-entry" type="button" @click="open('/admin/settings')">
           <span class="admin-module-icon"><el-icon><SetUp /></el-icon></span>
           <span class="admin-module-copy"><strong>成本参数</strong><small>配置订单计算和批量报名活动的规则</small></span>
+          <el-icon class="admin-module-arrow"><ArrowRight /></el-icon>
+        </button>
+        <button class="admin-module-entry" type="button" @click="open('/admin/activity-settings')">
+          <span class="admin-module-icon"><el-icon><PriceTag /></el-icon></span>
+          <span class="admin-module-copy"><strong>批量报活动设置</strong><small>配置默认SKC格式和识别规则</small></span>
           <el-icon class="admin-module-arrow"><ArrowRight /></el-icon>
         </button>
         <button class="admin-module-entry" type="button" @click="open('/admin/inventory')">

@@ -88,13 +88,18 @@ onMounted(bootstrap)
           <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.label }}</span>
         </button>
-        <button v-if="user.role === 'admin'" class="nav-item" :class="{ active: route.path.startsWith('/admin') }" type="button" @click="navigate('/admin')"><el-icon><Setting /></el-icon><span>后台管理</span></button>
+
       </nav>
-      <div class="sidebar-status">
-        <span class="status-dot" :class="{ online }" />
-        <span>{{ online ? 'API 正常' : 'API 离线' }}</span>
+      <div class="sidebar-footer">
+        <button v-if="user.role === 'admin'" class="nav-item sidebar-admin" :class="{ active: route.path.startsWith('/admin') }" type="button" @click="navigate('/admin')">
+          <el-icon><Setting /></el-icon><span>后台管理</span>
+        </button>
+        <div class="sidebar-status">
+          <span class="status-dot" :class="{ online }" />
+          <span>{{ online ? 'API 正常' : 'API 离线' }}</span>
+        </div>
+        <div class="sidebar-user"><el-icon><UserFilled /></el-icon><span>{{ user.display_name || user.username }}</span><el-button text type="info" @click="signOut">退出</el-button></div>
       </div>
-      <div class="sidebar-user"><el-icon><UserFilled /></el-icon><span>{{ user.display_name || user.username }}</span><el-button text type="info" @click="signOut">退出</el-button></div>
     </aside>
 
     <div class="workspace">

@@ -246,10 +246,12 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None, p
     workbook = load_workbook(io.BytesIO(source), data_only=False, keep_links=False)
     try:
         worksheet, header_row, columns = _find_headers(workbook)
-        normalized_parse_config = normalize_parse_config(parse_config)
+        activity_settings = (settings or {}).get("activity", {})
+        custom_parse_config = parse_config is not None
+        effective_parse_config = parse_config if custom_parse_config else activity_settings.get("default_skc_rules")
+        normalized_parse_config = normalize_parse_config(effective_parse_config)
         price_column = columns["price"]
         skc_column = columns["skc"]
-        activity_settings = (settings or {}).get("activity", {})
         uplift_limit = float(activity_settings.get("uplift_limit", 1))
         rows_to_delete = []
         updated = 0
@@ -298,7 +300,7 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None, p
             "skipped_rows": skipped,
             "remaining_data_rows": input_data_rows - len(rows_to_delete),
             "uplift_limit": round(uplift_limit, 2),
-            "custom_skc_rules": normalized_parse_config is not None,
+            "custom_skc_rules": custom_parse_config,
         }
     finally:
         workbook.close()

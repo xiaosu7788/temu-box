@@ -68,6 +68,31 @@ def test_approved_user_can_view_but_not_update_cost_settings():
         assert client.put("/api/admin/settings", json=settings.json()).status_code == 403
 
 
+def test_admin_can_manage_default_activity_skc_rules():
+    create_user("activity_rules_admin", hash_password("rulesadmin123"), role="admin", status="approved")
+    rules = {
+        "set_keywords": ["bundle", ""],
+        "set_mappings": [{"pattern": "四件组合", "pieces": 4}],
+        "single_mode": "after_marker",
+        "single_delimiter": "-",
+        "single_marker": "price",
+    }
+    with TestClient(app) as client:
+        client.post("/api/auth/login", json={"username": "activity_rules_admin", "password": "rulesadmin123"})
+        saved = client.put("/api/admin/activity-settings/skc-rules", json=rules)
+        assert saved.status_code == 200
+        assert saved.json() == rules
+        assert client.get("/api/admin/activity-settings/skc-rules").json() == rules
+        assert client.get("/api/settings").json()["activity"]["default_skc_rules"] == rules
+
+
+def test_regular_user_cannot_update_default_activity_skc_rules():
+    create_user("activity_rules_user", hash_password("rulesuser123"), status="approved")
+    with TestClient(app) as client:
+        client.post("/api/auth/login", json={"username": "activity_rules_user", "password": "rulesuser123"})
+        rules = client.get("/api/settings").json()["activity"]["default_skc_rules"]
+        assert client.put("/api/admin/activity-settings/skc-rules", json=rules).status_code == 403
+
 def test_admin_can_update_and_delete_regular_users():
     admin = create_user("user_manager", hash_password("managerpass123"), role="admin", status="approved")
     target = create_user("managed_user", hash_password("oldpassword123"), status="approved")

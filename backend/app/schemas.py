@@ -53,6 +53,19 @@ class AdminUserUpdateRequest(BaseModel):
     password: Optional[str] = Field(default=None, min_length=8, max_length=128)
 
 
+class ActivitySetMappingPayload(BaseModel):
+    pattern: str
+    pieces: int
+
+
+class ActivitySkuRulesPayload(BaseModel):
+    set_keywords: List[str] = Field(default_factory=list)
+    set_mappings: List[ActivitySetMappingPayload] = Field(default_factory=list)
+    single_mode: str
+    single_delimiter: str = "-"
+    single_marker: str = "price"
+
+
 class SettingsPayload(BaseModel):
     order: Dict[str, object]
     activity: Dict[str, object]

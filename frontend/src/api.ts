@@ -227,3 +227,13 @@ export async function saveAdminSettings(settings: AppSettings) {
   const { data } = await http.put<AppSettings>('/admin/settings', settings)
   return data
 }
+
+export async function getAdminActivitySkuRules() {
+  const { data } = await http.get<ActivitySkuRules>('/admin/activity-settings/skc-rules')
+  return data
+}
+
+export async function saveAdminActivitySkuRules(rules: ActivitySkuRules) {
+  const { data } = await http.put<ActivitySkuRules>('/admin/activity-settings/skc-rules', rules)
+  return data
+}

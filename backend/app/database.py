@@ -133,6 +133,13 @@ DEFAULT_SETTINGS = {
         "uplift_limit": 1,
         "set_prices": {"4": 42, "5": 45, "6": 48, "8": 71, "10": 75, "12": 92},
         "single_tiers": [{"min_price": 0, "profit": 0}],
+        "default_skc_rules": {
+            "set_keywords": ["piece", "件套", "套装"],
+            "set_mappings": [],
+            "single_mode": "last_segment",
+            "single_delimiter": "-",
+            "single_marker": "price",
+        },
     },
 }
 

@@ -93,6 +93,32 @@ def test_process_activity_workbook_updates_filters_and_preserves_sheets(tmp_path
     assert 45 < rows[3][1] <= 45.5
 
 
+def test_activity_uses_default_skc_rules_from_settings(tmp_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SKC货号", "活动申报价格"])
+    sheet.append(["MB131-price17.1", 40])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+    settings = {
+        "activity": {
+            "default_skc_rules": {
+                "set_keywords": ["piece"],
+                "set_mappings": [],
+                "single_mode": "after_marker",
+                "single_delimiter": "-",
+                "single_marker": "price",
+            }
+        }
+    }
+    output = tmp_path / "default-rules.xlsx"
+
+    stats = process_activity_workbook(content.getvalue(), output, settings)
+
+    assert stats["processed_rows"] == 1
+    assert stats["custom_skc_rules"] is False
+
 def test_activity_uplift_limit_uses_configured_value(tmp_path):
     output = tmp_path / "limited-result.xlsx"
     settings = {"activity": {"uplift_limit": 0.25}}

@@ -35,7 +35,7 @@ from app.database import (
     update_user_credentials,
     update_user_status,
 )
-from app.schemas import AdminUserUpdateRequest, LoginRequest, RegisterRequest, SettingsPayload, SkuQueryRequest
+from app.schemas import ActivitySkuRulesPayload, AdminUserUpdateRequest, LoginRequest, RegisterRequest, SettingsPayload, SkuQueryRequest
 from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
 from app.services.half_headcost import delete_entry, load_entries, merge_upload
 from app.services.activity import normalize_parse_config, preview_activity_workbook
@@ -540,5 +540,23 @@ def admin_get_settings(_admin: dict = Depends(admin_user)):
 def admin_update_settings(payload: SettingsPayload, _admin: dict = Depends(admin_user)):
     try:
         return update_settings(payload.model_dump())
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/admin/activity-settings/skc-rules")
+def admin_get_activity_skc_rules(_admin: dict = Depends(admin_user)):
+    return settings_public()["activity"]["default_skc_rules"]
+
+
+@app.put("/api/admin/activity-settings/skc-rules")
+def admin_update_activity_skc_rules(payload: ActivitySkuRulesPayload, _admin: dict = Depends(admin_user)):
+    try:
+        rules = normalize_parse_config(payload.model_dump())
+        if rules is None:
+            raise ValueError("默认SKC识别规则不能为空")
+        settings = settings_public()
+        settings["activity"]["default_skc_rules"] = rules
+        return update_settings(settings)["activity"]["default_skc_rules"]
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

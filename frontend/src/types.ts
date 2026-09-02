@@ -146,5 +146,6 @@ export interface AppSettings {
     uplift_limit: number
     set_prices: Record<string, number>
     single_tiers: Array<{ min_price: number; profit: number }>
+    default_skc_rules: ActivitySkuRules
   }
 }
