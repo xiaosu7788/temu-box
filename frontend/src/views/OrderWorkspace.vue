@@ -75,6 +75,8 @@ onBeforeUnmount(() => pollTimer && window.clearInterval(pollTimer))
 </script>
 
 <template>
+  <CostRules mode="order" />
+
   <section class="section-band">
     <div class="section-heading">
       <div>
@@ -121,8 +123,6 @@ onBeforeUnmount(() => pollTimer && window.clearInterval(pollTimer))
       </el-button>
     </div>
   </section>
-
-  <CostRules mode="order" />
 
   <section v-if="task" class="section-band task-panel">
     <div class="section-heading">

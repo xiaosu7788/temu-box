@@ -143,6 +143,8 @@ onBeforeUnmount(stopPolling)
 </script>
 
 <template>
+  <CostRules mode="activity" />
+
   <section class="section-band activity-upload-panel">
     <div class="section-heading">
       <div>
@@ -169,8 +171,6 @@ onBeforeUnmount(stopPolling)
       <el-button :icon="RefreshRight" :loading="loadingTasks" @click="loadTasks">刷新任务</el-button>
     </div>
   </section>
-
-  <CostRules mode="activity" />
 
   <section class="section-band activity-tasks-panel">
     <div class="section-heading">
