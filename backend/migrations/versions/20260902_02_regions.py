@@ -71,10 +71,8 @@ def upgrade() -> None:
 
     region_id = bind.execute(sa.text("SELECT id FROM regions WHERE code = 'US'")).scalar()
     if region_id is None:
-        result = bind.execute(sa.text("INSERT INTO regions (code, name, currency, enabled, is_default, sort_order, created_at, updated_at) VALUES ('US', '美国区', 'CNY', true, true, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
-        region_id = result.lastrowid
-        if region_id is None:
-            region_id = bind.execute(sa.text("SELECT id FROM regions WHERE code = 'US'")).scalar()
+        bind.execute(sa.text("INSERT INTO regions (code, name, currency, enabled, is_default, sort_order, created_at, updated_at) VALUES ('US', '美国区', 'CNY', true, true, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
+        region_id = bind.execute(sa.text("SELECT id FROM regions WHERE code = 'US'")).scalar_one()
     order = _setting(bind, "order", ORDER_DEFAULT)
     activity = _setting(bind, "activity", ACTIVITY_DEFAULT)
     existing = bind.execute(sa.text("SELECT module FROM region_configs WHERE region_id = :id"), {"id": region_id}).scalars().all()
