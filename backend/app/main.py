@@ -26,7 +26,9 @@ from app.config import (
 from app.database import (
     create_user,
     database_status,
+    create_inventory_item,
     delete_inventory_item,
+    update_inventory_item,
     delete_user,
     ensure_admin_user,
     get_activity_skc_rules,
@@ -37,7 +39,7 @@ from app.database import (
     update_user_status,
     save_activity_skc_rules,
 )
-from app.schemas import ActivitySkuRulesPayload, AdminUserUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest
+from app.schemas import ActivitySkuRulesPayload, AdminUserUpdateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest
 from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
 from app.services.half_headcost import delete_entry, load_entries, merge_upload
 from app.services.activity import normalize_parse_config, preview_activity_workbook
@@ -343,6 +345,31 @@ def admin_inventory_items(
     return {"total": len(items), "items": items[start:start + page_size]}
 
 
+@app.post("/api/admin/inventory/items", status_code=201)
+def admin_create_inventory_item(payload: InventoryItemCreateRequest, _admin: dict = Depends(admin_user)):
+    normalized = payload.sku.strip().upper()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="SKU 不能为空")
+    try:
+        item = create_inventory_item(normalized, payload.price, payload.set_type.strip() or "单品")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"message": "库存明细已添加", "item": item, **inventory_status()}
+
+
+@app.put("/api/admin/inventory/items/{sku}")
+def admin_update_inventory_item(sku: str, payload: InventoryItemUpdateRequest, _admin: dict = Depends(admin_user)):
+    old_sku = sku.strip().upper()
+    normalized = payload.sku.strip().upper()
+    if not old_sku or not normalized:
+        raise HTTPException(status_code=400, detail="SKU 不能为空")
+    try:
+        item = update_inventory_item(old_sku, normalized, payload.price, payload.set_type.strip() or "单品")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not item:
+        raise HTTPException(status_code=404, detail="库存 SKU 不存在")
+    return {"message": "库存明细已更新", "item": item, **inventory_status()}
 @app.delete("/api/admin/inventory/items/{sku}")
 def admin_delete_inventory_item(sku: str, _admin: dict = Depends(admin_user)):
     normalized = sku.strip().upper()

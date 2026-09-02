@@ -131,6 +131,15 @@ export async function getAdminInventoryItems(query = '', page = 1, pageSize = 30
   return data
 }
 
+export async function createInventoryItem(payload: { sku: string; price: number | null; set_type: string }) {
+  const { data } = await http.post<{ item: SkuResult }>('/admin/inventory/items', payload)
+  return data.item
+}
+
+export async function updateInventoryItem(oldSku: string, payload: { sku: string; price: number | null; set_type: string }) {
+  const { data } = await http.put<{ item: SkuResult }>(`/admin/inventory/items/${encodeURIComponent(oldSku)}`, payload)
+  return data.item
+}
 export async function deleteInventoryItem(sku: string) {
   const { data } = await http.delete<InventoryStatus & { message: string; sku: string }>(`/admin/inventory/items/${encodeURIComponent(sku)}`)
   return data

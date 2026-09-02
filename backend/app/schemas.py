@@ -9,6 +9,17 @@ class SkuQueryRequest(BaseModel):
     skus: List[str] = Field(default_factory=list, max_length=500)
 
 
+class InventoryItemCreateRequest(BaseModel):
+    sku: str = Field(min_length=1, max_length=255)
+    price: Optional[float] = Field(default=None, ge=0, le=1000000)
+    set_type: str = Field(default="单品", min_length=1, max_length=64)
+
+
+class InventoryItemUpdateRequest(BaseModel):
+    sku: str = Field(min_length=1, max_length=255)
+    price: Optional[float] = Field(default=None, ge=0, le=1000000)
+    set_type: str = Field(default="单品", min_length=1, max_length=64)
+
 class SkuResult(BaseModel):
     sku: str
     found: bool

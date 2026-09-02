@@ -302,6 +302,53 @@ def get_inventory_catalog() -> dict:
         return {row.sku: {key: getattr(row, key) for key in ("sku", "price", "set_type", "source_sheet", "source_row", "source_column")} for row in rows if row.sku not in excluded}
 
 
+def _inventory_item_values(row: InventoryItem) -> dict:
+    return {key: getattr(row, key) for key in ("sku", "price", "set_type", "source_sheet", "source_row", "source_column")}
+
+
+def _update_current_inventory_count(session) -> None:
+    session.flush()
+    version = session.scalar(select(InventoryVersion).where(InventoryVersion.is_current.is_(True)).order_by(InventoryVersion.id.desc()))
+    if version:
+        version.sku_count = session.query(InventoryItem).count()
+
+
+def create_inventory_item(sku: str, price: Optional[float], set_type: str) -> dict:
+    with db_session() as session:
+        if session.get(InventoryItem, sku):
+            raise ValueError("库存 SKU 已存在")
+        session.query(InventoryExclusion).filter(InventoryExclusion.sku == sku).delete()
+        row = InventoryItem(sku=sku, price=price, set_type=set_type, source_sheet="手动维护")
+        session.add(row)
+        _update_current_inventory_count(session)
+        session.flush()
+        return _inventory_item_values(row)
+
+
+def update_inventory_item(old_sku: str, sku: str, price: Optional[float], set_type: str) -> Optional[dict]:
+    with db_session() as session:
+        row = session.get(InventoryItem, old_sku)
+        if not row:
+            return None
+        if sku != old_sku and session.get(InventoryItem, sku):
+            raise ValueError("库存 SKU 已存在")
+        if sku != old_sku:
+            session.delete(row)
+            session.flush()
+            row = InventoryItem(sku=sku)
+            session.add(row)
+        row.price = price
+        row.set_type = set_type
+        row.source_sheet = "手动维护"
+        row.source_row = None
+        row.source_column = None
+        row.inventory_version_id = None
+        session.query(InventoryExclusion).filter(InventoryExclusion.sku.in_([old_sku, sku])).delete(synchronize_session=False)
+        _update_current_inventory_count(session)
+        session.flush()
+        return _inventory_item_values(row)
+
+
 def delete_inventory_item(sku: str) -> bool:
     with db_session() as session:
         row = session.get(InventoryItem, sku)
@@ -310,9 +357,7 @@ def delete_inventory_item(sku: str) -> bool:
         session.delete(row)
         if not session.get(InventoryExclusion, sku):
             session.add(InventoryExclusion(sku=sku))
-        version = session.scalar(select(InventoryVersion).where(InventoryVersion.is_current.is_(True)).order_by(InventoryVersion.id.desc()))
-        if version:
-            version.sku_count = session.query(InventoryItem).count()
+        _update_current_inventory_count(session)
         return True
 
 
