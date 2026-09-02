@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -348,9 +349,12 @@ def get_activity_job(job_id: str, owner_id: Optional[int] = None) -> Optional[di
         return activity_dict(row)
 
 
-def list_activity_jobs(owner_id: int, limit: int = 50) -> list[dict]:
+def list_activity_jobs(owner_id: Optional[int], limit: int = 50) -> list[dict]:
     with db_session() as session:
-        rows = session.scalars(select(ActivityJob).where(ActivityJob.owner_id == owner_id).order_by(ActivityJob.created_at.desc()).limit(limit)).all()
+        statement = select(ActivityJob)
+        if owner_id is not None:
+            statement = statement.where(ActivityJob.owner_id == owner_id)
+        rows = session.scalars(statement.order_by(ActivityJob.created_at.desc()).limit(limit)).all()
         return [activity_dict(row) for row in rows]
 
 
@@ -388,13 +392,29 @@ def update_activity_job(job_id: str, **values) -> Optional[dict]:
 
 def get_settings() -> dict:
     with db_session() as session:
-        settings = dict(DEFAULT_SETTINGS)
+        # Merge persisted values into every default branch so older or partial
+        # records cannot make newly added fields appear empty in the UI.
+        settings = deepcopy(DEFAULT_SETTINGS)
         for row in session.scalars(select(AppSetting)).all():
             try:
-                settings[row.key] = json.loads(row.value)
+                value = json.loads(row.value)
+                if isinstance(value, dict) and isinstance(settings.get(row.key), dict):
+                    settings[row.key] = _merge_dict(settings[row.key], value)
+                else:
+                    settings[row.key] = value
             except json.JSONDecodeError:
                 logger.warning("Invalid setting ignored: %s", row.key)
         return settings
+
+
+def _merge_dict(default: dict, value: dict) -> dict:
+    merged = deepcopy(default)
+    for key, item in value.items():
+        if isinstance(item, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_dict(merged[key], item)
+        else:
+            merged[key] = item
+    return merged
 
 
 def save_settings(settings: dict) -> dict:

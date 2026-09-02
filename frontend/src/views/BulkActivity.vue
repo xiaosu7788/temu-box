@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Delete, Download, RefreshRight, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
@@ -137,6 +137,7 @@ async function bootstrap() {
 }
 
 onMounted(bootstrap)
+onActivated(() => { void loadTasks() })
 onBeforeUnmount(stopPolling)
 </script>
 

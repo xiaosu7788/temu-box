@@ -57,6 +57,11 @@ export async function getTasks(limit = 50) {
   return data.items
 }
 
+export async function getMyActivityTasks(limit = 50) {
+  const { data } = await http.get<{ items: ActivityTaskItem[] }>('/activities', { params: { limit } })
+  return data.items
+}
+
 export async function deleteTask(id: string) {
   await http.delete(`/tasks/${encodeURIComponent(id)}`)
 }

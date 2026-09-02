@@ -57,7 +57,7 @@ class ActivityTaskManager:
             return self.public(job)
         return self.public(get_activity_job(job_id, owner_id))
 
-    def list(self, owner_id: int, limit: int = 50) -> list[dict]:
+    def list(self, owner_id: Optional[int], limit: int = 50) -> list[dict]:
         jobs = list_activity_jobs(owner_id, limit)
         with self._lock:
             for job in jobs:

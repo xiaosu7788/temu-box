@@ -91,3 +91,30 @@ def test_activity_task_is_visible_after_submission():
         listed = client.get("/api/activities")
         assert listed.status_code == 200
         assert job_id in {item["id"] for item in listed.json()["items"]}
+
+
+def test_admin_activity_task_list_includes_all_jobs():
+    create_user("activity_admin", hash_password("activityadmin123"), role="admin", status="approved")
+    create_user("activity_user", hash_password("activityuser123"), status="approved")
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SKC货号", "活动申报价格"])
+    sheet.append(["MB131-ADMIN-5", 17])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    with TestClient(app) as client:
+        client.post("/api/auth/login", json={"username": "activity_user", "password": "activityuser123"})
+        response = client.post(
+            "/api/activities/bulk",
+            files={"file": ("activity-user.xlsx", content.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert response.status_code == 202
+        job_id = response.json()["id"]
+
+        client.post("/api/auth/logout")
+        client.post("/api/auth/login", json={"username": "activity_admin", "password": "activityadmin123"})
+        listed = client.get("/api/activities")
+        assert listed.status_code == 200
+        assert job_id in {item["id"] for item in listed.json()["items"]}

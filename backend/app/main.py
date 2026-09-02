@@ -206,7 +206,10 @@ async def process_bulk_activity(file: UploadFile = File(...), user: dict = Depen
 
 @app.get("/api/activities")
 def list_activity_tasks(limit: int = Query(50, ge=1, le=100), user: dict = Depends(current_user)):
-    return {"items": activity_task_manager.list(user["id"], limit)}
+    # Admins can see all activity jobs, including legacy jobs without an owner.
+    # Regular users remain strictly scoped to their own records.
+    owner_id = None if user["role"] == "admin" else user["id"]
+    return {"items": activity_task_manager.list(owner_id, limit)}
 
 
 @app.get("/api/activities/{job_id}")

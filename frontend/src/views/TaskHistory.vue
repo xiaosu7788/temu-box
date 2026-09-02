@@ -2,10 +2,11 @@
 import { onMounted, ref } from 'vue'
 import { Delete, Download, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { deleteTask, downloadUrl, errorMessage, getTasks } from '../api'
-import type { TaskItem } from '../types'
+import { activityDownloadUrl, deleteActivityTask, deleteTask, downloadUrl, errorMessage, getMyActivityTasks, getTasks } from '../api'
+import type { ActivityTaskItem, TaskItem } from '../types'
 
 const tasks = ref<TaskItem[]>([])
+const activityTasks = ref<ActivityTaskItem[]>([])
 const loading = ref(false)
 const deleting = ref<string | null>(null)
 
@@ -22,7 +23,7 @@ function statusType(status: string) {
 async function load() {
   loading.value = true
   try {
-    tasks.value = await getTasks()
+    ;[tasks.value, activityTasks.value] = await Promise.all([getTasks(), getMyActivityTasks()])
   } catch (error) {
     ElMessage.error(errorMessage(error))
   } finally {
@@ -45,13 +46,28 @@ async function remove(task: TaskItem) {
   }
 }
 
+async function removeActivity(task: ActivityTaskItem) {
+  if (task.status === 'queued' || task.status === 'running') return
+  try {
+    await ElMessageBox.confirm('删除后将无法恢复这条任务记录，是否继续？', '确认删除', { type: 'warning' })
+    deleting.value = task.id
+    await deleteActivityTask(task.id)
+    activityTasks.value = activityTasks.value.filter((item) => item.id !== task.id)
+    ElMessage.success('活动任务记录已删除')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(errorMessage(error))
+  } finally {
+    deleting.value = null
+  }
+}
+
 onMounted(load)
 </script>
 
 <template>
   <section class="section-band">
     <div class="section-heading">
-      <div><h2>处理记录</h2><p>最近 {{ tasks.length }} 个任务</p></div>
+      <div><h2>处理记录</h2><p>订单任务 {{ tasks.length }} 个，活动任务 {{ activityTasks.length }} 个</p></div>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </div>
     <el-table v-loading="loading" :data="tasks" stripe>
@@ -74,5 +90,20 @@ onMounted(load)
       </el-table-column>
     </el-table>
     <el-empty v-if="!loading && !tasks.length" description="暂无任务" />
+  </section>
+
+  <section class="section-band">
+    <div class="section-heading">
+      <div><h2>批量报名活动任务</h2><p>最近 {{ activityTasks.length }} 个活动处理任务</p></div>
+    </div>
+    <el-table v-loading="loading" :data="activityTasks" stripe>
+      <el-table-column prop="created_at" label="创建时间" width="170" />
+      <el-table-column prop="filename" label="文件名" min-width="220" />
+      <el-table-column label="状态" width="100"><template #default="scope"><el-tag :type="statusType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag></template></el-table-column>
+      <el-table-column label="进度" width="160"><template #default="scope"><el-progress :percentage="scope.row.progress" :stroke-width="8" /></template></el-table-column>
+      <el-table-column label="结果" width="100" align="right"><template #default="scope"><el-button v-if="scope.row.download_ready" type="success" link :icon="Download" tag="a" :href="activityDownloadUrl(scope.row.id)">下载</el-button><span v-else>-</span></template></el-table-column>
+      <el-table-column label="操作" width="110" fixed="right"><template #default="scope"><el-button v-if="!['queued', 'running'].includes(scope.row.status)" link type="danger" :icon="Delete" :loading="deleting === scope.row.id" @click="removeActivity(scope.row)">删除</el-button><span v-else class="table-muted">处理中</span></template></el-table-column>
+    </el-table>
+    <el-empty v-if="!loading && !activityTasks.length" description="暂无活动处理任务" />
   </section>
 </template>
