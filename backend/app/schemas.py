@@ -69,3 +69,21 @@ class ActivitySkuRulesPayload(BaseModel):
 class SettingsPayload(BaseModel):
     order: Dict[str, object]
     activity: Dict[str, object]
+
+class RegionCreateRequest(BaseModel):
+    code: str = Field(min_length=2, max_length=16)
+    name: str = Field(min_length=1, max_length=80)
+    currency: str = Field(default="CNY", min_length=3, max_length=3)
+    copy_from: Optional[str] = Field(default=None, max_length=16)
+    sort_order: int = Field(default=100, ge=-10000, le=10000)
+
+
+class RegionUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    currency: str = Field(default="CNY", min_length=3, max_length=3)
+    enabled: bool = True
+    is_default: bool = False
+    sort_order: int = Field(default=100, ge=-10000, le=10000)
+    order_strategy: str = "standard_order_v1"
+    activity_strategy: str = "standard_activity_v1"
+    settings: SettingsPayload

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text, create_engine, select, text
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint, create_engine, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from app.config import DATA_DIR, DATABASE_URL, DB_CONNECT_TIMEOUT, DB_STATEMENT_TIMEOUT_MS, HALF_HEADCOST_PATH, PRICE_CACHE_PATH, TASKS_DIR
@@ -86,6 +86,32 @@ class TaskRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
+class Region(Base):
+    __tablename__ = "regions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    currency: Mapped[str] = mapped_column(String(8), default="CNY")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class RegionConfig(Base):
+    __tablename__ = "region_configs"
+    __table_args__ = (UniqueConstraint("region_id", "module", name="uq_region_config_module"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    region_id: Mapped[int] = mapped_column(Integer, index=True)
+    module: Mapped[str] = mapped_column(String(20))
+    strategy: Mapped[str] = mapped_column(String(64))
+    config_json: Mapped[str] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    updated_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 class ActivityJob(Base):
     __tablename__ = "activity_jobs"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -97,6 +123,10 @@ class ActivityJob(Base):
     progress: Mapped[int] = mapped_column(Integer, default=0)
     message: Mapped[str] = mapped_column(String(255), default="")
     logs: Mapped[str] = mapped_column(Text, default="[]")
+    region_code: Mapped[str] = mapped_column(String(16), default="US")
+    region_name: Mapped[str] = mapped_column(String(80), default="美国区")
+    config_version: Mapped[int] = mapped_column(Integer, default=1)
+    config_snapshot: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
@@ -151,6 +181,23 @@ def _json(path: Path, default):
         return default
 
 
+def _json_value(value: str, default):
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return default
+
+
+def _merge_dict(default: dict, value: dict) -> dict:
+    merged = deepcopy(default)
+    for key, item in value.items():
+        if isinstance(item, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_dict(merged[key], item)
+        else:
+            merged[key] = item
+    return merged
+
+
 def init_database() -> None:
     Base.metadata.create_all(engine)
     with SessionLocal.begin() as session:
@@ -186,6 +233,27 @@ def init_database() -> None:
         if session.scalar(select(AppSetting.key).limit(1)) is None:
             for key, value in DEFAULT_SETTINGS.items():
                 session.add(AppSetting(key=key, value=json.dumps(value, ensure_ascii=False)))
+        if session.get(AppSetting, "activity_skc_rules") is None:
+            activity_row = session.get(AppSetting, "activity")
+            activity_settings = _json_value(activity_row.value, {}) if activity_row else {}
+            rules = activity_settings.get("default_skc_rules", DEFAULT_SETTINGS["activity"]["default_skc_rules"])
+            session.add(AppSetting(key="activity_skc_rules", value=json.dumps(rules, ensure_ascii=False)))
+        if session.scalar(select(Region.id).limit(1)) is None:
+            persisted = deepcopy(DEFAULT_SETTINGS)
+            for row in session.scalars(select(AppSetting)).all():
+                try:
+                    value = json.loads(row.value)
+                    if isinstance(value, dict) and row.key in persisted:
+                        persisted[row.key] = _merge_dict(persisted[row.key], value)
+                except json.JSONDecodeError:
+                    pass
+            region = Region(code="US", name="美国区", currency="CNY", enabled=True, is_default=True, sort_order=10)
+            session.add(region)
+            session.flush()
+            session.add_all([
+                RegionConfig(region_id=region.id, module="order", strategy="standard_order_v1", config_json=json.dumps(persisted["order"], ensure_ascii=False), version=1),
+                RegionConfig(region_id=region.id, module="activity", strategy="standard_activity_v1", config_json=json.dumps(persisted["activity"], ensure_ascii=False), version=1),
+            ])
 
 
 @contextmanager
@@ -345,12 +413,32 @@ def activity_dict(row: Optional[ActivityJob]) -> Optional[dict]:
         logs = json.loads(row.logs or "[]")
     except json.JSONDecodeError:
         logs = []
-    return {"id": row.id, "owner_id": row.owner_id, "status": row.status, "filename": row.filename, "output_path": row.output_path, "progress": row.progress, "message": row.message, "logs": logs, "stats": stats, "created_at": row.created_at.isoformat() if row.created_at else None}
+    try:
+        config_snapshot = json.loads(row.config_snapshot or "{}")
+    except json.JSONDecodeError:
+        config_snapshot = {}
+    return {"id": row.id, "owner_id": row.owner_id, "status": row.status, "filename": row.filename, "output_path": row.output_path, "progress": row.progress, "message": row.message, "logs": logs, "stats": stats, "region_code": row.region_code, "region_name": row.region_name, "config_version": row.config_version, "config_snapshot": config_snapshot, "created_at": row.created_at.isoformat() if row.created_at else None}
 
 
-def create_activity_job(job_id: str, filename: str, owner_id: int) -> dict:
+def create_activity_job(job_id: str, filename: str, owner_id: int, snapshot: Optional[dict] = None) -> dict:
+    snapshot = snapshot or {}
+    region = snapshot.get("region", {})
+    versions = snapshot.get("versions", {})
     with db_session() as session:
-        row = ActivityJob(id=job_id, owner_id=owner_id, filename=filename, status="queued", progress=5, message="任务已进入处理队列", stats="{}", logs="[]")
+        row = ActivityJob(
+            id=job_id,
+            owner_id=owner_id,
+            filename=filename,
+            status="queued",
+            progress=5,
+            message="任务已进入处理队列",
+            stats="{}",
+            logs="[]",
+            region_code=str(region.get("code", "US")),
+            region_name=str(region.get("name", "美国区")),
+            config_version=int(versions.get("activity", 1)),
+            config_snapshot=json.dumps(snapshot, ensure_ascii=False),
+        )
         session.add(row)
         session.flush()
         return activity_dict(row)
@@ -405,6 +493,25 @@ def update_activity_job(job_id: str, **values) -> Optional[dict]:
         return activity_dict(row)
 
 
+def get_activity_skc_rules() -> dict:
+    with db_session() as session:
+        row = session.get(AppSetting, "activity_skc_rules")
+        value = _json_value(row.value, {}) if row else {}
+        return deepcopy(value if isinstance(value, dict) else DEFAULT_SETTINGS["activity"]["default_skc_rules"])
+
+
+def save_activity_skc_rules(rules: dict) -> dict:
+    with db_session() as session:
+        row = session.get(AppSetting, "activity_skc_rules")
+        encoded = json.dumps(rules, ensure_ascii=False)
+        if row:
+            row.value = encoded
+            row.updated_at = datetime.now(timezone.utc)
+        else:
+            session.add(AppSetting(key="activity_skc_rules", value=encoded))
+    return get_activity_skc_rules()
+
+
 def get_settings() -> dict:
     with db_session() as session:
         # Merge persisted values into every default branch so older or partial
@@ -421,15 +528,6 @@ def get_settings() -> dict:
                 logger.warning("Invalid setting ignored: %s", row.key)
         return settings
 
-
-def _merge_dict(default: dict, value: dict) -> dict:
-    merged = deepcopy(default)
-    for key, item in value.items():
-        if isinstance(item, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _merge_dict(merged[key], item)
-        else:
-            merged[key] = item
-    return merged
 
 
 def save_settings(settings: dict) -> dict:

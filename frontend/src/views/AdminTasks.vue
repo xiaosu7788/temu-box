@@ -81,6 +81,7 @@ onMounted(load)
             <el-table-column prop="owner_name" label="用户" min-width="130" />
             <el-table-column prop="owner_username" label="用户名" min-width="140" />
             <el-table-column prop="created_at" label="创建时间" width="180" />
+            <el-table-column prop="region_name" label="区域" width="110" />
             <el-table-column label="任务编号" min-width="190"><template #default="scope"><span class="mono">{{ scope.row.id }}</span></template></el-table-column>
             <el-table-column label="状态" width="100"><template #default="scope"><el-tag :type="statusType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag></template></el-table-column>
             <el-table-column label="进度" width="150"><template #default="scope"><el-progress :percentage="scope.row.progress" :stroke-width="8" /></template></el-table-column>
@@ -94,6 +95,7 @@ onMounted(load)
             <el-table-column prop="owner_name" label="用户" min-width="130" />
             <el-table-column prop="owner_username" label="用户名" min-width="140" />
             <el-table-column prop="created_at" label="创建时间" width="180" />
+            <el-table-column prop="region_name" label="区域" width="110" />
             <el-table-column prop="filename" label="文件名" min-width="190" />
             <el-table-column label="状态" width="100"><template #default="scope"><el-tag :type="statusType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag></template></el-table-column>
             <el-table-column label="进度" width="150"><template #default="scope"><el-progress :percentage="scope.row.progress" :stroke-width="8" /></template></el-table-column>

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { errorMessage, getSettings } from '../api'
 import type { AppSettings } from '../types'
 
-const props = defineProps<{ mode: 'order' | 'activity' }>()
+const props = defineProps<{ mode: 'order' | 'activity'; regionCode: string }>()
 const settings = ref<AppSettings | null>(null)
 const loading = ref(false)
 const loadError = ref('')
@@ -23,7 +23,7 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    settings.value = await getSettings()
+    settings.value = await getSettings(props.regionCode)
   } catch (error) {
     loadError.value = errorMessage(error)
   } finally {
@@ -31,7 +31,8 @@ async function load() {
   }
 }
 
-onMounted(load)
+watch(() => props.regionCode, (value) => { if (value) void load() })
+onMounted(() => { if (props.regionCode) void load() })
 </script>
 
 <template>

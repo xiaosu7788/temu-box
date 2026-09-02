@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { ActivitySkuPreview, ActivitySkuRules, ActivityTaskItem, AppSettings, BulkActivityResult, HalfHeadcostItem, InventoryStatus, SkuResult, TaskItem, User } from './types'
+import type { ActivitySkuPreview, ActivitySkuRules, ActivityTaskItem, AppSettings, BulkActivityResult, HalfHeadcostItem, InventoryStatus, RegionProfile, RegionSummary, SkuResult, TaskItem, User } from './types'
 
 const http = axios.create({
   baseURL: '/api',
@@ -48,7 +48,18 @@ export async function getStatus() {
   return data
 }
 
-export async function createTask(form: FormData) {
+export async function getRegions() {
+  const { data } = await http.get<{ items: RegionSummary[] }>('/regions')
+  return data.items
+}
+
+export async function getRegionSettings(code: string) {
+  const { data } = await http.get<RegionProfile>(`/regions/${encodeURIComponent(code)}/settings`)
+  return data
+}
+
+export async function createTask(form: FormData, regionCode: string) {
+  form.append('region_code', regionCode)
   const { data } = await uploadHttp.post<TaskItem>('/tasks', form)
   return data
 }
@@ -146,17 +157,19 @@ export async function deleteHalfHeadcost(sku: string) {
   await http.delete(`/half-headcost/${encodeURIComponent(sku)}`)
 }
 
-export async function previewActivitySkuRules(file: File, rules: ActivitySkuRules) {
+export async function previewActivitySkuRules(file: File, rules: ActivitySkuRules, regionCode: string) {
   const form = new FormData()
   form.append('file', file)
   form.append('skc_rules', JSON.stringify(rules))
+  form.append('region_code', regionCode)
   const { data } = await uploadHttp.post<ActivitySkuPreview>('/activities/preview', form)
   return data
 }
 
-export async function processBulkActivity(file: File, upliftLimit?: number, rules?: ActivitySkuRules) {
+export async function processBulkActivity(file: File, regionCode: string, upliftLimit?: number, rules?: ActivitySkuRules) {
   const form = new FormData()
   form.append('file', file)
+  form.append('region_code', regionCode)
   if (upliftLimit !== undefined) form.append('uplift_limit', String(upliftLimit))
   if (rules) form.append('skc_rules', JSON.stringify(rules))
   const { data } = await uploadHttp.post<ActivityTaskItem & Pick<BulkActivityResult, 'download_url'>>('/activities/bulk', form)
@@ -213,18 +226,18 @@ export async function deleteAdminUser(id: number) {
   await http.delete(`/admin/users/${id}`)
 }
 
-export async function getAdminSettings() {
-  const { data } = await http.get<AppSettings>('/admin/settings')
+export async function getAdminSettings(regionCode?: string) {
+  const { data } = await http.get<AppSettings>('/admin/settings', { params: { region_code: regionCode } })
   return data
 }
 
-export async function getSettings() {
-  const { data } = await http.get<AppSettings>('/settings')
+export async function getSettings(regionCode?: string) {
+  const { data } = await http.get<AppSettings>('/settings', { params: { region_code: regionCode } })
   return data
 }
 
-export async function saveAdminSettings(settings: AppSettings) {
-  const { data } = await http.put<AppSettings>('/admin/settings', settings)
+export async function saveAdminSettings(settings: AppSettings, regionCode?: string) {
+  const { data } = await http.put<AppSettings>('/admin/settings', settings, { params: { region_code: regionCode } })
   return data
 }
 
@@ -236,4 +249,28 @@ export async function getAdminActivitySkuRules() {
 export async function saveAdminActivitySkuRules(rules: ActivitySkuRules) {
   const { data } = await http.put<ActivitySkuRules>('/admin/activity-settings/skc-rules', rules)
   return data
+}
+
+export async function getAdminRegions() {
+  const { data } = await http.get<{ items: RegionSummary[] }>('/admin/regions')
+  return data.items
+}
+
+export async function getAdminRegion(code: string) {
+  const { data } = await http.get<RegionProfile>(`/admin/regions/${encodeURIComponent(code)}`)
+  return data
+}
+
+export async function createAdminRegion(payload: Pick<RegionSummary, 'code' | 'name' | 'currency' | 'sort_order'> & { copy_from?: string }) {
+  const { data } = await http.post<RegionProfile>('/admin/regions', payload)
+  return data
+}
+
+export async function saveAdminRegion(code: string, profile: RegionProfile) {
+  const { data } = await http.put<RegionProfile>(`/admin/regions/${encodeURIComponent(code)}`, profile)
+  return data
+}
+
+export async function deleteAdminRegion(code: string) {
+  await http.delete(`/admin/regions/${encodeURIComponent(code)}`)
 }

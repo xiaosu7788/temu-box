@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ArrowLeft, Delete, Plus, Refresh, Select } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
-import { errorMessage, getAdminSettings, saveAdminSettings } from '../api'
+import { errorMessage, getAdminRegions, getAdminSettings, saveAdminSettings } from '../api'
 import { notifyError, notifySuccess } from '../feedback'
-import type { AppSettings } from '../types'
+import type { AppSettings, RegionSummary } from '../types'
 
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
 const saving = ref(false)
 const loaded = ref(false)
 const loadError = ref('')
+const regions = ref<RegionSummary[]>([])
+const regionCode = ref('')
 const settings = reactive<AppSettings>({
   order: {
     headcost: { '单品': 5, '4件套': 5, '5件套': 5, '6件套': 5, '8件套': 10, '10件套': 10, '12件套': 15 },
@@ -42,7 +46,7 @@ async function load() {
   loadError.value = ''
   loaded.value = false
   try {
-    Object.assign(settings, await getAdminSettings())
+    Object.assign(settings, await getAdminSettings(regionCode.value))
     loaded.value = true
   } catch (error) {
     loadError.value = errorMessage(error)
@@ -54,7 +58,7 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    Object.assign(settings, await saveAdminSettings(settings))
+    Object.assign(settings, await saveAdminSettings(settings, regionCode.value))
     notifySuccess('成本参数已保存')
   } catch (error) {
     notifyError(error)
@@ -71,7 +75,18 @@ function removeTier(index: number) {
   if (settings.activity.single_tiers.length > 1) settings.activity.single_tiers.splice(index, 1)
 }
 
-onMounted(load)
+async function bootstrap() {
+  try {
+    regions.value = await getAdminRegions()
+    const requested = String(route.query.region || '')
+    regionCode.value = regions.value.some((item) => item.code === requested) ? requested : (regions.value.find((item) => item.is_default) || regions.value[0])?.code || ''
+    if (regionCode.value) await load()
+  } catch (error) {
+    loadError.value = errorMessage(error)
+  }
+}
+
+onMounted(bootstrap)
 </script>
 
 <template>
@@ -79,7 +94,7 @@ onMounted(load)
     <section class="section-band">
       <div class="section-heading">
         <div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>成本参数</h2><p>参数保存后，后续新任务立即生效</p></div></div>
-        <div class="admin-settings-actions"><el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button><el-button type="primary" :icon="Select" :loading="saving" :disabled="!loaded" @click="save">保存全部参数</el-button></div>
+        <div class="admin-settings-actions"><el-select v-model="regionCode" class="admin-region-select" placeholder="选择区域" @change="load"><el-option v-for="region in regions" :key="region.code" :label="region.name" :value="region.code" /></el-select><el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button><el-button type="primary" :icon="Select" :loading="saving" :disabled="!loaded" @click="save">保存全部参数</el-button></div>
       </div>
 
       <el-skeleton v-if="!loaded && !loadError" :rows="8" animated />

@@ -6,6 +6,7 @@ import { createTask, downloadUrl, getTask } from '../api'
 import { notifyError } from '../feedback'
 import type { TaskItem } from '../types'
 import CostRules from '../components/CostRules.vue'
+import { selectedRegionCode as regionCode } from '../regionState'
 
 const salesFiles = ref<UploadUserFile[]>([])
 const deliveryFiles = ref<UploadUserFile[]>([])
@@ -37,7 +38,7 @@ async function submit() {
   form.append('sales', sales)
   form.append('delivery', delivery)
   try {
-    task.value = await createTask(form)
+    task.value = await createTask(form, regionCode.value)
     startPolling()
   } catch (error) {
     notifyError(error)
@@ -75,7 +76,7 @@ onBeforeUnmount(() => pollTimer && window.clearInterval(pollTimer))
 </script>
 
 <template>
-  <CostRules mode="order" />
+  <CostRules mode="order" :region-code="regionCode" />
 
   <section class="section-band">
     <div class="section-heading">
@@ -118,7 +119,7 @@ onBeforeUnmount(() => pollTimer && window.clearInterval(pollTimer))
     </div>
 
     <div class="action-row">
-      <el-button type="primary" size="large" :disabled="!canSubmit || !!isActive" :loading="submitting" @click="submit">
+      <el-button type="primary" size="large" :disabled="!canSubmit || !!isActive || !regionCode" :loading="submitting" @click="submit">
         开始计算
       </el-button>
     </div>
@@ -128,7 +129,7 @@ onBeforeUnmount(() => pollTimer && window.clearInterval(pollTimer))
     <div class="section-heading">
       <div>
         <h2>任务进度</h2>
-        <p class="mono">{{ task.id }}</p>
+        <p><el-tag size="small" effect="plain">{{ task.region_name }}</el-tag> <span class="mono">{{ task.id }}</span></p>
       </div>
       <el-tag :type="task.status === 'completed' ? 'success' : task.status === 'failed' ? 'danger' : 'primary'">
         {{ task.message }}

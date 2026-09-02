@@ -14,6 +14,8 @@ import {
 import { getMe, getStatus, logout } from './api'
 import type { User } from './types'
 import AuthView from './views/AuthView.vue'
+import RegionPicker from './components/RegionPicker.vue'
+import { selectedRegionCode } from './regionState'
 
 const route = useRoute()
 const router = useRouter()
@@ -23,6 +25,7 @@ const authLoading = ref(true)
 const user = ref<User | null>(null)
 const pageTitle = computed(() => String(route.meta.title || '工作台'))
 const fixedDataPage = computed(() => route.path === '/inventory' || route.path === '/admin/inventory')
+const showRegionPicker = computed(() => route.path === '/orders' || route.path === '/activities')
 
 const menuItems = [
   { path: '/orders', label: '订单计算', icon: DataAnalysis },
@@ -105,10 +108,11 @@ onMounted(bootstrap)
     <div class="workspace">
       <header class="topbar">
         <el-button class="menu-button" :icon="MenuIcon" circle @click="mobileMenu = !mobileMenu" />
-        <div>
+        <div class="topbar-title">
           <h1>{{ pageTitle }}</h1>
           <p>Temu-Box</p>
         </div>
+        <RegionPicker v-if="showRegionPicker" v-model="selectedRegionCode" compact />
         <el-tag v-if="user.role === 'admin'" class="role-tag" type="warning">管理员</el-tag>
       </header>
       <main class="page-content" :class="{ 'page-content--fixed': fixedDataPage }">

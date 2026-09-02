@@ -13,7 +13,7 @@ from typing import Dict, Optional
 
 from app.config import TASK_HISTORY_LIMIT, TASK_WORKERS, TASKS_DIR
 from app.database import delete_task_record, load_task_records, save_task_record
-from app.database import get_settings
+from app.services.regions import region_snapshot
 from app.services.half_headcost import load_entries, merge_upload
 from app.services.inventory import load_price_catalog
 from app.services.orders import build_delivery_sku_map, generate_summary
@@ -65,8 +65,9 @@ class TaskManager:
         os.replace(temp, target)
         save_task_record(task)
 
-    def create(self, sales_name: str, delivery_name: str, half_name: Optional[str], owner_id: Optional[int]) -> dict:
+    def create(self, sales_name: str, delivery_name: str, half_name: Optional[str], owner_id: Optional[int], snapshot: Optional[dict] = None) -> dict:
         task_id = uuid.uuid4().hex
+        snapshot = snapshot or region_snapshot()
         task = {
             "id": task_id,
             "owner_id": owner_id,
@@ -84,6 +85,10 @@ class TaskManager:
                 "half_headcost": half_name,
             },
             "result_file": None,
+            "region_code": snapshot["region"]["code"],
+            "region_name": snapshot["region"]["name"],
+            "config_version": snapshot["versions"]["order"],
+            "config_snapshot": snapshot,
         }
         with self._lock:
             self._tasks[task_id] = task
@@ -131,7 +136,7 @@ class TaskManager:
                     45,
                 )
             half_entries = load_entries()
-            settings = get_settings()
+            settings = task.get("config_snapshot", {}).get("settings") or region_snapshot(task.get("region_code"))["settings"]
             self._log(task_id, "正在解析派送订单", 55)
             po_map = build_delivery_sku_map(
                 self.file_path(task_id, "delivery"),
@@ -218,6 +223,9 @@ class TaskManager:
             "stats": task.get("stats", {}),
             "logs": task.get("logs", []),
             "download_ready": bool(task.get("result_file") and task.get("status") == "completed"),
+            "region_code": task.get("region_code", "US"),
+            "region_name": task.get("region_name", "美国区"),
+            "config_version": task.get("config_version", 1),
         }
 
 

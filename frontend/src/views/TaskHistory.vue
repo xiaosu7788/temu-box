@@ -17,6 +17,7 @@ interface HistoryItem {
   title: string
   createdAt: string
   status: string
+  regionName: string
   progress: number
   summary: string
   downloadReady: boolean
@@ -30,6 +31,7 @@ const historyItems = computed<HistoryItem[]>(() => [
     title: '订单成本计算',
     createdAt: task.created_at,
     status: task.status,
+    regionName: task.region_name || task.region_code || '美国区',
     progress: task.progress,
     summary: task.stats.total === undefined
       ? (task.message || '-')
@@ -43,6 +45,7 @@ const historyItems = computed<HistoryItem[]>(() => [
     title: task.filename,
     createdAt: task.created_at || '',
     status: task.status,
+    regionName: task.region_name || task.region_code || '美国区',
     progress: task.progress,
     summary: task.stats?.processed_rows === undefined
       ? (task.message || '-')
@@ -110,6 +113,7 @@ onMounted(load)
       <el-table-column label="任务内容" min-width="250">
         <template #default="scope"><div>{{ scope.row.title }}</div><div class="mono table-muted">{{ scope.row.id }}</div></template>
       </el-table-column>
+<el-table-column prop="regionName" label="区域" width="110" />
       <el-table-column label="状态" width="100"><template #default="scope"><el-tag :type="statusType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag></template></el-table-column>
       <el-table-column label="进度" width="160"><template #default="scope"><el-progress :percentage="scope.row.progress" :stroke-width="8" /></template></el-table-column>
       <el-table-column prop="summary" label="处理情况" min-width="190" />

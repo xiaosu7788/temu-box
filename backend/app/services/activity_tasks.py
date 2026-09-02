@@ -12,7 +12,8 @@ from typing import Optional
 from app.config import ACTIVITY_DIR, TASK_WORKERS
 from app.database import create_activity_job, delete_activity_job, get_activity_job, list_activity_jobs, list_all_activity_jobs, update_activity_job
 from app.services.activity import normalize_parse_config, process_activity_workbook
-from app.services.settings import settings_public
+from app.services.regions import region_snapshot
+
 
 logger = logging.getLogger("sales_tool.activity_tasks")
 
@@ -23,16 +24,16 @@ class ActivityTaskManager:
         self._jobs: dict[str, dict] = {}
         self._executor = ThreadPoolExecutor(max_workers=TASK_WORKERS, thread_name_prefix="activity-task")
 
-    def create(self, filename: str, owner_id: int, content: bytes, uplift_limit: float | None = None, parse_config: dict | None = None) -> dict:
+    def create(self, filename: str, owner_id: int, content: bytes, snapshot: dict | None = None, uplift_limit: float | None = None, parse_config: dict | None = None) -> dict:
         job_id = uuid.uuid4().hex
         job_dir = ACTIVITY_DIR / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         (job_dir / "input.xlsx").write_bytes(content)
-        job = create_activity_job(job_id, filename, owner_id)
+        job = create_activity_job(job_id, filename, owner_id, snapshot)
         with self._lock:
             self._jobs[job_id] = job
         normalized_parse_config = normalize_parse_config(parse_config)
-        self._executor.submit(self._run, job_id, owner_id, uplift_limit, normalized_parse_config)
+        self._executor.submit(self._run, job_id, snapshot, uplift_limit, normalized_parse_config)
         return self.public(job)
 
     def _update(self, job_id: str, **values) -> None:
@@ -41,12 +42,12 @@ class ActivityTaskManager:
             with self._lock:
                 self._jobs[job_id] = job
 
-    def _run(self, job_id: str, owner_id: int, uplift_limit: float | None, parse_config: dict | None) -> None:
+    def _run(self, job_id: str, snapshot: dict, uplift_limit: float | None, parse_config: dict | None) -> None:
         input_path = ACTIVITY_DIR / job_id / "input.xlsx"
         output_path = ACTIVITY_DIR / job_id / "批量报名活动处理结果.xlsx"
         try:
             self._update(job_id, status="running", progress=15, message="正在计算活动价格")
-            settings = settings_public()
+            settings = deepcopy(snapshot["settings"])
             if uplift_limit is not None:
                 settings = deepcopy(settings)
                 settings["activity"]["uplift_limit"] = uplift_limit
@@ -77,7 +78,7 @@ class ActivityTaskManager:
     def public(job: dict | None) -> dict | None:
         if not job:
             return None
-        return {key: job.get(key) for key in ("id", "status", "progress", "message", "filename", "created_at", "stats", "logs", "output_path")} | {"download_ready": job.get("status") == "completed" and bool(job.get("output_path"))}
+        return {key: job.get(key) for key in ("id", "status", "progress", "message", "filename", "created_at", "stats", "logs", "output_path", "region_code", "region_name", "config_version")} | {"download_ready": job.get("status") == "completed" and bool(job.get("output_path"))}
 
     def result_path(self, job_id: str, owner_id: Optional[int]) -> Path | None:
         job = self.get(job_id, owner_id)

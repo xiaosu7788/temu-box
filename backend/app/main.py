@@ -29,19 +29,21 @@ from app.database import (
     delete_inventory_item,
     delete_user,
     ensure_admin_user,
+    get_activity_skc_rules,
     get_user,
     get_user_by_username,
     list_users,
     update_user_credentials,
     update_user_status,
+    save_activity_skc_rules,
 )
-from app.schemas import ActivitySkuRulesPayload, AdminUserUpdateRequest, LoginRequest, RegisterRequest, SettingsPayload, SkuQueryRequest
+from app.schemas import ActivitySkuRulesPayload, AdminUserUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest
 from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
 from app.services.half_headcost import delete_entry, load_entries, merge_upload
 from app.services.activity import normalize_parse_config, preview_activity_workbook
 from app.services.activity_tasks import activity_task_manager
 from app.services.inventory import invalidate_cache, inventory_status, load_price_catalog
-from app.services.settings import settings_public, update_settings
+from app.services.regions import create_region, delete_region, get_region_profile, list_regions, region_snapshot, update_region
 from app.services.tasks import task_manager
 
 
@@ -152,9 +154,25 @@ def status(user: dict = Depends(current_user)):
     }
 
 
+@app.get("/api/regions")
+def public_regions(_user: dict = Depends(current_user)):
+    return {"items": list_regions()}
+
+
+@app.get("/api/regions/{code}/settings")
+def public_region_settings(code: str, _user: dict = Depends(current_user)):
+    try:
+        return get_region_profile(code)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.get("/api/settings")
-def get_public_settings(_user: dict = Depends(current_user)):
-    return settings_public()
+def get_public_settings(region_code: Optional[str] = Query(None, max_length=16), _user: dict = Depends(current_user)):
+    try:
+        return get_region_profile(region_code)["settings"]
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/inventory")
@@ -218,6 +236,7 @@ def parse_activity_rules(value: Optional[str]) -> Optional[dict]:
 async def preview_bulk_activity(
     file: UploadFile = File(...),
     skc_rules: str = Form(...),
+    region_code: Optional[str] = Form(None),
     _user: dict = Depends(current_user),
 ):
     validate_excel(file)
@@ -227,7 +246,8 @@ async def preview_bulk_activity(
         raise HTTPException(status_code=413, detail="上传文件超过服务器限制")
     parse_config = parse_activity_rules(skc_rules)
     try:
-        return await run_in_threadpool(preview_activity_workbook, content, parse_config, settings_public())
+        snapshot = await run_in_threadpool(region_snapshot, region_code)
+        return await run_in_threadpool(preview_activity_workbook, content, parse_config, snapshot["settings"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -237,6 +257,7 @@ async def process_bulk_activity(
     file: UploadFile = File(...),
     uplift_limit: Optional[float] = Form(None, ge=0, le=1000),
     skc_rules: Optional[str] = Form(None),
+    region_code: Optional[str] = Form(None),
     user: dict = Depends(current_user),
 ):
     validate_excel(file)
@@ -247,7 +268,11 @@ async def process_bulk_activity(
 
     upload_name = file.filename or "报名活动.xlsx"
     parse_config = parse_activity_rules(skc_rules)
-    job = await run_in_threadpool(activity_task_manager.create, upload_name, user["id"], content, uplift_limit, parse_config)
+    try:
+        snapshot = await run_in_threadpool(region_snapshot, region_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    job = await run_in_threadpool(activity_task_manager.create, upload_name, user["id"], content, snapshot, uplift_limit, parse_config)
     return {
         **job,
         "download_url": f"/api/activities/{job['id']}/download",
@@ -384,6 +409,7 @@ async def create_task(
     sales: UploadFile = File(...),
     delivery: UploadFile = File(...),
     half_headcost: Optional[UploadFile] = File(None),
+    region_code: Optional[str] = Form(None),
     user: dict = Depends(current_user),
 ):
     if not INVENTORY_PATH.exists():
@@ -392,11 +418,16 @@ async def create_task(
     validate_excel(delivery)
     if half_headcost:
         validate_excel(half_headcost)
+    try:
+        snapshot = await run_in_threadpool(region_snapshot, region_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     task = task_manager.create(
         sales.filename or "销售订单.xlsx",
         delivery.filename or "派送订单.xlsx",
         half_headcost.filename if half_headcost else None,
         user["id"],
+        snapshot,
     )
     try:
         await save_upload(sales, task_manager.file_path(task["id"], "sales"))
@@ -532,21 +563,30 @@ def admin_delete_user(user_id: int, _admin: dict = Depends(admin_user)):
 
 
 @app.get("/api/admin/settings")
-def admin_get_settings(_admin: dict = Depends(admin_user)):
-    return settings_public()
+def admin_get_settings(region_code: Optional[str] = Query(None, max_length=16), _admin: dict = Depends(admin_user)):
+    try:
+        return get_region_profile(region_code, include_disabled=True)["settings"]
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.put("/api/admin/settings")
-def admin_update_settings(payload: SettingsPayload, _admin: dict = Depends(admin_user)):
+def admin_update_settings(
+    payload: SettingsPayload,
+    region_code: Optional[str] = Query(None, max_length=16),
+    admin: dict = Depends(admin_user),
+):
     try:
-        return update_settings(payload.model_dump())
+        profile = get_region_profile(region_code, include_disabled=True)
+        updated = update_region(profile["code"], {**profile, "settings": payload.model_dump()}, admin["id"])
+        return updated["settings"]
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/admin/activity-settings/skc-rules")
 def admin_get_activity_skc_rules(_admin: dict = Depends(admin_user)):
-    return settings_public()["activity"]["default_skc_rules"]
+    return get_activity_skc_rules()
 
 
 @app.put("/api/admin/activity-settings/skc-rules")
@@ -555,8 +595,43 @@ def admin_update_activity_skc_rules(payload: ActivitySkuRulesPayload, _admin: di
         rules = normalize_parse_config(payload.model_dump())
         if rules is None:
             raise ValueError("默认SKC识别规则不能为空")
-        settings = settings_public()
-        settings["activity"]["default_skc_rules"] = rules
-        return update_settings(settings)["activity"]["default_skc_rules"]
+        return save_activity_skc_rules(rules)
     except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+@app.get("/api/admin/regions")
+def admin_regions(_admin: dict = Depends(admin_user)):
+    return {"items": list_regions(include_disabled=True)}
+
+
+@app.get("/api/admin/regions/{code}")
+def admin_region(code: str, _admin: dict = Depends(admin_user)):
+    try:
+        return get_region_profile(code, include_disabled=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/admin/regions", status_code=201)
+def admin_create_region(payload: RegionCreateRequest, admin: dict = Depends(admin_user)):
+    try:
+        return create_region(payload.model_dump(), admin["id"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/admin/regions/{code}")
+def admin_update_region(code: str, payload: RegionUpdateRequest, admin: dict = Depends(admin_user)):
+    try:
+        return update_region(code, payload.model_dump(), admin["id"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/admin/regions/{code}")
+def admin_delete_region(code: str, _admin: dict = Depends(admin_user)):
+    try:
+        delete_region(code)
+        return {"message": "区域已删除", "code": code.strip().upper()}
+    except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

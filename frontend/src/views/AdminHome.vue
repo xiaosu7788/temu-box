@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowRight, Box, Clock, PriceTag, SetUp, UserFilled } from '@element-plus/icons-vue'
+import { ArrowRight, Box, Clock, Location, PriceTag, SetUp, UserFilled } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
@@ -19,6 +19,11 @@ function open(path: string) {
         <button class="admin-module-entry" type="button" @click="open('/admin/users')">
           <span class="admin-module-icon"><el-icon><UserFilled /></el-icon></span>
           <span class="admin-module-copy"><strong>用户管理</strong><small>审核、编辑和删除普通用户账号</small></span>
+          <el-icon class="admin-module-arrow"><ArrowRight /></el-icon>
+        </button>
+        <button class="admin-module-entry" type="button" @click="open('/admin/regions')">
+          <span class="admin-module-icon"><el-icon><Location /></el-icon></span>
+          <span class="admin-module-copy"><strong>区域设置</strong><small>新增、复制、启停并管理各区域配置</small></span>
           <el-icon class="admin-module-arrow"><ArrowRight /></el-icon>
         </button>
         <button class="admin-module-entry" type="button" @click="open('/admin/settings')">

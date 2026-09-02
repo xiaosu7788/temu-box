@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Delete, Download, Plus, RefreshRight, UploadFilled } from '@element-plus/icons-vue'
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
 import { activityDownloadUrl, deleteActivityTask, getActivityTask, getActivityTasks, getMe, getSettings, previewActivitySkuRules, processBulkActivity } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { ActivitySetMapping, ActivitySingleParseMode, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem } from '../types'
 import CostRules from '../components/CostRules.vue'
+import { selectedRegionCode as regionCode } from '../regionState'
 
 const files = ref<UploadUserFile[]>([])
 const tasks = ref<ActivityTaskItem[]>([])
@@ -68,8 +69,8 @@ const appliedSingleRule = computed(() => {
   if (appliedSkuRules.value.single_mode === 'after_marker') return `“${appliedSkuRules.value.single_marker}”后的数字`
   return `最后一个“${appliedSkuRules.value.single_delimiter}”后的数字`
 })
-const canPreview = computed(() => files.value.length === 1 && !!files.value[0]?.raw && useCustomSkuRules.value && skuRulesConfigured.value)
-const canSubmit = computed(() => files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || (!!skuPreview.value && skuRulesConfigured.value)))
+const canPreview = computed(() => !!regionCode.value && files.value.length === 1 && !!files.value[0]?.raw && useCustomSkuRules.value && skuRulesConfigured.value)
+const canSubmit = computed(() => !!regionCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || (!!skuPreview.value && skuRulesConfigured.value)))
 const activeTasks = computed(() => tasks.value.filter((task) => task.status === 'queued' || task.status === 'running'))
 
 function fileChanged(_file: UploadFile, uploadFiles: UploadFiles) {
@@ -146,7 +147,7 @@ async function previewSkuRules() {
   if (!file || !skuRulesConfigured.value) return
   previewing.value = true
   try {
-    skuPreview.value = await previewActivitySkuRules(file, appliedSkuRules.value)
+    skuPreview.value = await previewActivitySkuRules(file, appliedSkuRules.value, regionCode.value)
     notifySuccess('SKC识别预览已更新')
   } catch (error) {
     notifyError(error)
@@ -225,6 +226,7 @@ async function submit() {
   try {
     const task = await processBulkActivity(
       file,
+      regionCode.value,
       useCustomUplift.value ? customUpliftLimit.value : undefined,
       useCustomSkuRules.value ? appliedSkuRules.value : undefined,
     )
@@ -282,10 +284,10 @@ function formatTime(value?: string) {
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
-async function bootstrap() {
+async function loadRegionDefaults(code: string) {
+  if (!code) return
   try {
-    const [user, settings] = await Promise.all([getMe(), getSettings()])
-    currentUserId.value = user.id
+    const settings = await getSettings(code)
     defaultUpliftLimit.value = settings.activity.uplift_limit
     customUpliftLimit.value = settings.activity.uplift_limit
     defaultSkuRules.value = {
@@ -294,19 +296,29 @@ async function bootstrap() {
       set_mappings: settings.activity.default_skc_rules.set_mappings.map((item) => ({ ...item })),
     }
     resetSkuRules()
+  } catch (error) {
+    notifyError(error)
+  }
+}
+
+async function bootstrap() {
+  try {
+    const user = await getMe()
+    currentUserId.value = user.id
     await loadTasks()
   } catch (error) {
     notifyError(error)
   }
 }
 
+watch(regionCode, (code) => { void loadRegionDefaults(code) })
 onMounted(bootstrap)
 onActivated(() => { void loadTasks() })
 onBeforeUnmount(stopPolling)
 </script>
 
 <template>
-  <CostRules mode="activity" />
+  <CostRules mode="activity" :region-code="regionCode" />
 
   <section class="section-band activity-upload-panel">
     <div class="section-heading">
@@ -476,6 +488,7 @@ onBeforeUnmount(stopPolling)
           <div class="activity-task-title">
             <strong>{{ task.filename }}</strong>
             <el-tag :type="statusType(task.status)" size="small">{{ statusText(task.status) }}</el-tag>
+            <el-tag size="small" effect="plain">{{ task.region_name }}</el-tag>
           </div>
           <p>{{ task.message }} · {{ formatTime(task.created_at) }}</p>
           <el-progress :percentage="task.progress" :status="task.status === 'failed' ? 'exception' : task.status === 'completed' ? 'success' : undefined" />

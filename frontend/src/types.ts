@@ -31,6 +31,9 @@ export interface TaskItem {
   stats: TaskStats
   logs: string[]
   download_ready: boolean
+  region_code: string
+  region_name: string
+  config_version: number
 }
 
 export interface SkuResult {
@@ -120,6 +123,9 @@ export interface ActivityTaskItem {
   stats: BulkActivityStats
   logs: string[]
   download_ready: boolean
+  region_code: string
+  region_name: string
+  config_version: number
 }
 
 export interface User {
@@ -148,4 +154,22 @@ export interface AppSettings {
     single_tiers: Array<{ min_price: number; profit: number }>
     default_skc_rules: ActivitySkuRules
   }
+}
+
+export interface RegionSummary {
+  id: number
+  code: string
+  name: string
+  currency: string
+  enabled: boolean
+  is_default: boolean
+  sort_order: number
+}
+
+export interface RegionProfile extends RegionSummary {
+  order_strategy: string
+  activity_strategy: string
+  order_version: number
+  activity_version: number
+  settings: AppSettings
 }
