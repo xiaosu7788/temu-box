@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { Download, RefreshRight, UploadFilled } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
-import { createTask, downloadUrl, errorMessage, getTask } from '../api'
+import { createTask, downloadUrl, getTask } from '../api'
+import { notifyError } from '../feedback'
 import type { TaskItem } from '../types'
 
 const salesFiles = ref<UploadUserFile[]>([])
@@ -39,7 +39,7 @@ async function submit() {
     task.value = await createTask(form)
     startPolling()
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     submitting.value = false
   }
@@ -60,7 +60,7 @@ async function refreshTask() {
       pollTimer = undefined
     }
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   }
 }
 

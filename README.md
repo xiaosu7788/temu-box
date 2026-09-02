@@ -101,6 +101,13 @@ data/tasks/<task_id>/
 
 ## 后续扩展
 
+## 前端反馈规范
+
+- 成功、警告、错误提示和危险操作确认统一通过 `frontend/src/feedback.ts` 调用。
+- 页面组件禁止直接使用 `ElMessage`、`ElMessageBox`、`ElNotification` 或浏览器原生 `alert/confirm/prompt`。
+- 表单校验和整页加载失败可以使用页面内错误区域，避免短暂消息消失后用户找不到原因。
+- `npm run build` 会先执行 `check:feedback`，发现绕过统一反馈服务的代码时构建失败。
+
 ## 数据库配置
 
 数据库是库存、头程名单、任务和活动任务的主数据源。原始 Excel、任务上传文件和生成结果仍保存于 `data/`，`price_cache.json` 和 `half_headcost_skus.json` 仅作为旧版本兼容镜像。

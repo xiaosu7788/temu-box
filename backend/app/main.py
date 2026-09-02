@@ -222,7 +222,7 @@ def get_activity_task(job_id: str, user: dict = Depends(current_user)):
 
 @app.delete("/api/activities/{job_id}")
 def delete_activity_task(job_id: str, user: dict = Depends(current_user)):
-    result = activity_task_manager.delete(job_id, user["id"])
+    result = activity_task_manager.delete(job_id, None if user["role"] == "admin" else user["id"])
     if result == "active":
         raise HTTPException(status_code=409, detail="处理中任务暂不能删除，请等待任务完成")
     if result == "not_found":
@@ -374,7 +374,7 @@ def get_task(task_id: str, user: dict = Depends(current_user)):
 
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: str, user: dict = Depends(current_user)):
-    result = task_manager.delete(task_id, user["id"])
+    result = task_manager.delete(task_id, None if user["role"] == "admin" else user["id"])
     if result == "active":
         raise HTTPException(status_code=409, detail="处理中任务暂不能删除，请等待任务完成")
     if result == "not_found":

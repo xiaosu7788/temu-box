@@ -190,10 +190,10 @@ class TaskManager:
             path = self._task_dir(task_id) / task["result_file"]
             return path if path.exists() else None
 
-    def delete(self, task_id: str, owner_id: int) -> str:
+    def delete(self, task_id: str, owner_id: Optional[int]) -> str:
         with self._lock:
             task = self._tasks.get(task_id)
-            if not task or task.get("owner_id") != owner_id:
+            if not task or (owner_id is not None and task.get("owner_id") != owner_id):
                 return "not_found"
             if task.get("status") in {"preparing", "queued", "running"}:
                 return "active"

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ArrowLeft, Delete, Plus, Refresh, Select } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { errorMessage, getAdminSettings, saveAdminSettings } from '../api'
+import { notifyError, notifySuccess } from '../feedback'
 import type { AppSettings } from '../types'
 
 const router = useRouter()
@@ -45,9 +45,9 @@ async function save() {
   saving.value = true
   try {
     Object.assign(settings, await saveAdminSettings(settings))
-    ElMessage.success('成本参数已保存')
+    notifySuccess('成本参数已保存')
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     saving.value = false
   }
@@ -60,6 +60,8 @@ function addTier() {
 function removeTier(index: number) {
   if (settings.activity.single_tiers.length > 1) settings.activity.single_tiers.splice(index, 1)
 }
+
+onMounted(load)
 </script>
 
 <template>

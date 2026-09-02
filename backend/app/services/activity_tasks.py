@@ -50,7 +50,7 @@ class ActivityTaskManager:
             logger.exception("Activity task failed: %s", job_id)
             self._update(job_id, status="failed", progress=100, message=f"处理失败：{exc}", stats={"error": str(exc)})
 
-    def get(self, job_id: str, owner_id: int) -> dict | None:
+    def get(self, job_id: str, owner_id: Optional[int]) -> dict | None:
         with self._lock:
             job = self._jobs.get(job_id)
         if job and job.get("owner_id") == owner_id:
@@ -80,7 +80,7 @@ class ActivityTaskManager:
         path = Path(job["output_path"])
         return path if path.is_file() else None
 
-    def delete(self, job_id: str, owner_id: int) -> str:
+    def delete(self, job_id: str, owner_id: Optional[int]) -> str:
         result = delete_activity_job(job_id, owner_id)
         if result != "deleted":
             return result

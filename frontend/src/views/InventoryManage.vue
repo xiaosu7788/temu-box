@@ -2,9 +2,9 @@
 import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Refresh, Search, Upload } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
 import type { UploadFile } from 'element-plus'
-import { errorMessage, getInventory, getInventoryItems, getMe, rebuildInventory, uploadInventory } from '../api'
+import { getInventory, getInventoryItems, getMe, rebuildInventory, uploadInventory } from '../api'
+import { notifyError, notifySuccess } from '../feedback'
 import type { InventoryStatus, SkuResult } from '../types'
 import HalfHeadcost from './HalfHeadcost.vue'
 
@@ -44,7 +44,7 @@ async function loadItems() {
     items.value = data.items
     total.value = data.total
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     itemsLoading.value = false
   }
@@ -65,10 +65,10 @@ async function handleInventoryFile(file: UploadFile) {
   loading.value = true
   try {
     await uploadInventory(file.raw)
-    ElMessage.success('库存表已更新')
+    notifySuccess('库存表已更新')
     await Promise.all([refresh(), loadItems()])
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     loading.value = false
   }
@@ -78,10 +78,10 @@ async function rebuild() {
   loading.value = true
   try {
     await rebuildInventory()
-    ElMessage.success('库存缓存已重建')
+    notifySuccess('库存缓存已重建')
     await Promise.all([refresh(), loadItems()])
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     loading.value = false
   }
@@ -102,7 +102,7 @@ onMounted(async () => {
     const user = await getMe()
     isAdmin.value = user.role === 'admin'
     await Promise.all([refresh(), loadItems()])
-  } catch (error) { ElMessage.error(errorMessage(error)) }
+  } catch (error) { notifyError(error) }
 })
 </script>
 

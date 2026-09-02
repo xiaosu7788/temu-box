@@ -369,10 +369,10 @@ def list_all_activity_jobs(limit: int = 100) -> list[dict]:
         return [activity_dict(row) for row in rows]
 
 
-def delete_activity_job(job_id: str, owner_id: int) -> str:
+def delete_activity_job(job_id: str, owner_id: Optional[int]) -> str:
     with db_session() as session:
         row = session.get(ActivityJob, job_id)
-        if not row or row.owner_id != owner_id:
+        if not row or (owner_id is not None and row.owner_id != owner_id):
             return "not_found"
         if row.status in {"queued", "running"}:
             return "active"

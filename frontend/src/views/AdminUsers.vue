@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { ArrowLeft, Refresh, Select, CloseBold } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
-import { errorMessage, getAdminUsers, updateUserStatus } from '../api'
+import { getAdminUsers, updateUserStatus } from '../api'
+import { notifyError, notifySuccess } from '../feedback'
 import type { User } from '../types'
 
 const router = useRouter()
@@ -15,7 +15,7 @@ async function load() {
   try {
     users.value = await getAdminUsers()
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     loading.value = false
   }
@@ -24,9 +24,9 @@ async function load() {
 async function changeStatus(user: User, status: 'approve' | 'reject') {
   try {
     Object.assign(user, await updateUserStatus(user.id, status))
-    ElMessage.success(status === 'approve' ? '用户已通过审核' : '用户已拒绝')
+    notifySuccess(status === 'approve' ? '用户已通过审核' : '用户已拒绝')
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   }
 }
 

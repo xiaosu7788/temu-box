@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Delete, Download, RefreshRight, UploadFilled } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
-import { activityDownloadUrl, deleteActivityTask, errorMessage, getActivityTask, getActivityTasks, getMe, processBulkActivity } from '../api'
+import { activityDownloadUrl, deleteActivityTask, getActivityTask, getActivityTasks, getMe, processBulkActivity } from '../api'
+import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { ActivityTaskItem } from '../types'
 
 const files = ref<UploadUserFile[]>([])
@@ -47,7 +47,7 @@ async function loadTasks() {
     activityTaskStore.set(currentUserId.value || -1, tasks.value)
     startPolling()
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     loadingTasks.value = false
   }
@@ -84,9 +84,9 @@ async function submit() {
     mergeTask(task)
     files.value = []
     startPolling()
-    ElMessage.success('任务已提交，后台正在处理')
+    notifySuccess('任务已提交，后台正在处理')
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     loading.value = false
   }
@@ -99,14 +99,14 @@ function reset() {
 async function remove(task: ActivityTaskItem) {
   if (task.status === 'queued' || task.status === 'running') return
   try {
-    await ElMessageBox.confirm('删除后将无法恢复这条任务记录，是否继续？', '确认删除', { type: 'warning' })
+    if (!await confirmAction('删除后将无法恢复这条任务记录，是否继续？', '确认删除')) return
     deleting.value = task.id
     await deleteActivityTask(task.id)
     tasks.value = tasks.value.filter((item) => item.id !== task.id)
     if (currentUserId.value !== null) activityTaskStore.set(currentUserId.value, tasks.value)
-    ElMessage.success('活动任务记录已删除')
+    notifySuccess('活动任务记录已删除')
   } catch (error) {
-    if (error !== 'cancel' && error !== 'close') ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     deleting.value = null
   }
@@ -132,7 +132,7 @@ async function bootstrap() {
     currentUserId.value = (await getMe()).id
     await loadTasks()
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   }
 }
 

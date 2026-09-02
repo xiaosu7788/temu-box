@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { Delete, Search, Upload } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
-import { deleteHalfHeadcost, errorMessage, getHalfHeadcost, getMe, importHalfHeadcost } from '../api'
+import { deleteHalfHeadcost, getHalfHeadcost, getMe, importHalfHeadcost } from '../api'
+import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { HalfHeadcostItem } from '../types'
 
 const query = ref('')
@@ -22,7 +22,7 @@ async function load() {
     items.value = data.items
     total.value = data.total
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     loading.value = false
   }
@@ -43,29 +43,29 @@ async function importList() {
   loading.value = true
   try {
     const result = await importHalfHeadcost(file)
-    ElMessage.success(`提取 ${result.incoming} 个，新增 ${result.added} 个`)
+    notifySuccess(`提取 ${result.incoming} 个，新增 ${result.added} 个`)
     files.value = []
     await load()
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     loading.value = false
   }
 }
 
 async function remove(sku: string) {
-  await ElMessageBox.confirm(`从头程减半名单删除 ${sku}？`, '确认删除', { type: 'warning' })
+  if (!await confirmAction(`从头程减半名单删除 ${sku}？`, '确认删除')) return
   try {
     await deleteHalfHeadcost(sku)
-    ElMessage.success('已删除')
+    notifySuccess('已删除')
     await load()
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   }
 }
 
 onMounted(async () => {
-  try { isAdmin.value = (await getMe()).role === 'admin' } catch (error) { ElMessage.error(errorMessage(error)) }
+  try { isAdmin.value = (await getMe()).role === 'admin' } catch (error) { notifyError(error) }
   load()
 })
 </script>

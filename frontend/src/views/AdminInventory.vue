@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { ArrowLeft, Delete, Refresh, Search, Upload } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile } from 'element-plus'
 import { useRouter } from 'vue-router'
-import { deleteInventoryItem, errorMessage, getAdminInventory, getAdminInventoryItems, rebuildInventory, uploadInventory } from '../api'
+import { deleteInventoryItem, getAdminInventory, getAdminInventoryItems, rebuildInventory, uploadInventory } from '../api'
+import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { InventoryStatus, SkuResult } from '../types'
 
 const router = useRouter()
@@ -34,7 +34,7 @@ async function loadItems() {
     items.value = data.items
     total.value = data.total
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     itemsLoading.value = false
   }
@@ -44,7 +44,7 @@ async function load() {
   try {
     await Promise.all([refreshStatus(), loadItems()])
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   }
 }
 
@@ -63,11 +63,11 @@ async function handleInventoryFile(file: UploadFile) {
   loading.value = true
   try {
     await uploadInventory(file.raw)
-    ElMessage.success('库存表已更新')
+    notifySuccess('库存表已更新')
     page.value = 1
     await load()
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     loading.value = false
   }
@@ -77,11 +77,11 @@ async function rebuild() {
   loading.value = true
   try {
     await rebuildInventory()
-    ElMessage.success('库存缓存已重建')
+    notifySuccess('库存缓存已重建')
     page.value = 1
     await load()
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     loading.value = false
   }
@@ -89,13 +89,13 @@ async function rebuild() {
 
 async function remove(item: SkuResult) {
   try {
-    await ElMessageBox.confirm(`删除库存明细 ${item.sku}？删除后会从当前库存查询中隐藏。`, '确认删除', { type: 'warning' })
+    if (!await confirmAction(`删除库存明细 ${item.sku}？删除后会从当前库存查询中隐藏。`, '确认删除')) return
     deleting.value = item.sku
     await deleteInventoryItem(item.sku)
-    ElMessage.success('库存明细已删除')
+    notifySuccess('库存明细已删除')
     await load()
   } catch (error) {
-    if (error !== 'cancel' && error !== 'close') ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     deleting.value = null
   }

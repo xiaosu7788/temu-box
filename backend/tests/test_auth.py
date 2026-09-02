@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.database import create_user
+from app.database import create_activity_job, create_user, update_activity_job
 from app.main import app
 from app.services.auth import hash_password
 from app.services.tasks import task_manager
@@ -64,11 +64,15 @@ def test_task_history_is_scoped_to_owner():
     assert task_manager.get(second["id"], owner_id=101) is None
 
 
-def test_user_can_delete_own_finished_task_but_admin_can_view_tasks():
+def test_user_can_delete_own_finished_task_and_admin_can_delete_any_finished_task():
     admin = create_user("task_admin", hash_password("adminpass123"), role="admin", status="approved")
     user = create_user("task_owner", hash_password("userpass123"), status="approved")
     task = task_manager.create("sales-delete.xlsx", "delivery-delete.xlsx", None, user["id"])
     task_manager._update(task["id"], status="completed", progress=100, message="处理完成")
+    admin_order_task = task_manager.create("sales-admin-delete.xlsx", "delivery-admin-delete.xlsx", None, user["id"])
+    task_manager._update(admin_order_task["id"], status="failed", progress=100, message="处理失败")
+    activity_task = create_activity_job("admin-delete-activity", "activity-admin-delete.xlsx", user["id"])
+    update_activity_job(activity_task["id"], status="completed", progress=100, message="处理完成")
 
     with TestClient(app) as client:
         user_login = client.post("/api/auth/login", json={"username": "task_owner", "password": "userpass123"})
@@ -82,6 +86,10 @@ def test_user_can_delete_own_finished_task_but_admin_can_view_tasks():
         assert admin_login.status_code == 200
         assert client.get("/api/admin/tasks").status_code == 200
         assert client.get("/api/admin/activity-tasks").status_code == 200
+        assert client.delete(f"/api/tasks/{admin_order_task['id']}").status_code == 200
+        assert client.delete(f"/api/activities/{activity_task['id']}").status_code == 200
+        assert admin_order_task["id"] not in {item["id"] for item in client.get("/api/admin/tasks").json()["items"]}
+        assert activity_task["id"] not in {item["id"] for item in client.get("/api/admin/activity-tasks").json()["items"]}
 
         client.post("/api/auth/logout")
         other = create_user("task_other", hash_password("otherpass123"), status="approved")

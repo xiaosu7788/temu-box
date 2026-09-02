@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Search } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
-import { errorMessage, querySkus } from '../api'
+import { querySkus } from '../api'
+import { notifyError, notifyWarning } from '../feedback'
 import type { SkuResult } from '../types'
 
 const input = ref('')
@@ -12,14 +12,14 @@ const results = ref<SkuResult[]>([])
 async function query() {
   const skus = input.value.split(/[\s,，;；]+/).map((item) => item.trim()).filter(Boolean)
   if (!skus.length) {
-    ElMessage.warning('请输入 SKU')
+    notifyWarning('请输入 SKU')
     return
   }
   loading.value = true
   try {
     results.value = (await querySkus(skus)).items
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    notifyError(error)
   } finally {
     loading.value = false
   }
