@@ -118,3 +118,29 @@ def test_admin_activity_task_list_includes_all_jobs():
         listed = client.get("/api/activities")
         assert listed.status_code == 200
         assert job_id in {item["id"] for item in listed.json()["items"]}
+
+
+def test_admin_can_poll_activity_task_owned_by_another_user():
+    create_user("poll_admin", hash_password("polladmin123"), role="admin", status="approved")
+    create_user("poll_user", hash_password("polluser123"), status="approved")
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SKC货号", "活动申报价格"])
+    sheet.append(["MB131-POLL-5", 17])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    with TestClient(app) as client:
+        client.post("/api/auth/login", json={"username": "poll_user", "password": "polluser123"})
+        response = client.post(
+            "/api/activities/bulk",
+            files={"file": ("activity-poll.xlsx", content.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert response.status_code == 202
+        job_id = response.json()["id"]
+
+        client.post("/api/auth/logout")
+        client.post("/api/auth/login", json={"username": "poll_admin", "password": "polladmin123"})
+        polled = client.get(f"/api/activities/{job_id}")
+        assert polled.status_code == 200

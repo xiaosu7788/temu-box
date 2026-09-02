@@ -214,7 +214,7 @@ def list_activity_tasks(limit: int = Query(50, ge=1, le=100), user: dict = Depen
 
 @app.get("/api/activities/{job_id}")
 def get_activity_task(job_id: str, user: dict = Depends(current_user)):
-    job = activity_task_manager.get(job_id, user["id"])
+    job = activity_task_manager.get(job_id, None if user["role"] == "admin" else user["id"])
     if not job:
         raise HTTPException(status_code=404, detail="活动任务不存在")
     return job
