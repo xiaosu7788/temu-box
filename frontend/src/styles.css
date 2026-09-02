@@ -137,6 +137,34 @@ button, input, textarea { font: inherit; }
 .activity-custom-settings strong { color: #344054; font-size: 13px; }
 .activity-custom-settings span { color: var(--muted); font-size: 12px; }
 .activity-custom-settings .el-input-number { width: 150px; }
+.activity-skc-settings-heading { margin-top: 16px; }
+.activity-skc-rule-builder { margin-top: 16px; padding-top: 18px; border-top: 1px solid var(--border); }
+.activity-rule-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+.activity-rule-section { min-width: 0; }
+.activity-rule-section + .activity-rule-section { padding-left: 28px; border-left: 1px solid var(--border); }
+.activity-rule-title { margin-bottom: 16px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.activity-rule-title strong, .activity-rule-title span { display: block; }
+.activity-rule-title strong { color: #344054; font-size: 14px; }
+.activity-rule-title span { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.activity-rule-field { margin-bottom: 14px; display: grid; gap: 7px; color: #475467; font-size: 12px; }
+.activity-rule-field .el-select, .activity-rule-field .el-input { width: 100%; }
+.activity-rule-section .el-alert { margin-top: 12px; }
+.activity-mapping-heading { min-height: 34px; margin-top: 16px; display: flex; align-items: center; justify-content: space-between; color: #475467; font-size: 12px; }
+.activity-mapping-list { display: grid; gap: 9px; }
+.activity-mapping-row { display: grid; grid-template-columns: minmax(160px, 1fr) 120px 32px; gap: 8px; align-items: center; }
+.activity-mapping-row .el-button { width: 32px; height: 32px; margin: 0; }
+.activity-rule-section .el-empty { padding: 12px 0 0; }
+.activity-rule-section .el-empty__description { margin-top: 4px; }
+.activity-preview-actions { margin-top: 20px; padding-top: 18px; display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--border); }
+.activity-preview-actions span, .activity-preview-note { color: var(--muted); font-size: 12px; }
+.activity-sku-preview { margin-top: 16px; }
+.activity-preview-summary { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); border: 1px solid var(--border); border-bottom: 0; }
+.activity-preview-summary span { min-height: 54px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; border-right: 1px solid var(--border); }
+.activity-preview-summary span:last-child { border-right: 0; }
+.activity-preview-summary strong { color: #18212f; font-size: 16px; }
+.activity-preview-summary .danger, .activity-preview-summary .danger strong { color: #d92d20; }
+.activity-sku-preview .el-table { min-width: 780px; }
+.activity-preview-note { margin: 10px 0 0; }
 .activity-result-panel .section-heading { align-items: center; }
 .activity-result-panel .section-heading p { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
@@ -210,6 +238,8 @@ button, input, textarea { font: inherit; }
   .inventory-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .inventory-metrics > div:nth-child(3) { border-right: 0; }
   .rule-groups, .rule-groups--activity { grid-template-columns: 1fr; }
+  .activity-rule-grid { grid-template-columns: 1fr; }
+  .activity-rule-section + .activity-rule-section { padding: 24px 0 0; border-top: 1px solid var(--border); border-left: 0; }
 }
 
 @media (max-width: 720px) {
@@ -241,5 +271,10 @@ button, input, textarea { font: inherit; }
   .activity-task-action { width: 100%; text-align: left; }
   .activity-custom-settings { align-items: flex-start; flex-wrap: wrap; }
   .activity-custom-settings > div { width: 100%; }
+  .activity-preview-actions { align-items: flex-start; flex-direction: column; }
+  .activity-preview-summary { grid-template-columns: 1fr 1fr; }
+  .activity-preview-summary span:nth-child(2) { border-right: 0; }
+  .activity-preview-summary span:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+  .activity-mapping-row { grid-template-columns: minmax(140px, 1fr) 105px 32px; }
   .rule-values--headcost, .rule-values--sets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

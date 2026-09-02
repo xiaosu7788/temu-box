@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Delete, Download, RefreshRight, UploadFilled } from '@element-plus/icons-vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Delete, Download, Plus, RefreshRight, UploadFilled } from '@element-plus/icons-vue'
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
-import { activityDownloadUrl, deleteActivityTask, getActivityTask, getActivityTasks, getMe, getSettings, processBulkActivity } from '../api'
+import { activityDownloadUrl, deleteActivityTask, getActivityTask, getActivityTasks, getMe, getSettings, previewActivitySkuRules, processBulkActivity } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
-import type { ActivityTaskItem } from '../types'
+import type { ActivitySetMapping, ActivitySingleParseMode, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem } from '../types'
 import CostRules from '../components/CostRules.vue'
 
 const files = ref<UploadUserFile[]>([])
@@ -16,14 +16,81 @@ const currentUserId = ref<number | null>(null)
 const useCustomUplift = ref(false)
 const customUpliftLimit = ref(1)
 const defaultUpliftLimit = ref(1)
+const useCustomSkuRules = ref(false)
+const setKeywords = ref<string[]>(['piece', '件套', '套装'])
+const includeEmptySetKeyword = ref(false)
+const setMappings = ref<ActivitySetMapping[]>([])
+const singleMode = ref<ActivitySingleParseMode>('last_segment')
+const singleDelimiter = ref('-')
+const singleMarker = ref('price')
+const skuPreview = ref<ActivitySkuPreview | null>(null)
+const previewing = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | undefined
 const activityTaskStore = new Map<number, ActivityTaskItem[]>()
+const supportedSetPieces = [4, 5, 6, 8, 10, 12]
+const defaultSetKeywords = ['piece', '件套', '套装']
 
-const canSubmit = computed(() => files.value.length === 1 && !!files.value[0]?.raw)
+const skuRules = computed<ActivitySkuRules>(() => ({
+  set_keywords: [...new Set(setKeywords.value.map((item) => item.trim()).filter(Boolean).concat(includeEmptySetKeyword.value ? [''] : []))],
+  set_mappings: setMappings.value.map((item) => ({ pattern: item.pattern.trim(), pieces: item.pieces })),
+  single_mode: singleMode.value,
+  single_delimiter: singleDelimiter.value.trim(),
+  single_marker: singleMarker.value.trim(),
+}))
+const skuRulesValid = computed(() => {
+  if (setMappings.value.some((item) => !item.pattern.trim())) return false
+  if (singleMode.value === 'after_marker') return !!singleMarker.value.trim()
+  return !!singleDelimiter.value.trim()
+})
+const canPreview = computed(() => files.value.length === 1 && !!files.value[0]?.raw && skuRulesValid.value)
+const canSubmit = computed(() => files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || (!!skuPreview.value && skuRulesValid.value)))
 const activeTasks = computed(() => tasks.value.filter((task) => task.status === 'queued' || task.status === 'running'))
 
 function fileChanged(_file: UploadFile, uploadFiles: UploadFiles) {
   files.value = uploadFiles.slice(-1)
+  skuPreview.value = null
+}
+
+function resetSkuRules() {
+  setKeywords.value = [...defaultSetKeywords]
+  includeEmptySetKeyword.value = false
+  setMappings.value = []
+  singleMode.value = 'last_segment'
+  singleDelimiter.value = '-'
+  singleMarker.value = 'price'
+  skuPreview.value = null
+}
+
+function addSetMapping() {
+  setMappings.value.push({ pattern: '', pieces: 4 })
+}
+
+function removeSetMapping(index: number) {
+  setMappings.value.splice(index, 1)
+}
+
+async function previewSkuRules() {
+  const file = files.value[0]?.raw
+  if (!file || !skuRulesValid.value) return
+  previewing.value = true
+  try {
+    skuPreview.value = await previewActivitySkuRules(file, skuRules.value)
+    notifySuccess('SKC识别预览已更新')
+  } catch (error) {
+    notifyError(error)
+  } finally {
+    previewing.value = false
+  }
+}
+
+function previewValue(item: ActivitySkuPreviewItem) {
+  if (item.value === null) return '-'
+  return item.result === '套装' ? `${item.value}件` : `¥${item.value.toFixed(2)}`
+}
+
+function previewTagType(result: ActivitySkuPreviewItem['result']) {
+  if (result === '无法识别') return 'danger'
+  return result === '套装' ? 'warning' : 'success'
 }
 
 function mergeTask(task: ActivityTaskItem) {
@@ -84,11 +151,17 @@ async function submit() {
   if (!file) return
   loading.value = true
   try {
-    const task = await processBulkActivity(file, useCustomUplift.value ? customUpliftLimit.value : undefined)
+    const task = await processBulkActivity(
+      file,
+      useCustomUplift.value ? customUpliftLimit.value : undefined,
+      useCustomSkuRules.value ? skuRules.value : undefined,
+    )
     mergeTask(task)
     files.value = []
     useCustomUplift.value = false
     customUpliftLimit.value = defaultUpliftLimit.value
+    useCustomSkuRules.value = false
+    resetSkuRules()
     startPolling()
     notifySuccess('任务已提交，后台正在处理')
   } catch (error) {
@@ -102,6 +175,8 @@ function reset() {
   files.value = []
   useCustomUplift.value = false
   customUpliftLimit.value = defaultUpliftLimit.value
+  useCustomSkuRules.value = false
+  resetSkuRules()
 }
 
 async function remove(task: ActivityTaskItem) {
@@ -150,6 +225,11 @@ async function bootstrap() {
 onMounted(bootstrap)
 onActivated(() => { void loadTasks() })
 onBeforeUnmount(stopPolling)
+watch(
+  [setKeywords, includeEmptySetKeyword, setMappings, singleMode, singleDelimiter, singleMarker],
+  () => { skuPreview.value = null },
+  { deep: true },
+)
 </script>
 
 <template>
@@ -183,6 +263,98 @@ onBeforeUnmount(stopPolling)
       </div>
       <el-switch v-model="useCustomUplift" inline-prompt active-text="开" inactive-text="关" />
       <el-input-number v-model="customUpliftLimit" :disabled="!useCustomUplift" :min="0" :max="1000" :precision="2" :step="0.1" controls-position="right" />
+    </div>
+
+    <div class="activity-custom-settings activity-skc-settings-heading">
+      <div>
+        <strong>本次任务自定义 SKC 格式</strong>
+        <span>关闭时使用系统格式；自定义规则仅对本次提交生效</span>
+      </div>
+      <el-switch v-model="useCustomSkuRules" inline-prompt active-text="开" inactive-text="关" />
+    </div>
+
+    <div v-if="useCustomSkuRules" class="activity-skc-rule-builder">
+      <div class="activity-rule-grid">
+        <section class="activity-rule-section">
+          <div class="activity-rule-title">
+            <div><strong>套装识别规则</strong><span>按固定映射、套装标识的顺序识别</span></div>
+          </div>
+          <label class="activity-rule-field">
+            <span>套装标识</span>
+            <el-select v-model="setKeywords" multiple filterable allow-create default-first-option placeholder="输入标识后按回车添加">
+              <el-option v-for="keyword in defaultSetKeywords" :key="keyword" :label="keyword" :value="keyword" />
+            </el-select>
+          </label>
+          <el-checkbox v-model="includeEmptySetKeyword">套装标识为空（从货号末尾提取件数）</el-checkbox>
+          <el-alert v-if="includeEmptySetKeyword" type="warning" :closable="false" show-icon title="空标识会优先把末尾为 4/5/6/8/10/12 的货号识别为套装" />
+
+          <div class="activity-mapping-heading">
+            <span>固定映射</span>
+            <el-button link type="primary" :icon="Plus" @click="addSetMapping">增加映射</el-button>
+          </div>
+          <div v-if="setMappings.length" class="activity-mapping-list">
+            <div v-for="(mapping, index) in setMappings" :key="index" class="activity-mapping-row">
+              <el-input v-model="mapping.pattern" placeholder="例如：四件组合" maxlength="64" />
+              <el-select v-model="mapping.pieces" aria-label="套装件数">
+                <el-option v-for="pieces in supportedSetPieces" :key="pieces" :label="`${pieces}件套`" :value="pieces" />
+              </el-select>
+              <el-button link type="danger" :icon="Delete" aria-label="删除固定映射" @click="removeSetMapping(index)" />
+            </div>
+          </div>
+          <el-empty v-else :image-size="42" description="暂无固定映射" />
+        </section>
+
+        <section class="activity-rule-section">
+          <div class="activity-rule-title">
+            <div><strong>单品货值提取规则</strong><span>套装未匹配时再按此规则提取货值</span></div>
+          </div>
+          <label class="activity-rule-field">
+            <span>提取方式</span>
+            <el-select v-model="singleMode">
+              <el-option label="第一个分隔符前的数字（5-MB131-A → 5）" value="first_segment" />
+              <el-option label="最后一个分隔符后的数字（MB131-A-5 → 5）" value="last_segment" />
+              <el-option label="指定文字后的数字（MB131-price17.1 → 17.1）" value="after_marker" />
+            </el-select>
+          </label>
+          <label v-if="singleMode !== 'after_marker'" class="activity-rule-field">
+            <span>分隔符</span>
+            <el-input v-model="singleDelimiter" maxlength="10" placeholder="例如：-" />
+          </label>
+          <label v-else class="activity-rule-field">
+            <span>指定文字</span>
+            <el-input v-model="singleMarker" maxlength="32" placeholder="例如：price" />
+          </label>
+        </section>
+      </div>
+
+      <div class="activity-preview-actions">
+        <el-button type="primary" plain :loading="previewing" :disabled="!canPreview" @click="previewSkuRules">预览识别结果</el-button>
+        <span>自定义规则变更后需重新预览</span>
+      </div>
+
+      <div v-if="skuPreview" class="activity-sku-preview">
+        <div class="activity-preview-summary">
+          <span>有效数据 <strong>{{ skuPreview.total_rows }}</strong></span>
+          <span>单品 <strong>{{ skuPreview.single_rows }}</strong></span>
+          <span>套装 <strong>{{ skuPreview.set_rows }}</strong></span>
+          <span :class="{ danger: skuPreview.unrecognized_rows > 0 }">无法识别 <strong>{{ skuPreview.unrecognized_rows }}</strong></span>
+        </div>
+        <el-table :data="skuPreview.items" max-height="360" stripe>
+          <el-table-column prop="row" label="行号" width="72" />
+          <el-table-column prop="skc" label="SKC货号" min-width="210" show-overflow-tooltip />
+          <el-table-column label="识别结果" width="110">
+            <template #default="scope"><el-tag :type="previewTagType(scope.row.result)" size="small">{{ scope.row.result }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="货值/件数" width="120">
+            <template #default="scope">{{ previewValue(scope.row) }}</template>
+          </el-table-column>
+          <el-table-column label="基础活动价" width="120">
+            <template #default="scope">{{ scope.row.base_price === null ? '-' : `¥${scope.row.base_price.toFixed(2)}` }}</template>
+          </el-table-column>
+          <el-table-column prop="method" label="识别依据" min-width="220" show-overflow-tooltip />
+        </el-table>
+        <p v-if="skuPreview.total_rows > skuPreview.preview_limit" class="activity-preview-note">表格仅展示前 {{ skuPreview.preview_limit }} 行，统计数量包含全部数据。</p>
+      </div>
     </div>
 
     <div class="action-row left">

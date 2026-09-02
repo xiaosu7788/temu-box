@@ -59,6 +59,42 @@ export interface BulkActivityStats {
   skipped_rows: number
   remaining_data_rows: number
   uplift_limit?: number
+  custom_skc_rules?: boolean
+}
+
+export type ActivitySingleParseMode = 'first_segment' | 'last_segment' | 'after_marker'
+
+export interface ActivitySetMapping {
+  pattern: string
+  pieces: number
+}
+
+export interface ActivitySkuRules {
+  set_keywords: string[]
+  set_mappings: ActivitySetMapping[]
+  single_mode: ActivitySingleParseMode
+  single_delimiter: string
+  single_marker: string
+}
+
+export interface ActivitySkuPreviewItem {
+  row: number
+  skc: string
+  result: '单品' | '套装' | '无法识别'
+  value: number | null
+  base_price: number | null
+  method: string
+}
+
+export interface ActivitySkuPreview {
+  sheet: string
+  header_row: number
+  total_rows: number
+  single_rows: number
+  set_rows: number
+  unrecognized_rows: number
+  preview_limit: number
+  items: ActivitySkuPreviewItem[]
 }
 
 export interface BulkActivityResult {

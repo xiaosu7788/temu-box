@@ -1,3 +1,4 @@
+import json
 from io import BytesIO
 
 from fastapi.testclient import TestClient
@@ -5,7 +6,7 @@ from openpyxl import Workbook, load_workbook
 
 from app.database import create_user
 from app.main import app
-from app.services.activity import activity_base_price, parse_skc, process_activity_workbook
+from app.services.activity import activity_base_price, parse_skc, preview_activity_workbook, process_activity_workbook
 from app.services.auth import hash_password
 
 
@@ -36,6 +37,29 @@ def test_parse_activity_skc_rules():
     assert parse_skc("y1-8piece") == ("set", 8.0)
     assert activity_base_price(("single", 5.0)) == 17.0
     assert activity_base_price(("set", 12.0)) == 92.0
+
+
+def test_parse_custom_activity_skc_rules():
+    common = {
+        "set_keywords": ["piece", "件套", "套装"],
+        "set_mappings": [{"pattern": "四件组合", "pieces": 4}],
+        "single_mode": "first_segment",
+        "single_delimiter": "-",
+        "single_marker": "price",
+    }
+    assert parse_skc("y1-4piece", common) == ("set", 4.0)
+    assert parse_skc("ABC-8件套", common) == ("set", 8.0)
+    assert parse_skc("春季四件组合-A", common) == ("set", 4.0)
+    assert parse_skc("5-MB131-A", common) == ("single", 5.0)
+
+    last_segment = {**common, "single_mode": "last_segment"}
+    assert parse_skc("MB131-A-5.5", last_segment) == ("single", 5.5)
+
+    after_marker = {**common, "single_mode": "after_marker"}
+    assert parse_skc("MB131-price17.1", after_marker) == ("single", 17.1)
+
+    empty_set_marker = {**common, "set_keywords": [""]}
+    assert parse_skc("SET-A-10", empty_set_marker) == ("set", 10.0)
 
 
 def test_activity_price_uses_admin_settings():
@@ -82,6 +106,61 @@ def test_activity_uplift_limit_uses_configured_value(tmp_path):
     assert stats["uplift_limit"] == 0.25
     assert rows[1][0] == "MB131-B-5"
     assert 17 < rows[1][1] <= 17.25
+
+
+def test_preview_custom_activity_rules():
+    rules = {
+        "set_keywords": ["piece", "件套"],
+        "set_mappings": [],
+        "single_mode": "first_segment",
+        "single_delimiter": "-",
+        "single_marker": "price",
+    }
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SKC货号", "活动申报价格"])
+    sheet.append(["5-MB131-A", 20])
+    sheet.append(["ABC-8件套", 80])
+    sheet.append(["UNKNOWN", 20])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    preview = preview_activity_workbook(content.getvalue(), rules)
+    assert preview["total_rows"] == 3
+    assert preview["single_rows"] == 1
+    assert preview["set_rows"] == 1
+    assert preview["unrecognized_rows"] == 1
+    assert preview["items"][0]["base_price"] == 17
+
+
+def test_activity_preview_endpoint_uses_custom_rules():
+    create_user("activity_preview_user", hash_password("previewpass123"), status="approved")
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SKC货号", "活动申报价格"])
+    sheet.append(["MB131-price17.1", 30])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+    rules = {
+        "set_keywords": ["piece"],
+        "set_mappings": [],
+        "single_mode": "after_marker",
+        "single_delimiter": "-",
+        "single_marker": "price",
+    }
+
+    with TestClient(app) as client:
+        client.post("/api/auth/login", json={"username": "activity_preview_user", "password": "previewpass123"})
+        response = client.post(
+            "/api/activities/preview",
+            data={"skc_rules": json.dumps(rules, ensure_ascii=False)},
+            files={"file": ("preview.xlsx", content.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert response.status_code == 200
+        assert response.json()["items"][0]["result"] == "单品"
+        assert response.json()["items"][0]["value"] == 17.1
 
 
 def test_activity_task_is_visible_after_submission():

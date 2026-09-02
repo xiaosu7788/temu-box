@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -37,6 +38,7 @@ from app.database import (
 from app.schemas import AdminUserUpdateRequest, LoginRequest, RegisterRequest, SettingsPayload, SkuQueryRequest
 from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
 from app.services.half_headcost import delete_entry, load_entries, merge_upload
+from app.services.activity import normalize_parse_config, preview_activity_workbook
 from app.services.activity_tasks import activity_task_manager
 from app.services.inventory import invalidate_cache, inventory_status, load_price_catalog
 from app.services.settings import settings_public, update_settings
@@ -195,10 +197,46 @@ async def upload_inventory(file: UploadFile = File(...), _admin: dict = Depends(
     return {"message": "库存表已更新，缓存将在下次查询时自动重建", **inventory_status()}
 
 
+def parse_activity_rules(value: Optional[str]) -> Optional[dict]:
+    if value is None:
+        return None
+    if len(value) > 20_000:
+        raise HTTPException(status_code=400, detail="SKC识别规则内容过大")
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="SKC识别规则不是有效的JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="SKC识别规则必须是JSON对象")
+    try:
+        return normalize_parse_config(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/activities/preview")
+async def preview_bulk_activity(
+    file: UploadFile = File(...),
+    skc_rules: str = Form(...),
+    _user: dict = Depends(current_user),
+):
+    validate_excel(file)
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    await file.close()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="上传文件超过服务器限制")
+    parse_config = parse_activity_rules(skc_rules)
+    try:
+        return await run_in_threadpool(preview_activity_workbook, content, parse_config, settings_public())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/activities/bulk", status_code=202)
 async def process_bulk_activity(
     file: UploadFile = File(...),
     uplift_limit: Optional[float] = Form(None, ge=0, le=1000),
+    skc_rules: Optional[str] = Form(None),
     user: dict = Depends(current_user),
 ):
     validate_excel(file)
@@ -208,7 +246,8 @@ async def process_bulk_activity(
         raise HTTPException(status_code=413, detail="上传文件超过服务器限制")
 
     upload_name = file.filename or "报名活动.xlsx"
-    job = await run_in_threadpool(activity_task_manager.create, upload_name, user["id"], content, uplift_limit)
+    parse_config = parse_activity_rules(skc_rules)
+    job = await run_in_threadpool(activity_task_manager.create, upload_name, user["id"], content, uplift_limit, parse_config)
     return {
         **job,
         "download_url": f"/api/activities/{job['id']}/download",
