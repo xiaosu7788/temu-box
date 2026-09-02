@@ -82,8 +82,8 @@ def _reference_price(value: object) -> Optional[float]:
     return price if price >= 0 else None
 
 
-def _uplifted_price(base: float, reference: float) -> float:
-    max_cents = min(100, int(round((reference - base) * 100)))
+def _uplifted_price(base: float, reference: float, uplift_limit: float) -> float:
+    max_cents = min(int(round(max(0, uplift_limit) * 100)), int(round((reference - base) * 100)))
     if max_cents <= 0:
         return round(base, 2)
     uplift_cents = random.randint(1, max_cents)
@@ -99,6 +99,8 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None) -
         worksheet, header_row, columns = _find_headers(workbook)
         price_column = columns["price"]
         skc_column = columns["skc"]
+        activity_settings = (settings or {}).get("activity", {})
+        uplift_limit = float(activity_settings.get("uplift_limit", 1))
         rows_to_delete = []
         updated = 0
         unchanged = 0
@@ -126,7 +128,7 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None) -
                 unchanged += 1
                 continue
 
-            worksheet.cell(row, price_column).value = _uplifted_price(base, reference)
+            worksheet.cell(row, price_column).value = _uplifted_price(base, reference, uplift_limit)
             worksheet.cell(row, price_column).number_format = "0.00"
             updated += 1
 
@@ -145,6 +147,7 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None) -
             "removed_rows": len(rows_to_delete),
             "skipped_rows": skipped,
             "remaining_data_rows": input_data_rows - len(rows_to_delete),
+            "uplift_limit": round(uplift_limit, 2),
         }
     finally:
         workbook.close()

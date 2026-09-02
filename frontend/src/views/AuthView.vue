@@ -54,7 +54,7 @@ async function submit() {
 <template>
   <main class="auth-shell">
     <section class="auth-panel">
-      <div class="auth-brand"><span class="brand-mark"><el-icon><Collection /></el-icon></span><div><strong>销售成本工具</strong><small>Operations Console</small></div></div>
+      <div class="auth-brand"><span class="brand-mark"><el-icon><Collection /></el-icon></span><div><strong>Temu-Box</strong><small>Operations Console</small></div></div>
       <div class="auth-heading"><h1>{{ registerMode ? '创建账号' : '欢迎回来' }}</h1><p>{{ registerMode ? '注册后由管理员审核账号' : '登录后进入业务工作台' }}</p></div>
       <el-form @submit.prevent="submit">
         <el-form-item><el-input v-model="username" placeholder="用户名" size="large" :prefix-icon="UserIcon" autocomplete="username" @input="clearFormError" /></el-form-item>

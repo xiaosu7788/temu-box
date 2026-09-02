@@ -146,9 +146,10 @@ export async function deleteHalfHeadcost(sku: string) {
   await http.delete(`/half-headcost/${encodeURIComponent(sku)}`)
 }
 
-export async function processBulkActivity(file: File) {
+export async function processBulkActivity(file: File, upliftLimit?: number) {
   const form = new FormData()
   form.append('file', file)
+  if (upliftLimit !== undefined) form.append('uplift_limit', String(upliftLimit))
   const { data } = await uploadHttp.post<ActivityTaskItem & Pick<BulkActivityResult, 'download_url'>>('/activities/bulk', form)
   return data
 }
@@ -189,6 +190,18 @@ export async function getAdminUsers() {
 export async function updateUserStatus(id: number, status: 'approve' | 'reject') {
   const { data } = await http.post<User>(`/admin/users/${id}/${status}`)
   return data
+}
+
+export async function updateAdminUser(id: number, username: string, password?: string) {
+  const { data } = await http.patch<User>(`/admin/users/${id}`, {
+    username,
+    password: password || undefined,
+  })
+  return data
+}
+
+export async function deleteAdminUser(id: number) {
+  await http.delete(`/admin/users/${id}`)
 }
 
 export async function getAdminSettings() {

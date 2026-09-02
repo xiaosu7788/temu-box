@@ -78,7 +78,7 @@ onMounted(load)
       <div class="rule-formula">
         <span>单品活动底价</span>
         <strong>货值 + 头程 + 操作费 + 匹配利润</strong>
-        <small>参考价低于底价时删除该行；等于底价时保留；高于底价时，在底价以上随机浮动且不超过 ¥1.00 和参考价，保留两位小数。多件套直接使用对应活动价。</small>
+        <small>参考价低于底价时删除该行；等于底价时保留；高于底价时，在底价以上随机浮动且不超过当前浮动上限和参考价，保留两位小数。多件套直接使用对应活动价。</small>
       </div>
       <div class="rule-groups rule-groups--activity">
         <div class="rule-group">
@@ -86,6 +86,7 @@ onMounted(load)
           <dl class="rule-values">
             <div><dt>头程</dt><dd>{{ money(settings.activity.headcost) }}</dd></div>
             <div><dt>操作费</dt><dd>{{ money(settings.activity.operation_fee) }}</dd></div>
+            <div><dt>默认浮动上限</dt><dd>{{ money(settings.activity.uplift_limit) }}</dd></div>
           </dl>
         </div>
         <div class="rule-group">

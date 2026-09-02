@@ -132,6 +132,11 @@ button, input, textarea { font: inherit; }
 .admin-inventory-page--fixed .admin-inventory-data-panel .inventory-table-scroll { min-height: 0; flex: 1 1 auto; overflow: auto; }
 .activity-upload-panel .el-upload { width: 100%; }
 .activity-upload-panel .el-upload-dragger { width: 100%; min-height: 180px; padding: 30px 12px; }
+.activity-custom-settings { margin-top: 18px; padding-top: 16px; display: flex; align-items: center; gap: 14px; border-top: 1px solid var(--border); }
+.activity-custom-settings > div { min-width: 220px; display: grid; gap: 4px; }
+.activity-custom-settings strong { color: #344054; font-size: 13px; }
+.activity-custom-settings span { color: var(--muted); font-size: 12px; }
+.activity-custom-settings .el-input-number { width: 150px; }
 .activity-result-panel .section-heading { align-items: center; }
 .activity-result-panel .section-heading p { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
@@ -234,5 +239,7 @@ button, input, textarea { font: inherit; }
   .tier-row { flex-wrap: wrap; }
   .activity-task-item { align-items: flex-start; flex-direction: column; gap: 12px; }
   .activity-task-action { width: 100%; text-align: left; }
+  .activity-custom-settings { align-items: flex-start; flex-wrap: wrap; }
+  .activity-custom-settings > div { width: 100%; }
   .rule-values--headcost, .rule-values--sets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

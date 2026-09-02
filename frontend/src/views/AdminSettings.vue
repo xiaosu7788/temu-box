@@ -22,6 +22,7 @@ const settings = reactive<AppSettings>({
   activity: {
     headcost: 5,
     operation_fee: 7,
+    uplift_limit: 1,
     set_prices: { '4': 42, '5': 45, '6': 48, '8': 71, '10': 75, '12': 92 },
     single_tiers: [{ min_price: 0, profit: 0 }],
   },
@@ -85,7 +86,7 @@ onMounted(load)
         </el-tab-pane>
         <el-tab-pane label="批量报名活动">
           <div class="settings-category-grid">
-            <div class="settings-category"><h3>单品费用</h3><div class="settings-form-grid"><label>单品头程<el-input-number v-model="settings.activity.headcost" :min="0" :precision="2" controls-position="right" /></label><label>操作费<el-input-number v-model="settings.activity.operation_fee" :min="0" :precision="2" controls-position="right" /></label></div></div>
+            <div class="settings-category"><h3>单品费用</h3><div class="settings-form-grid"><label>单品头程<el-input-number v-model="settings.activity.headcost" :min="0" :precision="2" controls-position="right" /></label><label>操作费<el-input-number v-model="settings.activity.operation_fee" :min="0" :precision="2" controls-position="right" /></label><label>默认浮动上限<el-input-number v-model="settings.activity.uplift_limit" :min="0" :max="1000" :precision="2" controls-position="right" /></label></div><p class="settings-note">用户未设置自定义浮动值时使用此默认值。</p></div>
             <div class="settings-category"><h3>多件套活动价</h3><div class="settings-form-grid"><label v-for="type in setTypes" :key="type">{{ type }}件套活动价<el-input-number v-model="settings.activity.set_prices[type]" :min="0" :precision="2" controls-position="right" /></label></div></div>
           </div>
           <div class="settings-category settings-category--wide"><h3>单品货值利润条件</h3><p class="settings-note">按货值从低到高设置条件，计算时使用不超过当前货值的最高条件。</p><div v-for="(tier, index) in settings.activity.single_tiers" :key="index" class="tier-row"><span>货值 ≥</span><el-input-number v-model="tier.min_price" :min="0" :precision="2" controls-position="right" /><span>利润 +</span><el-input-number v-model="tier.profit" :min="0" :precision="2" controls-position="right" /><el-button circle text type="danger" :icon="Delete" @click="removeTier(index)" /><span v-if="index === settings.activity.single_tiers.length - 1" class="tier-hint">按最高匹配条件计算</span></div><el-button class="add-tier" text type="primary" :icon="Plus" @click="addTier">新增条件</el-button></div>

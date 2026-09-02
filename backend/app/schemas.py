@@ -48,6 +48,11 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class AdminUserUpdateRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=80)
+    password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+
+
 class SettingsPayload(BaseModel):
     order: Dict[str, object]
     activity: Dict[str, object]

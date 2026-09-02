@@ -2,7 +2,7 @@
 import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Delete, Download, RefreshRight, UploadFilled } from '@element-plus/icons-vue'
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
-import { activityDownloadUrl, deleteActivityTask, getActivityTask, getActivityTasks, getMe, processBulkActivity } from '../api'
+import { activityDownloadUrl, deleteActivityTask, getActivityTask, getActivityTasks, getMe, getSettings, processBulkActivity } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { ActivityTaskItem } from '../types'
 import CostRules from '../components/CostRules.vue'
@@ -13,6 +13,9 @@ const loading = ref(false)
 const loadingTasks = ref(false)
 const deleting = ref<string | null>(null)
 const currentUserId = ref<number | null>(null)
+const useCustomUplift = ref(false)
+const customUpliftLimit = ref(1)
+const defaultUpliftLimit = ref(1)
 let pollTimer: ReturnType<typeof setInterval> | undefined
 const activityTaskStore = new Map<number, ActivityTaskItem[]>()
 
@@ -81,9 +84,11 @@ async function submit() {
   if (!file) return
   loading.value = true
   try {
-    const task = await processBulkActivity(file)
+    const task = await processBulkActivity(file, useCustomUplift.value ? customUpliftLimit.value : undefined)
     mergeTask(task)
     files.value = []
+    useCustomUplift.value = false
+    customUpliftLimit.value = defaultUpliftLimit.value
     startPolling()
     notifySuccess('任务已提交，后台正在处理')
   } catch (error) {
@@ -95,6 +100,8 @@ async function submit() {
 
 function reset() {
   files.value = []
+  useCustomUplift.value = false
+  customUpliftLimit.value = defaultUpliftLimit.value
 }
 
 async function remove(task: ActivityTaskItem) {
@@ -130,7 +137,10 @@ function formatTime(value?: string) {
 
 async function bootstrap() {
   try {
-    currentUserId.value = (await getMe()).id
+    const [user, settings] = await Promise.all([getMe(), getSettings()])
+    currentUserId.value = user.id
+    defaultUpliftLimit.value = settings.activity.uplift_limit
+    customUpliftLimit.value = settings.activity.uplift_limit
     await loadTasks()
   } catch (error) {
     notifyError(error)
@@ -165,6 +175,15 @@ onBeforeUnmount(stopPolling)
       <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
       <div class="el-upload__text">选择报名商品信息表</div>
     </el-upload>
+
+    <div class="activity-custom-settings">
+      <div>
+        <strong>本次任务自定义浮动上限</strong>
+        <span>仅对本次提交生效；关闭时使用后台默认值 ¥{{ defaultUpliftLimit.toFixed(2) }}</span>
+      </div>
+      <el-switch v-model="useCustomUplift" inline-prompt active-text="开" inactive-text="关" />
+      <el-input-number v-model="customUpliftLimit" :disabled="!useCustomUplift" :min="0" :max="1000" :precision="2" :step="0.1" controls-position="right" />
+    </div>
 
     <div class="action-row left">
       <el-button type="primary" :loading="loading" :disabled="!canSubmit" @click="submit">提交处理任务</el-button>

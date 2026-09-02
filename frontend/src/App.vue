@@ -72,7 +72,7 @@ onMounted(bootstrap)
       <div class="brand">
         <div class="brand-mark"><el-icon><Collection /></el-icon></div>
         <div>
-          <strong>销售成本工具</strong>
+          <strong>Temu-Box</strong>
           <span>Operations Console</span>
         </div>
       </div>
@@ -102,7 +102,7 @@ onMounted(bootstrap)
         <el-button class="menu-button" :icon="MenuIcon" circle @click="mobileMenu = !mobileMenu" />
         <div>
           <h1>{{ pageTitle }}</h1>
-          <p>销售订单货值/成本计算工具</p>
+          <p>Temu-Box</p>
         </div>
         <el-tag v-if="user.role === 'admin'" class="role-tag" type="warning">管理员</el-tag>
       </header>

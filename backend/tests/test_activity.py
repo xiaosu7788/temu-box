@@ -69,6 +69,21 @@ def test_process_activity_workbook_updates_filters_and_preserves_sheets(tmp_path
     assert 45 < rows[3][1] <= 45.5
 
 
+def test_activity_uplift_limit_uses_configured_value(tmp_path):
+    output = tmp_path / "limited-result.xlsx"
+    settings = {"activity": {"uplift_limit": 0.25}}
+    stats = process_activity_workbook(make_activity_workbook(), output, settings)
+
+    workbook = load_workbook(output, data_only=True)
+    sheet = workbook["活动申报价格"]
+    rows = [(sheet.cell(row, 4).value, sheet.cell(row, 6).value) for row in range(2, sheet.max_row + 1)]
+    workbook.close()
+
+    assert stats["uplift_limit"] == 0.25
+    assert rows[1][0] == "MB131-B-5"
+    assert 17 < rows[1][1] <= 17.25
+
+
 def test_activity_task_is_visible_after_submission():
     create_user("activity_owner", hash_password("activitypass123"), status="approved")
     workbook = Workbook()
@@ -91,6 +106,28 @@ def test_activity_task_is_visible_after_submission():
         listed = client.get("/api/activities")
         assert listed.status_code == 200
         assert job_id in {item["id"] for item in listed.json()["items"]}
+
+
+def test_custom_uplift_does_not_change_default_settings():
+    create_user("custom_uplift_user", hash_password("custompass123"), status="approved")
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SKC货号", "活动申报价格"])
+    sheet.append(["MB131-CUSTOM-5", 18])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    with TestClient(app) as client:
+        client.post("/api/auth/login", json={"username": "custom_uplift_user", "password": "custompass123"})
+        default_before = client.get("/api/settings").json()["activity"]["uplift_limit"]
+        response = client.post(
+            "/api/activities/bulk",
+            data={"uplift_limit": "0.25"},
+            files={"file": ("custom-uplift.xlsx", content.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert response.status_code == 202
+        assert client.get("/api/settings").json()["activity"]["uplift_limit"] == default_before
 
 
 def test_admin_activity_task_list_includes_all_jobs():

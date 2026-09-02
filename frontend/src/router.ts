@@ -21,7 +21,7 @@ export const router = createRouter({
     { path: '/activities', component: BulkActivity, meta: { title: '批量报名活动' } },
     { path: '/tasks', component: TaskHistory, meta: { title: '任务记录' } },
     { path: '/admin', component: AdminHome, meta: { title: '后台管理' } },
-    { path: '/admin/users', component: AdminUsers, meta: { title: '用户审核' } },
+    { path: '/admin/users', component: AdminUsers, meta: { title: '用户管理' } },
     { path: '/admin/settings', component: AdminSettings, meta: { title: '成本参数' } },
     { path: '/admin/inventory', component: AdminInventory, meta: { title: '库存管理' } },
     { path: '/admin/tasks', component: AdminTasks, meta: { title: '任务记录' } },

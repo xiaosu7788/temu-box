@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -26,13 +26,15 @@ from app.database import (
     create_user,
     database_status,
     delete_inventory_item,
+    delete_user,
     ensure_admin_user,
     get_user,
     get_user_by_username,
     list_users,
+    update_user_credentials,
     update_user_status,
 )
-from app.schemas import LoginRequest, RegisterRequest, SettingsPayload, SkuQueryRequest
+from app.schemas import AdminUserUpdateRequest, LoginRequest, RegisterRequest, SettingsPayload, SkuQueryRequest
 from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
 from app.services.half_headcost import delete_entry, load_entries, merge_upload
 from app.services.activity_tasks import activity_task_manager
@@ -48,7 +50,7 @@ logging.basicConfig(
 )
 
 app = FastAPI(
-    title="销售订单货值/成本计算工具 API",
+    title="Temu-Box API",
     version="2.0.0",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
@@ -194,7 +196,11 @@ async def upload_inventory(file: UploadFile = File(...), _admin: dict = Depends(
 
 
 @app.post("/api/activities/bulk", status_code=202)
-async def process_bulk_activity(file: UploadFile = File(...), user: dict = Depends(current_user)):
+async def process_bulk_activity(
+    file: UploadFile = File(...),
+    uplift_limit: Optional[float] = Form(None, ge=0, le=1000),
+    user: dict = Depends(current_user),
+):
     validate_excel(file)
     content = await file.read(MAX_UPLOAD_BYTES + 1)
     await file.close()
@@ -202,7 +208,7 @@ async def process_bulk_activity(file: UploadFile = File(...), user: dict = Depen
         raise HTTPException(status_code=413, detail="上传文件超过服务器限制")
 
     upload_name = file.filename or "报名活动.xlsx"
-    job = await run_in_threadpool(activity_task_manager.create, upload_name, user["id"], content)
+    job = await run_in_threadpool(activity_task_manager.create, upload_name, user["id"], content, uplift_limit)
     return {
         **job,
         "download_url": f"/api/activities/{job['id']}/download",
@@ -452,6 +458,38 @@ def reject_user(user_id: int, _admin: dict = Depends(admin_user)):
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     return public_user(user)
+
+
+@app.patch("/api/admin/users/{user_id}")
+def admin_update_user(user_id: int, payload: AdminUserUpdateRequest, _admin: dict = Depends(admin_user)):
+    target = get_user(user_id)
+    if not target or target["role"] == "admin":
+        raise HTTPException(status_code=404, detail="普通用户不存在")
+    try:
+        username = validate_username(payload.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    existing = get_user_by_username(username)
+    if existing and existing["id"] != user_id:
+        raise HTTPException(status_code=409, detail="用户名已存在")
+    user = update_user_credentials(
+        user_id,
+        username,
+        hash_password(payload.password) if payload.password else None,
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return public_user(user)
+
+
+@app.delete("/api/admin/users/{user_id}")
+def admin_delete_user(user_id: int, _admin: dict = Depends(admin_user)):
+    target = get_user(user_id)
+    if not target or target["role"] == "admin":
+        raise HTTPException(status_code=404, detail="普通用户不存在")
+    if not delete_user(user_id):
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return {"message": "用户已删除", "id": user_id}
 
 
 @app.get("/api/admin/settings")

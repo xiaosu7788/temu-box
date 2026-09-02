@@ -130,6 +130,7 @@ DEFAULT_SETTINGS = {
     "activity": {
         "headcost": 5,
         "operation_fee": 7,
+        "uplift_limit": 1,
         "set_prices": {"4": 42, "5": 45, "6": 48, "8": 71, "10": 75, "12": 92},
         "single_tiers": [{"min_price": 0, "profit": 0}],
     },
@@ -471,6 +472,26 @@ def update_user_status(user_id: int, status: str) -> Optional[dict]:
         row.status = status
         row.approved_at = datetime.now(timezone.utc) if status == "approved" else None
         return user_dict(row)
+
+
+def update_user_credentials(user_id: int, username: str, password_hash: Optional[str] = None) -> Optional[dict]:
+    with db_session() as session:
+        row = session.get(User, user_id)
+        if not row:
+            return None
+        row.username = username
+        if password_hash:
+            row.password_hash = password_hash
+        return user_dict(row)
+
+
+def delete_user(user_id: int) -> bool:
+    with db_session() as session:
+        row = session.get(User, user_id)
+        if not row:
+            return False
+        session.delete(row)
+        return True
 
 
 def list_users() -> list[dict]:

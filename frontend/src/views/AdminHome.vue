@@ -13,12 +13,12 @@ function open(path: string) {
   <div class="admin-page admin-home">
     <section class="section-band admin-intro">
       <div class="section-heading">
-        <div><h2>后台管理</h2><p>集中管理账号审核和业务计算规则，后续功能可以继续扩展到这里。</p></div>
+        <div><h2>后台管理</h2><p>集中管理用户账号和业务计算规则，后续功能可以继续扩展到这里。</p></div>
       </div>
       <div class="admin-module-grid">
         <button class="admin-module-entry" type="button" @click="open('/admin/users')">
           <span class="admin-module-icon"><el-icon><UserFilled /></el-icon></span>
-          <span class="admin-module-copy"><strong>用户审核</strong><small>查看注册申请并审核普通用户账号</small></span>
+          <span class="admin-module-copy"><strong>用户管理</strong><small>审核、编辑和删除普通用户账号</small></span>
           <el-icon class="admin-module-arrow"><ArrowRight /></el-icon>
         </button>
         <button class="admin-module-entry" type="button" @click="open('/admin/settings')">

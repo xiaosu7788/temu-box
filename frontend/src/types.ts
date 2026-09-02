@@ -58,6 +58,7 @@ export interface BulkActivityStats {
   removed_rows: number
   skipped_rows: number
   remaining_data_rows: number
+  uplift_limit?: number
 }
 
 export interface BulkActivityResult {
@@ -106,6 +107,7 @@ export interface AppSettings {
   activity: {
     headcost: number
     operation_fee: number
+    uplift_limit: number
     set_prices: Record<string, number>
     single_tiers: Array<{ min_price: number; profit: number }>
   }

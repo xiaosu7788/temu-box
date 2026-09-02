@@ -68,6 +68,30 @@ def test_approved_user_can_view_but_not_update_cost_settings():
         assert client.put("/api/admin/settings", json=settings.json()).status_code == 403
 
 
+def test_admin_can_update_and_delete_regular_users():
+    admin = create_user("user_manager", hash_password("managerpass123"), role="admin", status="approved")
+    target = create_user("managed_user", hash_password("oldpassword123"), status="approved")
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": admin["username"], "password": "managerpass123"})
+        assert login.status_code == 200
+        updated = client.patch(
+            f"/api/admin/users/{target['id']}",
+            json={"username": "renamed_user", "password": "newpassword123"},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["username"] == "renamed_user"
+
+        client.post("/api/auth/logout")
+        assert client.post("/api/auth/login", json={"username": "managed_user", "password": "oldpassword123"}).status_code == 401
+        assert client.post("/api/auth/login", json={"username": "renamed_user", "password": "newpassword123"}).status_code == 200
+
+        client.post("/api/auth/logout")
+        client.post("/api/auth/login", json={"username": admin["username"], "password": "managerpass123"})
+        assert client.delete(f"/api/admin/users/{target['id']}").status_code == 200
+        assert target["id"] not in {item["id"] for item in client.get("/api/admin/users").json()["items"]}
+        assert client.delete(f"/api/admin/users/{admin['id']}").status_code == 404
+
+
 def test_task_history_is_scoped_to_owner():
     first = task_manager.create("sales-a.xlsx", "delivery-a.xlsx", None, 101)
     second = task_manager.create("sales-b.xlsx", "delivery-b.xlsx", None, 202)
