@@ -178,9 +178,11 @@ http://服务器IP:8089
 
 ```ini
 DATABASE_URL=postgresql+psycopg://用户名:密码@host.docker.internal:5432/数据库名
+DB_CONNECT_TIMEOUT=10
+DB_STATEMENT_TIMEOUT_MS=30000
 ```
 
-此时一键脚本不会启动内置 PostgreSQL 容器，而是让后端连接宝塔数据库。宝塔数据库必须允许 Docker 容器访问，且服务器上 PostgreSQL 端口通常为 `5432`。可以先检查：
+此时一键脚本不会启动内置 PostgreSQL 容器，而是让后端连接宝塔数据库。宝塔数据库必须允许 Docker 容器访问，且服务器上 PostgreSQL 端口通常为 `5432`。连接超时默认 10 秒，单条 SQL 最长执行 30 秒，避免数据库异常时前端页面长期停留在加载状态。可以先检查：
 
 ```bash
 sudo ss -ltnp | grep 5432

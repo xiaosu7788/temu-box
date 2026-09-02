@@ -3,11 +3,17 @@ import type { ActivityTaskItem, AppSettings, BulkActivityResult, HalfHeadcostIte
 
 const http = axios.create({
   baseURL: '/api',
+  timeout: 15 * 1000,
+})
+
+const uploadHttp = axios.create({
+  baseURL: '/api',
   timeout: 30 * 60 * 1000,
 })
 
 export function errorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') return '请求超时，请检查服务器和数据库连接'
     return error.response?.data?.detail || error.message
   }
   return error instanceof Error ? error.message : '请求失败'
@@ -43,7 +49,7 @@ export async function getStatus() {
 }
 
 export async function createTask(form: FormData) {
-  const { data } = await http.post<TaskItem>('/tasks', form)
+  const { data } = await uploadHttp.post<TaskItem>('/tasks', form)
   return data
 }
 
@@ -93,12 +99,12 @@ export async function getInventoryItems(query = '', page = 1, pageSize = 30) {
 export async function uploadInventory(file: File) {
   const form = new FormData()
   form.append('file', file)
-  const { data } = await http.post<InventoryStatus & { message: string }>('/inventory', form)
+  const { data } = await uploadHttp.post<InventoryStatus & { message: string }>('/inventory', form)
   return data
 }
 
 export async function rebuildInventory() {
-  const { data } = await http.post<InventoryStatus & { message: string }>('/inventory/rebuild')
+  const { data } = await uploadHttp.post<InventoryStatus & { message: string }>('/inventory/rebuild')
   return data
 }
 
@@ -129,7 +135,7 @@ export async function getHalfHeadcost(query = '', page = 1, pageSize = 30) {
 export async function importHalfHeadcost(file: File) {
   const form = new FormData()
   form.append('file', file)
-  const { data } = await http.post<{ message: string; incoming: number; added: number; total: number }>(
+  const { data } = await uploadHttp.post<{ message: string; incoming: number; added: number; total: number }>(
     '/half-headcost/import',
     form,
   )
@@ -143,7 +149,7 @@ export async function deleteHalfHeadcost(sku: string) {
 export async function processBulkActivity(file: File) {
   const form = new FormData()
   form.append('file', file)
-  const { data } = await http.post<ActivityTaskItem & Pick<BulkActivityResult, 'download_url'>>('/activities/bulk', form)
+  const { data } = await uploadHttp.post<ActivityTaskItem & Pick<BulkActivityResult, 'download_url'>>('/activities/bulk', form)
   return data
 }
 

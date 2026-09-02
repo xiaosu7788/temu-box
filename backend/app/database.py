@@ -13,7 +13,7 @@ from typing import Iterator, Optional
 from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text, create_engine, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
-from app.config import DATA_DIR, DATABASE_URL, HALF_HEADCOST_PATH, PRICE_CACHE_PATH, TASKS_DIR
+from app.config import DATA_DIR, DATABASE_URL, DB_CONNECT_TIMEOUT, DB_STATEMENT_TIMEOUT_MS, HALF_HEADCOST_PATH, PRICE_CACHE_PATH, TASKS_DIR
 
 logger = logging.getLogger("sales_tool.database")
 if DATABASE_URL.startswith("postgres://"):
@@ -21,10 +21,15 @@ if DATABASE_URL.startswith("postgres://"):
 elif DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgresql://") :]
 
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {
+    "connect_timeout": DB_CONNECT_TIMEOUT,
+    "options": f"-c statement_timeout={DB_STATEMENT_TIMEOUT_MS}",
+}
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+    connect_args=connect_args,
     pool_pre_ping=True,
+    pool_timeout=DB_CONNECT_TIMEOUT,
 )
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)

@@ -10,6 +10,7 @@ const router = useRouter()
 const loading = ref(false)
 const saving = ref(false)
 const loaded = ref(false)
+const loadError = ref('')
 const settings = reactive<AppSettings>({
   order: {
     headcost: { '单品': 5, '4件套': 5, '5件套': 5, '6件套': 5, '8件套': 10, '10件套': 10, '12件套': 15 },
@@ -28,11 +29,13 @@ const setTypes = ['4', '5', '6', '8', '10', '12']
 
 async function load() {
   loading.value = true
+  loadError.value = ''
+  loaded.value = false
   try {
     Object.assign(settings, await getAdminSettings())
     loaded.value = true
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    loadError.value = errorMessage(error)
   } finally {
     loading.value = false
   }
@@ -67,7 +70,8 @@ function removeTier(index: number) {
         <div class="admin-settings-actions"><el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button><el-button type="primary" :icon="Select" :loading="saving" :disabled="!loaded" @click="save">保存全部参数</el-button></div>
       </div>
 
-      <el-skeleton v-if="!loaded" :rows="8" animated />
+      <el-skeleton v-if="!loaded && !loadError" :rows="8" animated />
+      <div v-else-if="loadError" class="settings-load-error"><p>{{ loadError }}</p><el-button :icon="Refresh" :loading="loading" @click="load">重新加载</el-button></div>
       <el-tabs v-else type="border-card" class="settings-tabs">
         <el-tab-pane label="订单计算">
           <div class="settings-category-grid">

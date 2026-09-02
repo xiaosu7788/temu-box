@@ -36,6 +36,8 @@ services:
       TASK_WORKERS: ${TASK_WORKERS:-2}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-536870912}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-10}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-30000}
     volumes:
       - ./data:/app/data
     extra_hosts:

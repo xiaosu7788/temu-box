@@ -15,6 +15,8 @@ ACTIVITY_DIR = DATA_DIR / "activities"
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 if not DATABASE_URL:
     DATABASE_URL = f"sqlite:///{(DATA_DIR / 'sales_tool.db').as_posix()}"
+DB_CONNECT_TIMEOUT = max(3, int(os.environ.get("DB_CONNECT_TIMEOUT", "10")))
+DB_STATEMENT_TIMEOUT_MS = max(1000, int(os.environ.get("DB_STATEMENT_TIMEOUT_MS", "30000")))
 
 INVENTORY_PATH = Path(
     os.environ.get("INVENTORY_PATH", INVENTORY_DIR / "库存统计表.xlsx")
