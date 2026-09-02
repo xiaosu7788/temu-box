@@ -153,7 +153,7 @@ onMounted(load)
 
 <template>
   <div class="admin-page admin-inventory-page admin-inventory-page--fixed">
-    <Teleport to="#admin-inventory-topbar-target">
+    <Teleport to="#inventory-topbar-target">
       <div class="admin-inventory-topbar">
         <el-button class="admin-inventory-back" text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button>
         <div class="admin-inventory-heading">
@@ -168,10 +168,13 @@ onMounted(load)
           <span>更新 <strong>{{ status?.modified_at || '-' }}</strong></span>
         </div>
         <div class="admin-inventory-topbar-actions">
-          <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-          <el-upload :show-file-list="false" :auto-upload="false" accept=".xlsx,.xlsm" @change="handleInventoryFile"><el-button type="primary" :icon="Upload" :loading="loading">更新库存表</el-button></el-upload>
-          <el-button :icon="Refresh" :loading="loading" @click="rebuild">重建缓存</el-button>
-          <el-button type="primary" :icon="Plus" @click="openCreateDialog">添加库存</el-button>
+          <div class="inventory-action-group inventory-action-group--source">
+            <el-button :icon="Refresh" :loading="loading" title="刷新库存状态" @click="load">刷新</el-button>
+            <el-upload :show-file-list="false" :auto-upload="false" accept=".xlsx,.xlsm" @change="handleInventoryFile"><el-button type="primary" :icon="Upload" :loading="loading">更新库存表</el-button></el-upload>
+            <el-button :icon="Refresh" :loading="loading" title="重新读取库存数据" @click="rebuild">重建缓存</el-button>
+          </div>
+          <div class="inventory-action-divider" aria-hidden="true"></div>
+          <el-button class="inventory-add-button" type="primary" :icon="Plus" @click="openCreateDialog">添加库存</el-button>
         </div>
       </div>
     </Teleport>

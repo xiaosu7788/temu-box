@@ -26,6 +26,7 @@ const user = ref<User | null>(null)
 const pageTitle = computed(() => String(route.meta.title || '工作台'))
 const fixedDataPage = computed(() => route.path === '/inventory' || route.path === '/admin/inventory')
 const showRegionPicker = computed(() => route.path === '/orders' || route.path === '/activities')
+const inventoryPage = computed(() => route.path === '/inventory' || route.path === '/admin/inventory')
 const adminInventoryPage = computed(() => route.path === '/admin/inventory')
 
 const menuItems = [
@@ -107,10 +108,10 @@ onMounted(bootstrap)
     </aside>
 
     <div class="workspace">
-      <header class="topbar" :class="{ 'topbar--admin-inventory': adminInventoryPage }">
+      <header class="topbar" :class="{ 'topbar--inventory': inventoryPage }">
         <el-button class="menu-button" :icon="MenuIcon" circle @click="mobileMenu = !mobileMenu" />
-        <template v-if="adminInventoryPage">
-          <div id="admin-inventory-topbar-target" class="admin-inventory-topbar-target"></div>
+        <template v-if="inventoryPage">
+          <div id="inventory-topbar-target" class="inventory-topbar-target"></div>
         </template>
         <template v-else>
           <div class="topbar-title">
@@ -121,7 +122,7 @@ onMounted(bootstrap)
         </template>
         <el-tag v-if="user.role === 'admin'" class="role-tag" type="warning">管理员</el-tag>
       </header>
-      <main class="page-content" :class="{ 'page-content--fixed': fixedDataPage, 'page-content--admin-inventory': adminInventoryPage }">
+      <main class="page-content" :class="{ 'page-content--fixed': fixedDataPage, 'page-content--inventory': inventoryPage, 'page-content--admin-inventory': adminInventoryPage }">
         <router-view />
       </main>
     </div>

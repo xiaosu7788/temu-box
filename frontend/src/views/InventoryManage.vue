@@ -110,30 +110,22 @@ onMounted(async () => {
   <section class="inventory-module inventory-module--fixed">
     <el-tabs v-model="activeTab" class="inventory-tabs inventory-tabs--fixed" @tab-change="changeTab">
       <el-tab-pane name="inventory" label="库存数据">
-        <section class="section-band inventory-overview">
-          <div class="section-heading">
-            <div><h2>当前库存</h2><p>服务器当前库存数据</p></div>
-            <div class="inventory-actions">
+        <Teleport to="#inventory-topbar-target">
+          <div class="inventory-topbar-content">
+            <div class="inventory-topbar-heading"><h1>库存管理</h1><span>查看库存数据和 SKU 价格</span></div>
+            <div class="inventory-topbar-summary">
+              <span>SKU <strong>{{ status?.sku_count || 0 }}</strong></span>
+              <span>文件 <strong>{{ status?.exists ? '正常' : '缺失' }}</strong></span>
+              <span>大小 <strong>{{ formatSize(status?.size ?? null) }}</strong></span>
+              <span>更新 <strong>{{ status?.modified_at || '-' }}</strong></span>
+            </div>
+            <div class="inventory-topbar-actions">
               <el-button :icon="Refresh" :loading="loading" @click="refresh">刷新</el-button>
-              <el-upload v-if="isAdmin" :show-file-list="false" :auto-upload="false" accept=".xlsx,.xlsm" @change="handleInventoryFile">
-                <el-button type="primary" :icon="Upload" :loading="loading">更新库存</el-button>
-              </el-upload>
-              <el-button v-if="isAdmin" :icon="Refresh" :loading="loading" @click="rebuild">重建缓存</el-button>
             </div>
           </div>
-          <div class="metric-strip inventory-metrics">
-            <div><span>文件状态</span><strong>{{ status?.exists ? '正常' : '缺失' }}</strong></div>
-            <div><span>文件大小</span><strong>{{ formatSize(status?.size ?? null) }}</strong></div>
-            <div><span>SKU 数量</span><strong>{{ status?.sku_count || 0 }}</strong></div>
-            <div><span>缓存状态</span><strong>{{ status?.cache_valid ? '有效' : '待重建' }}</strong></div>
-            <div><span>更新时间</span><strong class="small-value">{{ status?.modified_at || '-' }}</strong></div>
-          </div>
-        </section>
-
+        </Teleport>
         <section class="section-band inventory-data-panel">
-          <div class="section-heading">
-            <div><h2>库存明细</h2><p>共 {{ total }} 个 SKU，输入 SKU 可查询价格和类型</p></div>
-          </div>
+          <div class="section-heading"><div><h2>库存明细</h2><p>共 {{ total }} 个 SKU，输入 SKU 可查询价格和类型</p></div></div>
           <div class="toolbar-row inventory-search-row">
             <el-input v-model="query" clearable placeholder="输入 SKU 查询" :prefix-icon="Search" @keyup.enter="searchItems" @clear="clearSearch" />
             <el-button type="primary" :icon="Search" :loading="itemsLoading" @click="searchItems">查询</el-button>
@@ -142,24 +134,14 @@ onMounted(async () => {
           <div class="inventory-table-scroll">
             <el-table v-loading="itemsLoading" :data="items" stripe>
               <el-table-column prop="sku" label="SKU" min-width="180" />
-              <el-table-column prop="price" label="价格" width="120">
-                <template #default="scope">{{ scope.row.price?.toFixed(2) || '-' }}</template>
-              </el-table-column>
+              <el-table-column prop="price" label="价格" width="120"><template #default="scope">{{ scope.row.price?.toFixed(2) || '-' }}</template></el-table-column>
               <el-table-column prop="set_type" label="类型" width="120" />
               <el-table-column prop="source_sheet" label="来源工作表" min-width="150" />
               <el-table-column prop="source_row" label="行号" width="80" />
               <el-table-column prop="source_column" label="价格列" width="90" />
             </el-table>
           </div>
-          <el-pagination
-            v-if="total > pageSize"
-            v-model:current-page="page"
-            class="pagination inventory-pagination"
-            layout="prev, pager, next"
-            :page-size="pageSize"
-            :total="total"
-            @current-change="loadItems"
-          />
+          <el-pagination v-if="total > pageSize" v-model:current-page="page" class="pagination inventory-pagination" layout="prev, pager, next" :page-size="pageSize" :total="total" @current-change="loadItems" />
         </section>
       </el-tab-pane>
       <el-tab-pane name="half-headcost" label="头程减半名单">
