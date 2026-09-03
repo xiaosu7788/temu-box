@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ArrowLeft, Delete, Download, Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
-import { activityDownloadUrl, deleteActivityTask, deleteTask, downloadUrl, getAdminActivityTasks, getAdminTasks } from '../api'
+import { adminActivityDownloadUrl, adminDownloadUrl, deleteAdminActivityTask, deleteAdminTask, getAdminActivityTasks, getAdminTasks } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { ActivityTaskItem, TaskItem } from '../types'
 
@@ -39,7 +39,7 @@ async function removeOrderTask(task: TaskItem) {
   try {
     if (!await confirmAction(`删除用户 ${task.owner_username || task.owner_name || '-'} 的订单计算任务？删除后无法恢复。`, '管理员删除任务')) return
     deleting.value = key
-    await deleteTask(task.id)
+    await deleteAdminTask(task.id)
     orderTasks.value = orderTasks.value.filter((item) => item.id !== task.id)
     notifySuccess('订单计算任务已删除')
   } catch (error) {
@@ -55,7 +55,7 @@ async function removeActivityTask(task: ActivityTaskItem) {
   try {
     if (!await confirmAction(`删除用户 ${task.owner_username || task.owner_name || '-'} 的批量报活动任务？删除后无法恢复。`, '管理员删除任务')) return
     deleting.value = key
-    await deleteActivityTask(task.id)
+    await deleteAdminActivityTask(task.id)
     activityTasks.value = activityTasks.value.filter((item) => item.id !== task.id)
     notifySuccess('批量报活动任务已删除')
   } catch (error) {
@@ -85,7 +85,7 @@ onMounted(load)
             <el-table-column label="任务编号" min-width="190"><template #default="scope"><span class="mono">{{ scope.row.id }}</span></template></el-table-column>
             <el-table-column label="状态" width="100"><template #default="scope"><el-tag :type="statusType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag></template></el-table-column>
             <el-table-column label="进度" width="150"><template #default="scope"><el-progress :percentage="scope.row.progress" :stroke-width="8" /></template></el-table-column>
-            <el-table-column label="结果" width="90"><template #default="scope"><el-button v-if="scope.row.download_ready" type="success" link :icon="Download" tag="a" :href="downloadUrl(scope.row.id)">下载</el-button><span v-else>-</span></template></el-table-column>
+            <el-table-column label="结果" width="90"><template #default="scope"><el-button v-if="scope.row.download_ready" type="success" link :icon="Download" tag="a" :href="adminDownloadUrl(scope.row.id)">下载</el-button><span v-else>-</span></template></el-table-column>
             <el-table-column label="操作" width="110" fixed="right"><template #default="scope"><el-button v-if="!['preparing', 'queued', 'running'].includes(scope.row.status)" link type="danger" :icon="Delete" :loading="deleting === `order:${scope.row.id}`" @click="removeOrderTask(scope.row)">删除</el-button><span v-else class="table-muted">处理中</span></template></el-table-column>
           </el-table>
           <el-empty v-if="!loading && !orderTasks.length" description="暂无订单计算任务" />
@@ -99,7 +99,7 @@ onMounted(load)
             <el-table-column prop="filename" label="文件名" min-width="190" />
             <el-table-column label="状态" width="100"><template #default="scope"><el-tag :type="statusType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag></template></el-table-column>
             <el-table-column label="进度" width="150"><template #default="scope"><el-progress :percentage="scope.row.progress" :stroke-width="8" /></template></el-table-column>
-            <el-table-column label="结果" width="90"><template #default="scope"><el-button v-if="scope.row.download_ready" type="success" link :icon="Download" tag="a" :href="activityDownloadUrl(scope.row.id)">下载</el-button><span v-else>-</span></template></el-table-column>
+            <el-table-column label="结果" width="90"><template #default="scope"><el-button v-if="scope.row.download_ready" type="success" link :icon="Download" tag="a" :href="adminActivityDownloadUrl(scope.row.id)">下载</el-button><span v-else>-</span></template></el-table-column>
             <el-table-column label="操作" width="110" fixed="right"><template #default="scope"><el-button v-if="!['queued', 'running'].includes(scope.row.status)" link type="danger" :icon="Delete" :loading="deleting === `activity:${scope.row.id}`" @click="removeActivityTask(scope.row)">删除</el-button><span v-else class="table-muted">处理中</span></template></el-table-column>
           </el-table>
           <el-empty v-if="!loading && !activityTasks.length" description="暂无报名活动任务" />

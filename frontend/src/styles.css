@@ -222,7 +222,11 @@ button, input, textarea { font: inherit; }
 .activity-rule-section .el-empty__description { margin-top: 4px; }
 .activity-preview-actions { margin-top: 20px; padding-top: 18px; display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--border); }
 .activity-preview-actions span, .activity-preview-note { color: var(--muted); font-size: 12px; }
-.activity-sku-preview { margin-top: 16px; }
+.activity-sku-preview { min-width: 0; }
+.activity-preview-dialog { margin-top: max(4vh, 24px); margin-bottom: max(4vh, 24px); }
+.activity-preview-dialog .el-dialog__body { padding-top: 8px; overflow: hidden; }
+.activity-preview-table-wrap { height: clamp(260px, 48vh, 520px); overflow: hidden; }
+.activity-preview-footer { min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .activity-preview-summary { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); border: 1px solid var(--border); border-bottom: 0; }
 .activity-preview-summary span { min-height: 54px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; border-right: 1px solid var(--border); }
 .activity-preview-summary span:last-child { border-right: 0; }

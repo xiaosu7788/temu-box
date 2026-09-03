@@ -19,6 +19,7 @@ const singleDelimiter = ref('-')
 const singleMarker = ref('price')
 const defaultSetKeywords = ['piece', '件套', '套装']
 const supportedSetPieces = [4, 5, 6, 8, 10, 12]
+const keywordOptions = computed(() => [...new Set([...defaultSetKeywords, ...setKeywords.value])])
 
 const rulesValid = computed(() => {
   if (setMappings.value.some((item) => !item.pattern.trim())) return false
@@ -106,7 +107,7 @@ onMounted(load)
           <label class="admin-activity-rule-field">
             <span>套装标识</span>
             <el-select v-model="setKeywords" multiple filterable allow-create default-first-option placeholder="输入标识后按回车添加">
-              <el-option v-for="keyword in defaultSetKeywords" :key="keyword" :label="keyword" :value="keyword" />
+              <el-option v-for="keyword in keywordOptions" :key="keyword" :label="keyword" :value="keyword" />
             </el-select>
           </label>
           <el-checkbox v-model="includeEmptySetKeyword">套装标识为空（从货号末尾提取件数）</el-checkbox>

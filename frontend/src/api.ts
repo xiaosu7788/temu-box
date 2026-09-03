@@ -209,6 +209,22 @@ export async function getAdminActivityTasks(limit = 100) {
   return data.items
 }
 
+export async function deleteAdminTask(id: string) {
+  await http.delete(`/admin/tasks/${encodeURIComponent(id)}`)
+}
+
+export async function deleteAdminActivityTask(id: string) {
+  await http.delete(`/admin/activity-tasks/${encodeURIComponent(id)}`)
+}
+
+export function adminDownloadUrl(id: string) {
+  return `/api/admin/tasks/${encodeURIComponent(id)}/download`
+}
+
+export function adminActivityDownloadUrl(jobId: string) {
+  return `/api/admin/activity-tasks/${encodeURIComponent(jobId)}/download`
+}
+
 export function activityDownloadUrl(jobId: string) {
   return `/api/activities/${encodeURIComponent(jobId)}/download`
 }

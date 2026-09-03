@@ -28,6 +28,9 @@ const singleMode = ref<ActivitySingleParseMode>('last_segment')
 const singleDelimiter = ref('-')
 const singleMarker = ref('price')
 const skuPreview = ref<ActivitySkuPreview | null>(null)
+const previewDialogVisible = ref(false)
+const previewPage = ref(1)
+const previewPageSize = 20
 const previewing = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | undefined
 const activityTaskStore = new Map<number, ActivityTaskItem[]>()
@@ -40,6 +43,13 @@ const defaultSkuRules = ref<ActivitySkuRules>({
   single_delimiter: '-',
   single_marker: 'price',
 })
+const keywordOptions = computed(() => [
+  ...new Set([
+    ...defaultSetKeywords,
+    ...defaultSkuRules.value.set_keywords.filter(Boolean),
+    ...setKeywords.value,
+  ]),
+])
 
 function createDefaultSkuRules(): ActivitySkuRules {
   return {
@@ -69,24 +79,30 @@ const appliedSingleRule = computed(() => {
   if (appliedSkuRules.value.single_mode === 'after_marker') return `“${appliedSkuRules.value.single_marker}”后的数字`
   return `最后一个“${appliedSkuRules.value.single_delimiter}”后的数字`
 })
+const previewItems = computed(() => {
+  const start = (previewPage.value - 1) * previewPageSize
+  return skuPreview.value?.items.slice(start, start + previewPageSize) || []
+})
 const canPreview = computed(() => !!regionCode.value && files.value.length === 1 && !!files.value[0]?.raw && useCustomSkuRules.value && skuRulesConfigured.value)
-const canSubmit = computed(() => !!regionCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || (!!skuPreview.value && skuRulesConfigured.value)))
+const canSubmit = computed(() => !!regionCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || skuRulesConfigured.value))
 const activeTasks = computed(() => tasks.value.filter((task) => task.status === 'queued' || task.status === 'running'))
 
 function fileChanged(_file: UploadFile, uploadFiles: UploadFiles) {
   files.value = uploadFiles.slice(-1)
   skuPreview.value = null
+  previewDialogVisible.value = false
 }
 
 function resetSkuRules() {
-  appliedSkuRules.value = createDefaultSkuRules()
+  const rules = createDefaultSkuRules()
+  appliedSkuRules.value = rules
   skuRulesConfigured.value = false
-  setKeywords.value = [...defaultSetKeywords]
-  includeEmptySetKeyword.value = false
-  setMappings.value = []
-  singleMode.value = 'last_segment'
-  singleDelimiter.value = '-'
-  singleMarker.value = 'price'
+  setKeywords.value = rules.set_keywords.filter(Boolean)
+  includeEmptySetKeyword.value = rules.set_keywords.includes('')
+  setMappings.value = rules.set_mappings.map((item) => ({ ...item }))
+  singleMode.value = rules.single_mode
+  singleDelimiter.value = rules.single_delimiter
+  singleMarker.value = rules.single_marker
   skuPreview.value = null
 }
 
@@ -148,6 +164,8 @@ async function previewSkuRules() {
   previewing.value = true
   try {
     skuPreview.value = await previewActivitySkuRules(file, appliedSkuRules.value, regionCode.value)
+    previewPage.value = 1
+    previewDialogVisible.value = true
     notifySuccess('SKC识别预览已更新')
   } catch (error) {
     notifyError(error)
@@ -305,7 +323,7 @@ async function bootstrap() {
   try {
     const user = await getMe()
     currentUserId.value = user.id
-    await loadTasks()
+    await Promise.all([loadTasks(), loadRegionDefaults(regionCode.value)])
   } catch (error) {
     notifyError(error)
   }
@@ -366,7 +384,7 @@ onBeforeUnmount(stopPolling)
 
     <div v-if="useCustomSkuRules && skuRulesConfigured" class="activity-skc-summary">
       <div class="activity-skc-summary-heading">
-        <div><strong>已应用的 SKC 规则</strong><span>修改规则后需要重新预览识别结果</span></div>
+        <div><strong>已应用的 SKC 规则</strong><span>规则已生效，可直接提交或先预览识别结果</span></div>
         <el-button type="primary" plain @click="openSkuRulesDialog(false)">修改规则</el-button>
       </div>
       <dl class="activity-skc-summary-list">
@@ -377,32 +395,9 @@ onBeforeUnmount(stopPolling)
 
       <div class="activity-preview-actions">
         <el-button type="primary" plain :loading="previewing" :disabled="!canPreview" @click="previewSkuRules">预览识别结果</el-button>
-        <span>{{ files.length ? '确认识别结果后即可提交任务' : '请先选择报名商品信息表' }}</span>
+        <span>{{ files.length ? '预览为可选操作，可直接提交任务' : '请先选择报名商品信息表' }}</span>
       </div>
 
-      <div v-if="skuPreview" class="activity-sku-preview">
-        <div class="activity-preview-summary">
-          <span>有效数据 <strong>{{ skuPreview.total_rows }}</strong></span>
-          <span>单品 <strong>{{ skuPreview.single_rows }}</strong></span>
-          <span>套装 <strong>{{ skuPreview.set_rows }}</strong></span>
-          <span :class="{ danger: skuPreview.unrecognized_rows > 0 }">无法识别 <strong>{{ skuPreview.unrecognized_rows }}</strong></span>
-        </div>
-        <el-table :data="skuPreview.items" max-height="360" stripe>
-          <el-table-column prop="row" label="行号" width="72" />
-          <el-table-column prop="skc" label="SKC货号" min-width="210" show-overflow-tooltip />
-          <el-table-column label="识别结果" width="110">
-            <template #default="scope"><el-tag :type="previewTagType(scope.row.result)" size="small">{{ scope.row.result }}</el-tag></template>
-          </el-table-column>
-          <el-table-column label="货值/件数" width="120">
-            <template #default="scope">{{ previewValue(scope.row) }}</template>
-          </el-table-column>
-          <el-table-column label="基础活动价" width="120">
-            <template #default="scope">{{ scope.row.base_price === null ? '-' : `¥${scope.row.base_price.toFixed(2)}` }}</template>
-          </el-table-column>
-          <el-table-column prop="method" label="识别依据" min-width="220" show-overflow-tooltip />
-        </el-table>
-        <p v-if="skuPreview.total_rows > skuPreview.preview_limit" class="activity-preview-note">表格仅展示前 {{ skuPreview.preview_limit }} 行，统计数量包含全部数据。</p>
-      </div>
     </div>
 
     <el-dialog
@@ -422,7 +417,7 @@ onBeforeUnmount(stopPolling)
           <label class="activity-rule-field">
             <span>套装标识</span>
             <el-select v-model="setKeywords" multiple filterable allow-create default-first-option placeholder="输入标识后按回车添加">
-              <el-option v-for="keyword in defaultSetKeywords" :key="keyword" :label="keyword" :value="keyword" />
+              <el-option v-for="keyword in keywordOptions" :key="keyword" :label="keyword" :value="keyword" />
             </el-select>
           </label>
           <el-checkbox v-model="includeEmptySetKeyword">套装标识为空（从货号末尾提取件数）</el-checkbox>
@@ -469,6 +464,53 @@ onBeforeUnmount(stopPolling)
       <template #footer>
         <el-button @click="skuRulesDialogVisible = false">取消</el-button>
         <el-button type="primary" :disabled="!skuRulesValid" @click="confirmSkuRules">确认使用</el-button>
+      </template>
+    </el-dialog>
+    <el-dialog
+      v-model="previewDialogVisible"
+      title="SKC 识别预览"
+      width="min(1100px, calc(100vw - 32px))"
+      class="activity-preview-dialog"
+      append-to-body
+      destroy-on-close
+    >
+      <div v-if="skuPreview" class="activity-sku-preview">
+        <div class="activity-preview-summary">
+          <span>有效数据 <strong>{{ skuPreview.total_rows }}</strong></span>
+          <span>单品 <strong>{{ skuPreview.single_rows }}</strong></span>
+          <span>套装 <strong>{{ skuPreview.set_rows }}</strong></span>
+          <span :class="{ danger: skuPreview.unrecognized_rows > 0 }">无法识别 <strong>{{ skuPreview.unrecognized_rows }}</strong></span>
+        </div>
+        <div class="activity-preview-table-wrap">
+          <el-table :data="previewItems" height="100%" stripe>
+            <el-table-column prop="row" label="行号" width="72" />
+            <el-table-column prop="skc" label="SKC货号" min-width="210" show-overflow-tooltip />
+            <el-table-column label="识别结果" width="110">
+              <template #default="scope"><el-tag :type="previewTagType(scope.row.result)" size="small">{{ scope.row.result }}</el-tag></template>
+            </el-table-column>
+            <el-table-column label="货值/件数" width="120">
+              <template #default="scope">{{ previewValue(scope.row) }}</template>
+            </el-table-column>
+            <el-table-column label="基础活动价" width="120">
+              <template #default="scope">{{ scope.row.base_price === null ? '-' : `¥${scope.row.base_price.toFixed(2)}` }}</template>
+            </el-table-column>
+            <el-table-column prop="method" label="识别依据" min-width="220" show-overflow-tooltip />
+          </el-table>
+        </div>
+        <p class="activity-preview-note">统计数量包含全部数据，明细仅展示前 {{ skuPreview.preview_limit }} 条样本。</p>
+      </div>
+      <template #footer>
+        <div class="activity-preview-footer">
+          <el-pagination
+            v-if="skuPreview && skuPreview.items.length > previewPageSize"
+            v-model:current-page="previewPage"
+            :page-size="previewPageSize"
+            :total="skuPreview.items.length"
+            layout="prev, pager, next"
+            background
+          />
+          <el-button @click="previewDialogVisible = false">关闭</el-button>
+        </div>
       </template>
     </el-dialog>
     <div class="action-row left">

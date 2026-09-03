@@ -125,7 +125,7 @@ def test_task_history_is_scoped_to_owner():
     assert task_manager.get(second["id"], owner_id=101) is None
 
 
-def test_user_can_delete_own_finished_task_and_admin_can_delete_any_finished_task():
+def test_user_tasks_are_scoped_and_admin_uses_admin_endpoints_for_all_tasks():
     admin = create_user("task_admin", hash_password("adminpass123"), role="admin", status="approved")
     user = create_user("task_owner", hash_password("userpass123"), status="approved")
     task = task_manager.create("sales-delete.xlsx", "delivery-delete.xlsx", None, user["id"])
@@ -147,8 +147,12 @@ def test_user_can_delete_own_finished_task_and_admin_can_delete_any_finished_tas
         assert admin_login.status_code == 200
         assert client.get("/api/admin/tasks").status_code == 200
         assert client.get("/api/admin/activity-tasks").status_code == 200
-        assert client.delete(f"/api/tasks/{admin_order_task['id']}").status_code == 200
-        assert client.delete(f"/api/activities/{activity_task['id']}").status_code == 200
+        assert admin_order_task["id"] not in {item["id"] for item in client.get("/api/tasks").json()["items"]}
+        assert activity_task["id"] not in {item["id"] for item in client.get("/api/activities").json()["items"]}
+        assert client.delete(f"/api/tasks/{admin_order_task['id']}").status_code == 404
+        assert client.delete(f"/api/activities/{activity_task['id']}").status_code == 404
+        assert client.delete(f"/api/admin/tasks/{admin_order_task['id']}").status_code == 200
+        assert client.delete(f"/api/admin/activity-tasks/{activity_task['id']}").status_code == 200
         assert admin_order_task["id"] not in {item["id"] for item in client.get("/api/admin/tasks").json()["items"]}
         assert activity_task["id"] not in {item["id"] for item in client.get("/api/admin/activity-tasks").json()["items"]}
 

@@ -283,15 +283,12 @@ async def process_bulk_activity(
 
 @app.get("/api/activities")
 def list_activity_tasks(limit: int = Query(50, ge=1, le=100), user: dict = Depends(current_user)):
-    # Admins can see all activity jobs, including legacy jobs without an owner.
-    # Regular users remain strictly scoped to their own records.
-    owner_id = None if user["role"] == "admin" else user["id"]
-    return {"items": activity_task_manager.list(owner_id, limit)}
+    return {"items": activity_task_manager.list(user["id"], limit)}
 
 
 @app.get("/api/activities/{job_id}")
 def get_activity_task(job_id: str, user: dict = Depends(current_user)):
-    job = activity_task_manager.get(job_id, None if user["role"] == "admin" else user["id"])
+    job = activity_task_manager.get(job_id, user["id"])
     if not job:
         raise HTTPException(status_code=404, detail="活动任务不存在")
     return job
@@ -299,7 +296,7 @@ def get_activity_task(job_id: str, user: dict = Depends(current_user)):
 
 @app.delete("/api/activities/{job_id}")
 def delete_activity_task(job_id: str, user: dict = Depends(current_user)):
-    result = activity_task_manager.delete(job_id, None if user["role"] == "admin" else user["id"])
+    result = activity_task_manager.delete(job_id, user["id"])
     if result == "active":
         raise HTTPException(status_code=409, detail="处理中任务暂不能删除，请等待任务完成")
     if result == "not_found":
@@ -309,7 +306,7 @@ def delete_activity_task(job_id: str, user: dict = Depends(current_user)):
 
 @app.get("/api/activities/{job_id}/download")
 def download_activity(job_id: str, user: dict = Depends(current_user)):
-    output_path = activity_task_manager.result_path(job_id, None if user["role"] == "admin" else user["id"])
+    output_path = activity_task_manager.result_path(job_id, user["id"])
     if not output_path:
         raise HTTPException(status_code=404, detail="处理结果不存在或已过期")
     return FileResponse(
@@ -482,7 +479,7 @@ def get_task(task_id: str, user: dict = Depends(current_user)):
 
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: str, user: dict = Depends(current_user)):
-    result = task_manager.delete(task_id, None if user["role"] == "admin" else user["id"])
+    result = task_manager.delete(task_id, user["id"])
     if result == "active":
         raise HTTPException(status_code=409, detail="处理中任务暂不能删除，请等待任务完成")
     if result == "not_found":
@@ -492,7 +489,7 @@ def delete_task(task_id: str, user: dict = Depends(current_user)):
 
 @app.get("/api/tasks/{task_id}/download")
 def download_task(task_id: str, user: dict = Depends(current_user)):
-    result = task_manager.result_path(task_id, None if user["role"] == "admin" else user["id"])
+    result = task_manager.result_path(task_id, user["id"])
     if not result:
         raise HTTPException(status_code=404, detail="结果文件尚未生成")
     return FileResponse(
@@ -529,6 +526,49 @@ def admin_activity_tasks(limit: int = Query(100, ge=1, le=500), _admin: dict = D
         })
     return {"items": items}
 
+
+@app.delete("/api/admin/tasks/{task_id}")
+def admin_delete_task(task_id: str, _admin: dict = Depends(admin_user)):
+    result = task_manager.delete(task_id, None)
+    if result == "active":
+        raise HTTPException(status_code=409, detail="处理中任务暂不能删除，请等待任务完成")
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {"message": "任务记录已删除", "id": task_id}
+
+
+@app.get("/api/admin/tasks/{task_id}/download")
+def admin_download_task(task_id: str, _admin: dict = Depends(admin_user)):
+    result = task_manager.result_path(task_id, None)
+    if not result:
+        raise HTTPException(status_code=404, detail="结果文件尚未生成")
+    return FileResponse(
+        result,
+        filename="销售订单汇总表.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@app.delete("/api/admin/activity-tasks/{job_id}")
+def admin_delete_activity_task(job_id: str, _admin: dict = Depends(admin_user)):
+    result = activity_task_manager.delete(job_id, None)
+    if result == "active":
+        raise HTTPException(status_code=409, detail="处理中任务暂不能删除，请等待任务完成")
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail="活动任务不存在")
+    return {"message": "活动任务记录已删除", "id": job_id}
+
+
+@app.get("/api/admin/activity-tasks/{job_id}/download")
+def admin_download_activity(job_id: str, _admin: dict = Depends(admin_user)):
+    output_path = activity_task_manager.result_path(job_id, None)
+    if not output_path:
+        raise HTTPException(status_code=404, detail="处理结果不存在或已过期")
+    return FileResponse(
+        output_path,
+        filename=output_path.name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 @app.get("/api/admin/users")
 def admin_users(_admin: dict = Depends(admin_user)):
