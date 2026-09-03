@@ -112,12 +112,14 @@ onMounted(async () => {
       <el-tab-pane name="inventory" label="库存数据">
         <Teleport to="#inventory-topbar-target">
           <div class="inventory-topbar-content">
-            <div class="inventory-topbar-heading"><h1>库存管理</h1><span>查看库存数据和 SKU 价格</span></div>
-            <div class="inventory-topbar-summary">
+            <div class="inventory-topbar-copy">
+              <div class="inventory-topbar-heading"><div class="inventory-title-line"><h1>库存管理</h1><span class="inventory-title-subtitle">查看库存数据和 SKU 价格</span></div></div>
+              <div class="inventory-topbar-summary">
               <span>SKU <strong>{{ status?.sku_count || 0 }}</strong></span>
               <span>文件 <strong>{{ status?.exists ? '正常' : '缺失' }}</strong></span>
               <span>大小 <strong>{{ formatSize(status?.size ?? null) }}</strong></span>
-              <span>更新 <strong>{{ status?.modified_at || '-' }}</strong></span>
+                <span>更新 <strong>{{ status?.modified_at || '-' }}</strong></span>
+              </div>
             </div>
             <div class="inventory-topbar-actions">
               <el-button :icon="Refresh" :loading="loading" @click="refresh">刷新</el-button>

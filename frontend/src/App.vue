@@ -120,7 +120,7 @@ onMounted(bootstrap)
           </div>
           <RegionPicker v-if="showRegionPicker" v-model="selectedRegionCode" compact />
         </template>
-        <el-tag v-if="user.role === 'admin'" class="role-tag" type="warning">管理员</el-tag>
+        <el-tag v-if="user.role === 'admin' && !inventoryPage" class="role-tag" type="warning">管理员</el-tag>
       </header>
       <main class="page-content" :class="{ 'page-content--fixed': fixedDataPage, 'page-content--inventory': inventoryPage, 'page-content--admin-inventory': adminInventoryPage }">
         <router-view />

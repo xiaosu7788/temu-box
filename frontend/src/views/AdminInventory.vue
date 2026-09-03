@@ -155,17 +155,21 @@ onMounted(load)
   <div class="admin-page admin-inventory-page admin-inventory-page--fixed">
     <Teleport to="#inventory-topbar-target">
       <div class="admin-inventory-topbar">
-        <el-button class="admin-inventory-back" text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button>
-        <div class="admin-inventory-heading">
-          <h1>库存管理</h1>
-          <span>维护库存表和库存明细</span>
-        </div>
-        <div class="admin-inventory-summary">
-          <span>SKU <strong>{{ status?.sku_count || 0 }}</strong></span>
-          <span>文件 <strong>{{ status?.exists ? '正常' : '缺失' }}</strong></span>
-          <span>大小 <strong>{{ formatSize(status?.size ?? null) }}</strong></span>
-          <span>缓存 <strong>{{ status?.cache_valid ? '有效' : '待重建' }}</strong></span>
-          <span>更新 <strong>{{ status?.modified_at || '-' }}</strong></span>
+
+        <div class="admin-inventory-copy">
+          <div class="admin-inventory-heading">
+            <div class="inventory-title-line">
+              <h1>库存管理</h1>
+              <el-tag size="small" type="warning">管理员</el-tag>
+              <div class="admin-inventory-summary">
+                <span>SKU <strong>{{ status?.sku_count || 0 }}</strong></span>
+                <span>文件 <strong>{{ status?.exists ? '正常' : '缺失' }}</strong></span>
+                <span>大小 <strong>{{ formatSize(status?.size ?? null) }}</strong></span>
+                <span>缓存 <strong>{{ status?.cache_valid ? '有效' : '待重建' }}</strong></span>
+                <span>更新 <strong>{{ status?.modified_at || '-' }}</strong></span>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="admin-inventory-topbar-actions">
           <div class="inventory-action-group inventory-action-group--source">
@@ -180,7 +184,7 @@ onMounted(load)
     </Teleport>
 
     <section class="section-band admin-inventory-data-panel">
-      <div class="section-heading"><div><h2>库存明细</h2><p>共 {{ total }} 个 SKU，可单独添加、编辑或删除库存记录；重新上传 Excel 后以新表为准</p></div></div>
+      <div class="section-heading"><div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>库存明细</h2><p>共 {{ total }} 个 SKU，可单独添加、编辑或删除库存记录；重新上传 Excel 后以新表为准</p></div></div></div>
       <div class="toolbar-row inventory-search-row">
         <el-input v-model="query" clearable placeholder="输入 SKU 查询" :prefix-icon="Search" @keyup.enter="searchItems" @clear="clearSearch" />
         <el-button type="primary" :icon="Search" :loading="itemsLoading" @click="searchItems">查询</el-button>
