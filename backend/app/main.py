@@ -42,7 +42,7 @@ from app.database import (
 from app.schemas import ActivitySkuRulesPayload, AdminUserUpdateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest
 from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
 from app.services.half_headcost import delete_entry, load_entries, merge_upload
-from app.services.activity import normalize_parse_config, preview_activity_workbook
+from app.services.activity import normalize_id_profit_rules, normalize_parse_config, preview_activity_workbook
 from app.services.activity_tasks import activity_task_manager
 from app.services.inventory import invalidate_cache, inventory_status, load_price_catalog
 from app.services.regions import create_region, delete_region, get_region_profile, list_regions, region_snapshot, update_region
@@ -234,10 +234,26 @@ def parse_activity_rules(value: Optional[str]) -> Optional[dict]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def parse_activity_id_profit_rules(value: Optional[str]) -> Optional[list[dict]]:
+    if value is None:
+        return None
+    if len(value) > 200_000:
+        raise HTTPException(status_code=400, detail="ID利润条件内容过大")
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="ID利润条件不是有效的JSON") from exc
+    try:
+        return normalize_id_profit_rules(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/activities/preview")
 async def preview_bulk_activity(
     file: UploadFile = File(...),
-    skc_rules: str = Form(...),
+    skc_rules: Optional[str] = Form(None),
+    id_profit_rules: Optional[str] = Form(None),
     region_code: Optional[str] = Form(None),
     _user: dict = Depends(current_user),
 ):
@@ -247,9 +263,10 @@ async def preview_bulk_activity(
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="上传文件超过服务器限制")
     parse_config = parse_activity_rules(skc_rules)
+    parsed_id_profit_rules = parse_activity_id_profit_rules(id_profit_rules)
     try:
         snapshot = await run_in_threadpool(region_snapshot, region_code)
-        return await run_in_threadpool(preview_activity_workbook, content, parse_config, snapshot["settings"])
+        return await run_in_threadpool(preview_activity_workbook, content, parse_config, snapshot["settings"], parsed_id_profit_rules)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -259,6 +276,7 @@ async def process_bulk_activity(
     file: UploadFile = File(...),
     uplift_limit: Optional[float] = Form(None, ge=0, le=1000),
     skc_rules: Optional[str] = Form(None),
+    id_profit_rules: Optional[str] = Form(None),
     region_code: Optional[str] = Form(None),
     user: dict = Depends(current_user),
 ):
@@ -270,11 +288,12 @@ async def process_bulk_activity(
 
     upload_name = file.filename or "报名活动.xlsx"
     parse_config = parse_activity_rules(skc_rules)
+    parsed_id_profit_rules = parse_activity_id_profit_rules(id_profit_rules)
     try:
         snapshot = await run_in_threadpool(region_snapshot, region_code)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    job = await run_in_threadpool(activity_task_manager.create, upload_name, user["id"], content, snapshot, uplift_limit, parse_config)
+    job = await run_in_threadpool(activity_task_manager.create, upload_name, user["id"], content, snapshot, uplift_limit, parse_config, parsed_id_profit_rules)
     return {
         **job,
         "download_url": f"/api/activities/{job['id']}/download",

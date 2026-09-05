@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { ActivitySkuPreview, ActivitySkuRules, ActivityTaskItem, AppSettings, BulkActivityResult, HalfHeadcostItem, InventoryStatus, RegionProfile, RegionSummary, SkuResult, TaskItem, User } from './types'
+import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuRules, ActivityTaskItem, AppSettings, BulkActivityResult, HalfHeadcostItem, InventoryStatus, RegionProfile, RegionSummary, SkuResult, TaskItem, User } from './types'
 
 const http = axios.create({
   baseURL: '/api',
@@ -166,21 +166,23 @@ export async function deleteHalfHeadcost(sku: string) {
   await http.delete(`/half-headcost/${encodeURIComponent(sku)}`)
 }
 
-export async function previewActivitySkuRules(file: File, rules: ActivitySkuRules, regionCode: string) {
+export async function previewActivitySkuRules(file: File, rules: ActivitySkuRules | undefined, regionCode: string, idProfitRules?: ActivityIdProfitRule[]) {
   const form = new FormData()
   form.append('file', file)
-  form.append('skc_rules', JSON.stringify(rules))
+  if (rules) form.append('skc_rules', JSON.stringify(rules))
+  if (idProfitRules) form.append('id_profit_rules', JSON.stringify(idProfitRules))
   form.append('region_code', regionCode)
   const { data } = await uploadHttp.post<ActivitySkuPreview>('/activities/preview', form)
   return data
 }
 
-export async function processBulkActivity(file: File, regionCode: string, upliftLimit?: number, rules?: ActivitySkuRules) {
+export async function processBulkActivity(file: File, regionCode: string, upliftLimit?: number, rules?: ActivitySkuRules, idProfitRules?: ActivityIdProfitRule[]) {
   const form = new FormData()
   form.append('file', file)
   form.append('region_code', regionCode)
   if (upliftLimit !== undefined) form.append('uplift_limit', String(upliftLimit))
   if (rules) form.append('skc_rules', JSON.stringify(rules))
+  if (idProfitRules) form.append('id_profit_rules', JSON.stringify(idProfitRules))
   const { data } = await uploadHttp.post<ActivityTaskItem & Pick<BulkActivityResult, 'download_url'>>('/activities/bulk', form)
   return data
 }

@@ -6,7 +6,7 @@ from openpyxl import Workbook, load_workbook
 
 from app.database import create_user
 from app.main import app
-from app.services.activity import activity_base_price, parse_skc, preview_activity_workbook, process_activity_workbook
+from app.services.activity import activity_base_price, match_id_profit_rule, normalize_id_profit_rules, parse_skc, preview_activity_workbook, process_activity_workbook
 from app.services.auth import hash_password
 
 
@@ -66,6 +66,83 @@ def test_activity_price_uses_admin_settings():
     settings = {"activity": {"headcost": 6, "operation_fee": 8, "set_prices": {"4": 50}, "single_tiers": [{"min_price": 0, "profit": 0}, {"min_price": 15, "profit": 4}]}}
     assert activity_base_price(("single", 15.0), settings) == 33.0
     assert activity_base_price(("set", 4.0), settings) == 50.0
+
+
+def test_id_profit_rules_match_in_spu_skc_sku_priority_order():
+    rules = normalize_id_profit_rules([
+        {"id_type": "SPU", "id": "spu-1", "profit": 5},
+        {"id_type": "SKC", "id": "skc-1", "profit": 10},
+        {"id_type": "SKU", "id": "sku-1", "profit": -10},
+    ])
+    matched = match_id_profit_rule({"SPU": "SPU-1", "SKC": "SKC-1", "SKU": "SKU-1"}, rules)
+    assert matched == {"id_type": "SPU", "id": "spu-1", "profit": 5.0, "matched_id": "SPU-1"}
+
+
+def test_id_profit_rules_adjust_activity_price_and_reference_boundaries(tmp_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SPU ID", "SKC ID", "SKU ID", "SKC货号", "活动申报价格"])
+    sheet.append(["spu-low", "skc-low", "sku-low", "y1-4piece", 61])
+    sheet.append(["spu-equal", "skc-equal", "sku-equal", "y1-4piece", 62])
+    sheet.append(["spu-high", "skc-high", "sku-high", "y1-4piece", 63])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    output = tmp_path / "id-rules.xlsx"
+    stats = process_activity_workbook(
+        content.getvalue(),
+        output,
+        id_profit_rules=[{"id_type": "SPU", "id": "spu-low", "profit": 20},
+                         {"id_type": "SPU", "id": "spu-equal", "profit": 20},
+                         {"id_type": "SPU", "id": "spu-high", "profit": 20}],
+    )
+
+    assert stats["id_profit_rule_matches"] == 3
+    assert stats["removed_rows"] == 1
+    assert stats["unchanged_rows"] == 1
+    assert stats["updated_rows"] == 1
+    result = load_workbook(output, data_only=True)
+    rows = [(result.active.cell(row, 1).value, result.active.cell(row, 5).value) for row in range(2, result.active.max_row + 1)]
+    result.close()
+    assert rows[0] == ("spu-equal", 62)
+    assert rows[1][0] == "spu-high"
+    assert 62 < rows[1][1] <= 63
+
+
+def test_id_profit_rules_do_not_match_when_id_columns_are_missing(tmp_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SKC货号", "活动申报价格"])
+    sheet.append(["MB131-A-5", 20])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    output = tmp_path / "missing-id-columns.xlsx"
+    stats = process_activity_workbook(
+        content.getvalue(),
+        output,
+        id_profit_rules=[{"id_type": "SKU", "id": "sku-1", "profit": 100}],
+    )
+    assert stats["id_profit_rule_matches"] == 0
+    assert stats["updated_rows"] == 1
+
+
+def test_empty_custom_id_profit_rules_override_default_rules(tmp_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SPU ID", "SKC货号", "活动申报价格"])
+    sheet.append(["spu-1", "y1-4piece", 40])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    output = tmp_path / "empty-custom-rules.xlsx"
+    settings = {"activity": {"id_profit_rules": [{"id_type": "SPU", "id": "spu-1", "profit": 20}]}}
+    stats = process_activity_workbook(content.getvalue(), output, settings, id_profit_rules=[])
+    assert stats["id_profit_rule_matches"] == 0
+    assert stats["removed_rows"] == 1
 
 
 def test_process_activity_workbook_updates_filters_and_preserves_sheets(tmp_path):

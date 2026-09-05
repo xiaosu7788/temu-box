@@ -4,7 +4,7 @@ import { Delete, Download, Plus, RefreshRight, UploadFilled } from '@element-plu
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
 import { activityDownloadUrl, deleteActivityTask, getActivityTask, getActivityTasks, getMe, getSettings, previewActivitySkuRules, processBulkActivity } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
-import type { ActivitySetMapping, ActivitySingleParseMode, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem } from '../types'
+import type { ActivityIdProfitRule, ActivityIdType, ActivitySetMapping, ActivitySingleParseMode, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem } from '../types'
 import CostRules from '../components/CostRules.vue'
 import { selectedRegionCode as regionCode } from '../regionState'
 
@@ -18,6 +18,14 @@ const useCustomUplift = ref(false)
 const customUpliftLimit = ref(1)
 const defaultUpliftLimit = ref(1)
 const useCustomSkuRules = ref(false)
+const useCustomIdProfitRules = ref(false)
+const idProfitRules = ref<ActivityIdProfitRule[]>([])
+const defaultIdProfitRules = ref<ActivityIdProfitRule[]>([])
+const idProfitDialogVisible = ref(false)
+const idDialogOpenedBySwitch = ref(false)
+const idRuleDraftType = ref<ActivityIdType>('SPU')
+const idRuleDraftIds = ref('')
+const idRuleDraftProfit = ref(0)
 const skuRulesDialogVisible = ref(false)
 const skuRulesConfigured = ref(false)
 const dialogOpenedBySwitch = ref(false)
@@ -36,6 +44,7 @@ let pollTimer: ReturnType<typeof setInterval> | undefined
 const activityTaskStore = new Map<number, ActivityTaskItem[]>()
 const supportedSetPieces = [4, 5, 6, 8, 10, 12]
 const defaultSetKeywords = ['piece', '件套', '套装']
+const idRuleTypes: ActivityIdType[] = ['SPU', 'SKC', 'SKU']
 const defaultSkuRules = ref<ActivitySkuRules>({
   set_keywords: [...defaultSetKeywords],
   set_mappings: [],
@@ -72,6 +81,12 @@ const skuRulesValid = computed(() => {
   if (singleMode.value === 'after_marker') return !!singleMarker.value.trim()
   return !!singleDelimiter.value.trim()
 })
+const idProfitRulesValid = computed(() => !useCustomIdProfitRules.value || (idProfitRules.value.length > 0 && idProfitRules.value.every((rule) => rule.id.trim() && Number.isFinite(rule.profit))))
+const idProfitRulesSummary = computed(() => {
+  if (!idProfitRules.value.length) return '尚未设置'
+  const preview = idProfitRules.value.slice(0, 2).map((rule) => `${rule.id_type} ${rule.id}`).join('、')
+  return idProfitRules.value.length > 2 ? `${preview} 等 ${idProfitRules.value.length} 条` : preview
+})
 const appliedSetKeywords = computed(() => appliedSkuRules.value.set_keywords.map((item) => item || '空标识'))
 const appliedMappings = computed(() => appliedSkuRules.value.set_mappings.map((item) => `${item.pattern} → ${item.pieces}件套`))
 const appliedSingleRule = computed(() => {
@@ -83,8 +98,8 @@ const previewItems = computed(() => {
   const start = (previewPage.value - 1) * previewPageSize
   return skuPreview.value?.items.slice(start, start + previewPageSize) || []
 })
-const canPreview = computed(() => !!regionCode.value && files.value.length === 1 && !!files.value[0]?.raw && useCustomSkuRules.value && skuRulesConfigured.value)
-const canSubmit = computed(() => !!regionCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || skuRulesConfigured.value))
+const canPreview = computed(() => !!regionCode.value && files.value.length === 1 && !!files.value[0]?.raw && ((useCustomSkuRules.value && skuRulesConfigured.value) || idProfitRulesValid.value))
+const canSubmit = computed(() => !!regionCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || skuRulesConfigured.value) && (!useCustomIdProfitRules.value || idProfitRulesValid.value))
 const activeTasks = computed(() => tasks.value.filter((task) => task.status === 'queued' || task.status === 'running'))
 
 function fileChanged(_file: UploadFile, uploadFiles: UploadFiles) {
@@ -104,6 +119,62 @@ function resetSkuRules() {
   singleDelimiter.value = rules.single_delimiter
   singleMarker.value = rules.single_marker
   skuPreview.value = null
+}
+
+function resetIdProfitRules() {
+  idProfitRules.value = []
+  useCustomIdProfitRules.value = false
+  idProfitDialogVisible.value = false
+  idRuleDraftIds.value = ''
+  idRuleDraftProfit.value = 0
+}
+
+function removeIdProfitRule(index: number) {
+  idProfitRules.value.splice(index, 1)
+}
+
+function openIdProfitDialog(fromSwitch = false) {
+  idDialogOpenedBySwitch.value = fromSwitch
+  idRuleDraftType.value = 'SPU'
+  idRuleDraftIds.value = ''
+  idRuleDraftProfit.value = 0
+  idProfitDialogVisible.value = true
+}
+
+function handleIdProfitToggle(enabled: boolean) {
+  if (enabled) openIdProfitDialog(true)
+  else {
+    idProfitDialogVisible.value = false
+    skuPreview.value = null
+  }
+}
+
+function confirmIdProfitRules() {
+  const ids = [...new Set(idRuleDraftIds.value.split(/[\s,，;；]+/).map((item) => item.trim()).filter(Boolean))]
+  if (!ids.length) {
+    notifyError('请至少输入一个商品 ID')
+    return
+  }
+  if (!Number.isFinite(idRuleDraftProfit.value)) {
+    notifyError('请输入有效的利润调整值')
+    return
+  }
+  const normalized = new Map(idProfitRules.value.map((rule) => [`${rule.id_type}:${rule.id.trim().toLowerCase()}`, rule]))
+  ids.forEach((id) => {
+    const rule = { id_type: idRuleDraftType.value, id, profit: Number(idRuleDraftProfit.value.toFixed(2)) }
+    normalized.set(`${rule.id_type}:${id.toLowerCase()}`, rule)
+  })
+  idProfitRules.value = [...normalized.values()]
+  useCustomIdProfitRules.value = true
+  idDialogOpenedBySwitch.value = false
+  idProfitDialogVisible.value = false
+  skuPreview.value = null
+  notifySuccess(`已添加 ${ids.length} 条 ${idRuleDraftType.value} 利润条件`)
+}
+
+function closeIdProfitDialog() {
+  if (idDialogOpenedBySwitch.value && !idProfitRules.value.length) useCustomIdProfitRules.value = false
+  idDialogOpenedBySwitch.value = false
 }
 
 function loadSkuRuleDraft() {
@@ -160,10 +231,15 @@ function removeSetMapping(index: number) {
 
 async function previewSkuRules() {
   const file = files.value[0]?.raw
-  if (!file || !skuRulesConfigured.value) return
+  if (!file || !canPreview.value) return
   previewing.value = true
   try {
-    skuPreview.value = await previewActivitySkuRules(file, appliedSkuRules.value, regionCode.value)
+    skuPreview.value = await previewActivitySkuRules(
+      file,
+      useCustomSkuRules.value ? appliedSkuRules.value : undefined,
+      regionCode.value,
+      useCustomIdProfitRules.value ? idProfitRules.value : undefined,
+    )
     previewPage.value = 1
     previewDialogVisible.value = true
     notifySuccess('SKC识别预览已更新')
@@ -247,6 +323,7 @@ async function submit() {
       regionCode.value,
       useCustomUplift.value ? customUpliftLimit.value : undefined,
       useCustomSkuRules.value ? appliedSkuRules.value : undefined,
+      useCustomIdProfitRules.value ? idProfitRules.value : undefined,
     )
     mergeTask(task)
     files.value = []
@@ -254,6 +331,7 @@ async function submit() {
     customUpliftLimit.value = defaultUpliftLimit.value
     useCustomSkuRules.value = false
     resetSkuRules()
+    resetIdProfitRules()
     startPolling()
     notifySuccess('任务已提交，后台正在处理')
   } catch (error) {
@@ -269,6 +347,7 @@ function reset() {
   customUpliftLimit.value = defaultUpliftLimit.value
   useCustomSkuRules.value = false
   resetSkuRules()
+  resetIdProfitRules()
 }
 
 async function remove(task: ActivityTaskItem) {
@@ -313,6 +392,7 @@ async function loadRegionDefaults(code: string) {
       set_keywords: [...settings.activity.default_skc_rules.set_keywords],
       set_mappings: settings.activity.default_skc_rules.set_mappings.map((item) => ({ ...item })),
     }
+    defaultIdProfitRules.value = settings.activity.id_profit_rules.map((rule) => ({ ...rule }))
     resetSkuRules()
   } catch (error) {
     notifyError(error)
@@ -359,13 +439,23 @@ onBeforeUnmount(stopPolling)
       <div class="el-upload__text">选择报名商品信息表</div>
     </el-upload>
 
-    <div class="activity-custom-settings">
-      <div class="activity-setting-copy">
-        <strong>本次任务自定义浮动上限</strong>
-        <span>仅对本次提交生效；关闭时使用后台默认值 ¥{{ defaultUpliftLimit.toFixed(2) }}</span>
+    <div class="activity-settings-row">
+      <div class="activity-custom-settings">
+        <div class="activity-setting-copy">
+          <strong>本次任务自定义浮动上限</strong>
+          <span>仅对本次提交生效；关闭时使用后台默认值 ¥{{ defaultUpliftLimit.toFixed(2) }}</span>
+        </div>
+        <el-switch v-model="useCustomUplift" class="activity-setting-switch" :width="45" aria-label="启用自定义浮动上限" />
+        <el-input-number v-model="customUpliftLimit" :disabled="!useCustomUplift" :min="0" :max="1000" :precision="2" :step="0.1" controls-position="right" />
       </div>
-      <el-switch v-model="useCustomUplift" class="activity-setting-switch" :width="45" aria-label="启用自定义浮动上限" />
-      <el-input-number v-model="customUpliftLimit" :disabled="!useCustomUplift" :min="0" :max="1000" :precision="2" :step="0.1" controls-position="right" />
+      <div class="activity-id-profit-entry">
+        <div class="activity-setting-copy">
+          <strong>本次任务 ID 利润条件</strong>
+          <span>{{ useCustomIdProfitRules ? idProfitRulesSummary : `关闭时使用后台默认值（${defaultIdProfitRules.length} 条）` }}</span>
+        </div>
+        <el-switch v-model="useCustomIdProfitRules" class="activity-setting-switch" :width="45" aria-label="启用本次任务 ID 利润条件" @change="handleIdProfitToggle" />
+        <el-button type="primary" plain :disabled="!useCustomIdProfitRules" @click="openIdProfitDialog(false)">设置条件</el-button>
+      </div>
     </div>
 
     <div class="activity-custom-settings activity-skc-settings-heading">
@@ -392,12 +482,47 @@ onBeforeUnmount(stopPolling)
         <div><dt>固定映射</dt><dd>{{ appliedMappings.length ? appliedMappings.join('；') : '未设置' }}</dd></div>
         <div><dt>单品货值</dt><dd>{{ appliedSingleRule }}</dd></div>
       </dl>
+    </div>
 
-      <div class="activity-preview-actions">
-        <el-button type="primary" plain :loading="previewing" :disabled="!canPreview" @click="previewSkuRules">预览识别结果</el-button>
-        <span>{{ files.length ? '预览为可选操作，可直接提交任务' : '请先选择报名商品信息表' }}</span>
+    <el-dialog
+      v-model="idProfitDialogVisible"
+      title="设置本次任务 ID 利润条件"
+      width="min(720px, calc(100vw - 32px))"
+      class="activity-id-profit-dialog"
+      :close-on-click-modal="false"
+      destroy-on-close
+      @closed="closeIdProfitDialog"
+    >
+      <div class="activity-id-profit-form">
+        <div class="activity-id-profit-form-heading">
+          <strong>批量添加条件</strong>
+          <span>匹配优先级：SPU &gt; SKC &gt; SKU；同一行只使用一条最高优先级规则</span>
+        </div>
+        <div class="activity-id-profit-form-grid">
+          <label><span>ID 类型</span><el-select v-model="idRuleDraftType"><el-option v-for="type in idRuleTypes" :key="type" :label="`${type} ID`" :value="type" /></el-select></label>
+          <label><span>利润调整</span><el-input-number v-model="idRuleDraftProfit" :min="-100000" :max="100000" :precision="2" controls-position="right" /></label>
+        </div>
+        <label class="activity-id-profit-textarea"><span>商品 ID（支持换行、空格、逗号或分号分隔）</span><el-input v-model="idRuleDraftIds" type="textarea" :rows="4" placeholder="例如：\n1169783790\n4248497589\n5878227564" /></label>
+        <el-button type="primary" :icon="Plus" @click="confirmIdProfitRules">添加到条件列表</el-button>
       </div>
+      <div class="activity-id-profit-current">
+        <div class="activity-id-profit-heading-row"><div><strong>已设置条件（{{ idProfitRules.length }}）</strong><span>同一类型和 ID 重复添加时将更新原条件</span></div></div>
+        <div v-if="idProfitRules.length" class="activity-id-profit-list">
+          <div v-for="(rule, index) in idProfitRules" :key="`${rule.id_type}-${rule.id}-${index}`" class="activity-id-profit-row">
+            <el-tag size="small" effect="plain">{{ rule.id_type }} ID</el-tag>
+            <span class="activity-id-profit-value">{{ rule.id }}</span>
+            <span class="activity-id-profit-label">利润 {{ rule.profit >= 0 ? '+' : '' }}{{ rule.profit.toFixed(2) }}</span>
+            <el-button link type="danger" :icon="Delete" aria-label="删除 ID 利润条件" @click="removeIdProfitRule(index)" />
+          </div>
+        </div>
+        <el-empty v-else :image-size="42" description="暂无本次任务 ID 利润条件" />
+      </div>
+      <template #footer><el-button @click="idProfitDialogVisible = false">关闭</el-button></template>
+    </el-dialog>
 
+    <div class="activity-preview-actions">
+      <el-button type="primary" plain :loading="previewing" :disabled="!canPreview" @click="previewSkuRules">预览识别结果</el-button>
+      <span>{{ files.length ? '预览为可选操作，可直接提交任务' : '请先选择报名商品信息表' }}</span>
     </div>
 
     <el-dialog
@@ -494,6 +619,15 @@ onBeforeUnmount(stopPolling)
             <el-table-column label="基础活动价" width="120">
               <template #default="scope">{{ scope.row.base_price === null ? '-' : `¥${scope.row.base_price.toFixed(2)}` }}</template>
             </el-table-column>
+            <el-table-column label="ID利润调整" width="130">
+              <template #default="scope">
+                <span v-if="scope.row.matched_id_type">{{ scope.row.matched_id_type }} {{ scope.row.profit_adjustment >= 0 ? '+' : '' }}{{ scope.row.profit_adjustment.toFixed(2) }}</span>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="调整后活动价" width="140">
+              <template #default="scope">{{ scope.row.adjusted_price === null ? '-' : `¥${scope.row.adjusted_price.toFixed(2)}` }}</template>
+            </el-table-column>
             <el-table-column prop="method" label="识别依据" min-width="220" show-overflow-tooltip />
           </el-table>
         </div>
@@ -534,7 +668,7 @@ onBeforeUnmount(stopPolling)
           </div>
           <p>{{ task.message }} · {{ formatTime(task.created_at) }}</p>
           <el-progress :percentage="task.progress" :status="task.status === 'failed' ? 'exception' : task.status === 'completed' ? 'success' : undefined" />
-          <p v-if="task.status === 'completed'" class="activity-task-stats">处理 {{ task.stats.processed_rows }} 行 · 替换 {{ task.stats.updated_rows }} 行 · 保留 {{ task.stats.unchanged_rows }} 行 · 删除 {{ task.stats.removed_rows }} 行</p>
+          <p v-if="task.status === 'completed'" class="activity-task-stats">处理 {{ task.stats.processed_rows }} 行 · 替换 {{ task.stats.updated_rows }} 行 · 保留 {{ task.stats.unchanged_rows }} 行 · 删除 {{ task.stats.removed_rows }} 行<span v-if="task.stats.id_profit_rule_matches"> · 命中 ID 条件 {{ task.stats.id_profit_rule_matches }} 行</span></p>
           <p v-if="task.status === 'failed' && task.logs.length" class="activity-error">{{ task.logs[task.logs.length - 1] }}</p>
         </div>
         <div class="activity-task-action">

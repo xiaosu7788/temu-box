@@ -22,9 +22,15 @@ SET_SKC_RE = re.compile(r"^y\d+\s*-\s*(\d+)\s*piece\s*$", re.IGNORECASE)
 HEADER_NAMES = {
     "skc": "SKC货号",
     "price": "活动申报价格",
+    "spu_id": "SPU ID",
+    "skc_id": "SKC ID",
+    "sku_id": "SKU ID",
 }
+REQUIRED_HEADER_KEYS = {"skc", "price"}
+ID_RULE_TYPES = ("SPU", "SKC", "SKU")
 SINGLE_PARSE_MODES = {"first_segment", "last_segment", "after_marker"}
 MAX_PREVIEW_ROWS = 100
+MAX_ID_PROFIT_RULES = 1000
 
 
 def _text(value: object) -> str:
@@ -40,9 +46,65 @@ def _find_headers(workbook) -> Tuple[object, int, Dict[str, int]]:
                 for key, header in HEADER_NAMES.items():
                     if value == header:
                         columns[key] = column
-            if set(columns) == set(HEADER_NAMES):
+            if REQUIRED_HEADER_KEYS.issubset(columns):
                 return worksheet, row, columns
     raise ValueError("未找到同时包含“SKC货号”和“活动申报价格”的工作表")
+
+
+def _identifier_key(value: object) -> str:
+    if value is None or isinstance(value, bool):
+        return ""
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return _text(value).casefold()
+
+
+def normalize_id_profit_rules(value: object) -> list[dict]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > MAX_ID_PROFIT_RULES:
+        raise ValueError(f"ID利润条件最多可设置{MAX_ID_PROFIT_RULES}条")
+
+    normalized = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("ID利润条件格式不正确")
+        id_type = _text(item.get("id_type")).upper()
+        if id_type not in ID_RULE_TYPES:
+            raise ValueError("ID类型只能是SPU、SKC或SKU")
+        identifier = _text(item.get("id"))
+        if not identifier or len(identifier) > 120:
+            raise ValueError("ID不能为空且不能超过120个字符")
+        key = (id_type, _identifier_key(identifier))
+        if key in seen:
+            raise ValueError(f"{id_type} ID“{identifier}”不能重复设置")
+        seen.add(key)
+        try:
+            profit = float(item.get("profit", 0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{id_type} ID“{identifier}”的利润调整值不正确") from exc
+        if profit < -100000 or profit > 100000:
+            raise ValueError("ID利润调整值必须在-100000到100000之间")
+        normalized.append({"id_type": id_type, "id": identifier, "profit": round(profit, 2)})
+    return normalized
+
+
+def match_id_profit_rule(identifier_values: dict, rules: list[dict]) -> Optional[dict]:
+    indexed = {
+        (rule["id_type"], _identifier_key(rule["id"])): rule
+        for rule in rules
+    }
+    for id_type in ID_RULE_TYPES:
+        identifier = _identifier_key(identifier_values.get(id_type))
+        if not identifier:
+            continue
+        rule = indexed.get((id_type, identifier))
+        if rule:
+            return {**rule, "matched_id": _text(identifier_values.get(id_type))}
+    return None
 
 
 def normalize_parse_config(config: object) -> Optional[dict]:
@@ -166,15 +228,16 @@ def parse_skc(skc: object, parse_config: Optional[dict] = None, *, normalized: b
     return detail["kind"], detail["value"]
 
 
-def activity_base_price(parsed: Tuple[str, float], settings=None) -> float:
+def activity_base_price(parsed: Tuple[str, float], settings=None, profit_adjustment: float = 0) -> float:
     kind, value = parsed
     activity_settings = (settings or {}).get("activity", {})
     if kind == "set":
         set_prices = activity_settings.get("set_prices", {})
-        return float(set_prices.get(str(int(value)), ACTIVITY_PRICE_BASE[int(value)]))
+        base = float(set_prices.get(str(int(value)), ACTIVITY_PRICE_BASE[int(value)]))
+        return base + float(profit_adjustment)
     tiers = activity_settings.get("single_tiers", [{"min_price": 0, "profit": 0}])
     profit = max((float(tier.get("profit", 0)) for tier in tiers if value >= float(tier.get("min_price", 0))), default=0)
-    return value + float(activity_settings.get("headcost", 5)) + float(activity_settings.get("operation_fee", 7)) + profit
+    return value + float(activity_settings.get("headcost", 5)) + float(activity_settings.get("operation_fee", 7)) + profit + float(profit_adjustment)
 
 
 def _reference_price(value: object) -> Optional[float]:
@@ -195,16 +258,21 @@ def _uplifted_price(base: float, reference: float, uplift_limit: float) -> float
     return round(base + uplift_cents / 100, 2)
 
 
-def preview_activity_workbook(source: bytes, parse_config: dict, settings=None) -> dict:
+def preview_activity_workbook(source: bytes, parse_config: Optional[dict] = None, settings=None, id_profit_rules: Optional[list[dict]] = None) -> dict:
     if not source:
         raise ValueError("上传的报名表为空")
-    normalized = normalize_parse_config(parse_config)
     workbook = load_workbook(io.BytesIO(source), data_only=False, read_only=True, keep_links=False)
     try:
         worksheet, header_row, columns = _find_headers(workbook)
+        activity_settings = (settings or {}).get("activity", {})
+        effective_parse_config = parse_config if parse_config is not None else activity_settings.get("default_skc_rules")
+        normalized = normalize_parse_config(effective_parse_config)
+        effective_id_rules = normalize_id_profit_rules(
+            id_profit_rules if id_profit_rules is not None else activity_settings.get("id_profit_rules", [])
+        )
         skc_column = columns["skc"]
         items = []
-        total = single_rows = set_rows = unrecognized_rows = 0
+        total = single_rows = set_rows = unrecognized_rows = id_rule_matches = 0
         for row in range(header_row + 1, worksheet.max_row + 1):
             skc = worksheet.cell(row, skc_column).value
             if not _text(skc):
@@ -218,8 +286,32 @@ def preview_activity_workbook(source: bytes, parse_config: dict, settings=None) 
                 else:
                     single_rows += 1
                 result = "套装" if kind == "set" else "单品"
+                identifiers = {
+                    id_type: worksheet.cell(row, columns[id_key]).value
+                    for id_type, id_key in (("SPU", "spu_id"), ("SKC", "skc_id"), ("SKU", "sku_id"))
+                    if id_key in columns
+                }
+                matched_rule = match_id_profit_rule(identifiers, effective_id_rules)
+                adjustment = float(matched_rule["profit"]) if matched_rule else 0
+                if matched_rule:
+                    id_rule_matches += 1
                 base_price = activity_base_price((kind, detail["value"]), settings)
-                item = {"row": row, "skc": _text(skc), "result": result, "value": detail["value"], "base_price": round(base_price, 2), "method": detail["method"]}
+                adjusted_price = base_price + adjustment
+                item = {
+                    "row": row,
+                    "skc": _text(skc),
+                    "spu_id": _text(identifiers.get("SPU")) or None,
+                    "skc_id": _text(identifiers.get("SKC")) or None,
+                    "sku_id": _text(identifiers.get("SKU")) or None,
+                    "result": result,
+                    "value": detail["value"],
+                    "base_price": round(base_price, 2),
+                    "adjusted_price": round(adjusted_price, 2),
+                    "profit_adjustment": round(adjustment, 2),
+                    "matched_id_type": matched_rule["id_type"] if matched_rule else None,
+                    "matched_id": matched_rule["matched_id"] if matched_rule else None,
+                    "method": detail["method"],
+                }
             else:
                 unrecognized_rows += 1
                 item = {"row": row, "skc": _text(skc), "result": "无法识别", "value": None, "base_price": None, "method": "未匹配规则或套装件数未配置"}
@@ -232,6 +324,7 @@ def preview_activity_workbook(source: bytes, parse_config: dict, settings=None) 
             "single_rows": single_rows,
             "set_rows": set_rows,
             "unrecognized_rows": unrecognized_rows,
+            "id_profit_rule_matches": id_rule_matches,
             "preview_limit": MAX_PREVIEW_ROWS,
             "items": items,
         }
@@ -239,7 +332,7 @@ def preview_activity_workbook(source: bytes, parse_config: dict, settings=None) 
         workbook.close()
 
 
-def process_activity_workbook(source: bytes, output_path: Path, settings=None, parse_config: Optional[dict] = None) -> dict:
+def process_activity_workbook(source: bytes, output_path: Path, settings=None, parse_config: Optional[dict] = None, id_profit_rules: Optional[list[dict]] = None) -> dict:
     if not source:
         raise ValueError("上传的报名表为空")
 
@@ -250,6 +343,9 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None, p
         custom_parse_config = parse_config is not None
         effective_parse_config = parse_config if custom_parse_config else activity_settings.get("default_skc_rules")
         normalized_parse_config = normalize_parse_config(effective_parse_config)
+        effective_id_rules = normalize_id_profit_rules(
+            id_profit_rules if id_profit_rules is not None else activity_settings.get("id_profit_rules", [])
+        )
         price_column = columns["price"]
         skc_column = columns["skc"]
         uplift_limit = float(activity_settings.get("uplift_limit", 1))
@@ -258,6 +354,7 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None, p
         unchanged = 0
         skipped = 0
         processed = 0
+        id_rule_matches = 0
         input_data_rows = max(0, worksheet.max_row - header_row)
 
         for row in range(header_row + 1, worksheet.max_row + 1):
@@ -272,7 +369,16 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None, p
                 continue
 
             processed += 1
-            base = activity_base_price(parsed, settings)
+            identifiers = {
+                id_type: worksheet.cell(row, columns[id_key]).value
+                for id_type, id_key in (("SPU", "spu_id"), ("SKC", "skc_id"), ("SKU", "sku_id"))
+                if id_key in columns
+            }
+            matched_rule = match_id_profit_rule(identifiers, effective_id_rules)
+            adjustment = float(matched_rule["profit"]) if matched_rule else 0
+            if matched_rule:
+                id_rule_matches += 1
+            base = activity_base_price(parsed, settings, adjustment)
             if reference < base:
                 rows_to_delete.append(row)
                 continue
@@ -301,6 +407,8 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None, p
             "remaining_data_rows": input_data_rows - len(rows_to_delete),
             "uplift_limit": round(uplift_limit, 2),
             "custom_skc_rules": custom_parse_config,
+            "id_profit_rule_matches": id_rule_matches,
+            "custom_id_profit_rules": id_profit_rules is not None,
         }
     finally:
         workbook.close()

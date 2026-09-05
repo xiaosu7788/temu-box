@@ -63,6 +63,8 @@ export interface BulkActivityStats {
   remaining_data_rows: number
   uplift_limit?: number
   custom_skc_rules?: boolean
+  id_profit_rule_matches?: number
+  custom_id_profit_rules?: boolean
 }
 
 export type ActivitySingleParseMode = 'first_segment' | 'last_segment' | 'after_marker'
@@ -80,12 +82,27 @@ export interface ActivitySkuRules {
   single_marker: string
 }
 
+export type ActivityIdType = 'SPU' | 'SKC' | 'SKU'
+
+export interface ActivityIdProfitRule {
+  id_type: ActivityIdType
+  id: string
+  profit: number
+}
+
 export interface ActivitySkuPreviewItem {
   row: number
   skc: string
   result: '单品' | '套装' | '无法识别'
   value: number | null
   base_price: number | null
+  adjusted_price: number | null
+  profit_adjustment: number
+  matched_id_type: ActivityIdType | null
+  matched_id: string | null
+  spu_id?: string | null
+  skc_id?: string | null
+  sku_id?: string | null
   method: string
 }
 
@@ -96,6 +113,7 @@ export interface ActivitySkuPreview {
   single_rows: number
   set_rows: number
   unrecognized_rows: number
+  id_profit_rule_matches: number
   preview_limit: number
   items: ActivitySkuPreviewItem[]
 }
@@ -152,6 +170,7 @@ export interface AppSettings {
     uplift_limit: number
     set_prices: Record<string, number>
     single_tiers: Array<{ min_price: number; profit: number }>
+    id_profit_rules: ActivityIdProfitRule[]
     default_skc_rules: ActivitySkuRules
   }
 }

@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from app.database import DEFAULT_SETTINGS, get_settings, save_settings
-from app.services.activity import normalize_parse_config
+from app.services.activity import normalize_id_profit_rules, normalize_parse_config
 
 
 def settings_public() -> dict:
@@ -60,6 +60,10 @@ def validate_settings(payload: dict) -> dict:
             raise ValueError("单品货值和利润参数不合法")
         normalized_tiers.append({"min_price": round(minimum, 2), "profit": round(profit, 2)})
     result["activity"]["single_tiers"] = sorted(normalized_tiers, key=lambda item: item["min_price"])
+
+    result["activity"]["id_profit_rules"] = normalize_id_profit_rules(
+        activity.get("id_profit_rules", result["activity"].get("id_profit_rules", []))
+    )
 
     default_skc_rules = normalize_parse_config(
         activity.get("default_skc_rules", result["activity"]["default_skc_rules"])
