@@ -31,7 +31,7 @@ const settings = reactive<AppSettings>({
     single_tiers: [{ min_price: 0, profit: 0 }],
     id_profit_rules: [],
     default_skc_rules: {
-      set_keywords: ['piece', '件套', '套装'],
+      set_keywords: [],
       set_mappings: [],
       single_mode: 'last_segment',
       single_delimiter: '-',

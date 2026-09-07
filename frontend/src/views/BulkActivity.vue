@@ -29,7 +29,7 @@ const idRuleDraftProfit = ref(0)
 const skuRulesDialogVisible = ref(false)
 const skuRulesConfigured = ref(false)
 const dialogOpenedBySwitch = ref(false)
-const setKeywords = ref<string[]>(['piece', '件套', '套装'])
+const setKeywords = ref<string[]>([])
 const includeEmptySetKeyword = ref(false)
 const setMappings = ref<ActivitySetMapping[]>([])
 const singleMode = ref<ActivitySingleParseMode>('last_segment')
@@ -43,22 +43,15 @@ const previewing = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | undefined
 const activityTaskStore = new Map<number, ActivityTaskItem[]>()
 const supportedSetPieces = [4, 5, 6, 8, 10, 12]
-const defaultSetKeywords = ['piece', '件套', '套装']
 const idRuleTypes: ActivityIdType[] = ['SPU', 'SKC', 'SKU']
 const defaultSkuRules = ref<ActivitySkuRules>({
-  set_keywords: [...defaultSetKeywords],
+  set_keywords: [],
   set_mappings: [],
   single_mode: 'last_segment',
   single_delimiter: '-',
   single_marker: 'price',
 })
-const keywordOptions = computed(() => [
-  ...new Set([
-    ...defaultSetKeywords,
-    ...defaultSkuRules.value.set_keywords.filter(Boolean),
-    ...setKeywords.value,
-  ]),
-])
+const keywordOptions = computed(() => defaultSkuRules.value.set_keywords.filter(Boolean))
 
 function createDefaultSkuRules(): ActivitySkuRules {
   return {

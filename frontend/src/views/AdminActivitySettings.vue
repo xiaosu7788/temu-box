@@ -11,15 +11,15 @@ const loading = ref(false)
 const saving = ref(false)
 const loaded = ref(false)
 const loadError = ref('')
+const availableSetKeywords = ref<string[]>([])
 const setKeywords = ref<string[]>([])
 const includeEmptySetKeyword = ref(false)
 const setMappings = ref<ActivitySetMapping[]>([])
 const singleMode = ref<ActivitySingleParseMode>('last_segment')
 const singleDelimiter = ref('-')
 const singleMarker = ref('price')
-const defaultSetKeywords = ['piece', '件套', '套装']
 const supportedSetPieces = [4, 5, 6, 8, 10, 12]
-const keywordOptions = computed(() => [...new Set([...defaultSetKeywords, ...setKeywords.value])])
+const keywordOptions = computed(() => availableSetKeywords.value)
 
 const rulesValid = computed(() => {
   if (setMappings.value.some((item) => !item.pattern.trim())) return false
@@ -28,7 +28,8 @@ const rulesValid = computed(() => {
 })
 
 function applyRules(rules: ActivitySkuRules) {
-  setKeywords.value = rules.set_keywords.filter(Boolean)
+  availableSetKeywords.value = rules.set_keywords.filter(Boolean)
+  setKeywords.value = [...availableSetKeywords.value]
   includeEmptySetKeyword.value = rules.set_keywords.includes('')
   setMappings.value = rules.set_mappings.map((item) => ({ ...item }))
   singleMode.value = rules.single_mode
