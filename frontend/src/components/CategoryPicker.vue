@@ -40,9 +40,7 @@ onMounted(load)
   <div class="category-picker" :class="{ 'category-picker--compact': props.compact }">
     <span><el-icon><Goods /></el-icon>品类</span>
     <el-select :model-value="modelValue" :loading="loading" placeholder="选择品类" @update:model-value="emit('update:modelValue', $event)">
-      <el-option v-for="category in categories" :key="category.code" :label="category.name" :value="category.code">
-        <span>{{ category.name }}</span><small>{{ category.template_label }}</small>
-      </el-option>
+      <el-option v-for="category in categories" :key="category.code" :label="category.name" :value="category.code" />
     </el-select>
   </div>
 </template>
@@ -73,11 +71,5 @@ onMounted(load)
 
 .category-picker--compact :deep(.el-select) {
   width: 128px;
-}
-
-.category-picker small {
-  float: right;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
 }
 </style>
