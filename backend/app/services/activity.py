@@ -107,11 +107,20 @@ def match_id_profit_rule(identifier_values: dict, rules: list[dict]) -> Optional
     return None
 
 
-def normalize_parse_config(config: object) -> Optional[dict]:
+def normalize_parse_config(config: object, allowed_pieces=None) -> Optional[dict]:
     if config is None:
         return None
     if not isinstance(config, dict):
         raise ValueError("SKC识别规则格式不正确")
+    if allowed_pieces is None:
+        # 已归一化的配置自带档位信息；旧格式配置回落到系统基础档位
+        embedded = config.get("allowed_pieces")
+        if isinstance(embedded, list) and embedded:
+            allowed = frozenset(embedded)
+        else:
+            allowed = frozenset(ACTIVITY_PRICE_BASE)
+    else:
+        allowed = frozenset(allowed_pieces)
 
     raw_keywords = config.get("set_keywords", [])
     if not isinstance(raw_keywords, list) or len(raw_keywords) > 20:
@@ -138,9 +147,12 @@ def normalize_parse_config(config: object) -> Optional[dict]:
             pieces = int(item.get("pieces"))
         except (TypeError, ValueError) as exc:
             raise ValueError(f"固定映射“{pattern}”的件数不正确") from exc
-        if pieces not in ACTIVITY_PRICE_BASE:
+        if pieces not in allowed:
             raise ValueError(f"固定映射“{pattern}”的{pieces}件套尚未配置活动价")
         mappings.append({"pattern": pattern, "pieces": pieces})
+
+    if not allowed and (keywords or mappings):
+        raise ValueError("该品类无套装档位，不能配置套装识别规则")
 
     single_mode = _text(config.get("single_mode")) or "last_segment"
     if single_mode not in SINGLE_PARSE_MODES:
@@ -158,6 +170,7 @@ def normalize_parse_config(config: object) -> Optional[dict]:
         "single_mode": single_mode,
         "single_delimiter": delimiter,
         "single_marker": marker,
+        "allowed_pieces": sorted(allowed),
     }
 
 
@@ -169,6 +182,9 @@ def parse_skc_detail(skc: object, parse_config: Optional[dict] = None, *, normal
     if parse_config is not None:
         config = parse_config if normalized else normalize_parse_config(parse_config)
         folded_value = value.casefold()
+        embedded = config.get("allowed_pieces") if isinstance(config, dict) else None
+        # 空列表 = 无套装型品类（不识别任何套装）；缺失 = 旧格式，回落系统基础档位
+        allowed_pieces = frozenset(embedded) if isinstance(embedded, list) else frozenset(ACTIVITY_PRICE_BASE)
 
         for mapping in config["set_mappings"]:
             if mapping["pattern"].casefold() in folded_value:
@@ -183,7 +199,7 @@ def parse_skc_detail(skc: object, parse_config: Optional[dict] = None, *, normal
                 method = "套装标识：空（末尾数字）"
             if match:
                 pieces = int(match.group(1))
-                if pieces not in ACTIVITY_PRICE_BASE:
+                if pieces not in allowed_pieces:
                     return None
                 return {"kind": "set", "value": float(pieces), "method": method}
 
@@ -233,7 +249,13 @@ def activity_base_price(parsed: Tuple[str, float], settings=None, profit_adjustm
     activity_settings = (settings or {}).get("activity", {})
     if kind == "set":
         set_prices = activity_settings.get("set_prices", {})
-        base = float(set_prices.get(str(int(value)), ACTIVITY_PRICE_BASE[int(value)]))
+        key = str(int(value))
+        if key in set_prices:
+            base = float(set_prices[key])
+        elif int(value) in ACTIVITY_PRICE_BASE:
+            base = ACTIVITY_PRICE_BASE[int(value)]
+        else:
+            raise ValueError(f"{int(value)}件套尚未配置活动价")
         return base + float(profit_adjustment)
     tiers = activity_settings.get("single_tiers", [{"min_price": 0, "profit": 0}])
     profit = max((float(tier.get("profit", 0)) for tier in tiers if value >= float(tier.get("min_price", 0))), default=0)
@@ -258,6 +280,26 @@ def _uplifted_price(base: float, reference: float, uplift_limit: float) -> float
     return round(base + uplift_cents / 100, 2)
 
 
+def settings_allowed_pieces(settings=None) -> frozenset[int]:
+    """从成本参数中推导品类允许的套装件数（set_prices 的键）。
+
+    - set_prices 为空字典（无套装型品类的合法状态）→ 空集，套装一律不识别
+    - set_prices 键缺失（旧快照/旧格式参数）→ 回落到系统基础档位，
+      保证历史数据中的套装识别规则仍然可用
+    """
+    activity = (settings or {}).get("activity", {})
+    if not isinstance(activity, dict) or "set_prices" not in activity:
+        return frozenset(ACTIVITY_PRICE_BASE)
+    set_prices = activity.get("set_prices") or {}
+    pieces = set()
+    for key in set_prices:
+        try:
+            pieces.add(int(key))
+        except (TypeError, ValueError):
+            continue
+    return frozenset(pieces)
+
+
 def preview_activity_workbook(source: bytes, parse_config: Optional[dict] = None, settings=None, id_profit_rules: Optional[list[dict]] = None) -> dict:
     if not source:
         raise ValueError("上传的报名表为空")
@@ -266,7 +308,7 @@ def preview_activity_workbook(source: bytes, parse_config: Optional[dict] = None
         worksheet, header_row, columns = _find_headers(workbook)
         activity_settings = (settings or {}).get("activity", {})
         effective_parse_config = parse_config if parse_config is not None else activity_settings.get("default_skc_rules")
-        normalized = normalize_parse_config(effective_parse_config)
+        normalized = normalize_parse_config(effective_parse_config, allowed_pieces=settings_allowed_pieces(settings))
         effective_id_rules = normalize_id_profit_rules(
             id_profit_rules if id_profit_rules is not None else activity_settings.get("id_profit_rules", [])
         )
@@ -342,7 +384,7 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None, p
         activity_settings = (settings or {}).get("activity", {})
         custom_parse_config = parse_config is not None
         effective_parse_config = parse_config if custom_parse_config else activity_settings.get("default_skc_rules")
-        normalized_parse_config = normalize_parse_config(effective_parse_config)
+        normalized_parse_config = normalize_parse_config(effective_parse_config, allowed_pieces=settings_allowed_pieces(settings))
         effective_id_rules = normalize_id_profit_rules(
             id_profit_rules if id_profit_rules is not None else activity_settings.get("id_profit_rules", [])
         )

@@ -2,15 +2,17 @@
 import { computed, onMounted, ref } from 'vue'
 import { ArrowLeft, Delete, Plus, Refresh, Select } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
-import { errorMessage, getAdminActivitySkuRules, saveAdminActivitySkuRules } from '../api'
+import { errorMessage, getAdminActivitySkuRules, getAdminCategories, saveAdminActivitySkuRules } from '../api'
 import { notifyError, notifySuccess } from '../feedback'
-import type { ActivitySetMapping, ActivitySingleParseMode, ActivitySkuRules } from '../types'
+import type { ActivitySetMapping, ActivitySingleParseMode, ActivitySkuRules, CategorySummary } from '../types'
 
 const router = useRouter()
 const loading = ref(false)
 const saving = ref(false)
 const loaded = ref(false)
 const loadError = ref('')
+const categories = ref<CategorySummary[]>([])
+const categoryCode = ref('')
 const availableSetKeywords = ref<string[]>([])
 const setKeywords = ref<string[]>([])
 const includeEmptySetKeyword = ref(false)
@@ -18,7 +20,10 @@ const setMappings = ref<ActivitySetMapping[]>([])
 const singleMode = ref<ActivitySingleParseMode>('last_segment')
 const singleDelimiter = ref('-')
 const singleMarker = ref('price')
-const supportedSetPieces = [4, 5, 6, 8, 10, 12]
+const allowedPieces = ref<number[]>([])
+const supportedSetPieces = computed(() => allowedPieces.value.slice().sort((left, right) => left - right))
+const hasSetPieces = computed(() => supportedSetPieces.value.length > 0)
+const currentCategory = computed(() => categories.value.find((item) => item.code === categoryCode.value))
 const keywordOptions = computed(() => availableSetKeywords.value)
 
 const rulesValid = computed(() => {
@@ -35,12 +40,13 @@ function applyRules(rules: ActivitySkuRules) {
   singleMode.value = rules.single_mode
   singleDelimiter.value = rules.single_delimiter
   singleMarker.value = rules.single_marker
+  allowedPieces.value = rules.allowed_pieces || []
 }
 
 function buildRules(): ActivitySkuRules {
   return {
-    set_keywords: [...new Set(setKeywords.value.map((item) => item.trim()).filter(Boolean).concat(includeEmptySetKeyword.value ? [''] : []))],
-    set_mappings: setMappings.value.map((item) => ({ pattern: item.pattern.trim(), pieces: item.pieces })),
+    set_keywords: [...new Set(setKeywords.value.map((item) => item.trim()).filter(Boolean).concat(includeEmptySetKeyword.value && hasSetPieces.value ? [''] : []))],
+    set_mappings: hasSetPieces.value ? setMappings.value.map((item) => ({ pattern: item.pattern.trim(), pieces: item.pieces })) : [],
     single_mode: singleMode.value,
     single_delimiter: singleDelimiter.value.trim(),
     single_marker: singleMarker.value.trim(),
@@ -48,11 +54,12 @@ function buildRules(): ActivitySkuRules {
 }
 
 async function load() {
+  if (!categoryCode.value) return
   loading.value = true
   loaded.value = false
   loadError.value = ''
   try {
-    applyRules(await getAdminActivitySkuRules())
+    applyRules(await getAdminActivitySkuRules(categoryCode.value))
     loaded.value = true
   } catch (error) {
     loadError.value = errorMessage(error)
@@ -65,7 +72,7 @@ async function save() {
   if (!rulesValid.value) return
   saving.value = true
   try {
-    applyRules(await saveAdminActivitySkuRules(buildRules()))
+    applyRules(await saveAdminActivitySkuRules(buildRules(), categoryCode.value))
     notifySuccess('默认SKC格式已保存')
   } catch (error) {
     notifyError(error)
@@ -75,14 +82,25 @@ async function save() {
 }
 
 function addSetMapping() {
-  setMappings.value.push({ pattern: '', pieces: 4 })
+  setMappings.value.push({ pattern: '', pieces: supportedSetPieces.value[0] || 4 })
 }
 
 function removeSetMapping(index: number) {
   setMappings.value.splice(index, 1)
 }
 
-onMounted(load)
+async function bootstrap() {
+  try {
+    const page = await getAdminCategories()
+    categories.value = page.items
+    categoryCode.value = (categories.value.find((item) => item.is_default) || categories.value[0])?.code || ''
+    await load()
+  } catch (error) {
+    loadError.value = errorMessage(error)
+  }
+}
+
+onMounted(bootstrap)
 </script>
 
 <template>
@@ -94,6 +112,11 @@ onMounted(load)
           <div><h2>批量报活动设置</h2><p>配置用户未启用自定义格式时使用的默认SKC识别规则</p></div>
         </div>
         <div class="admin-settings-actions">
+          <el-select v-model="categoryCode" class="admin-region-select" placeholder="选择品类" @change="load">
+            <el-option v-for="category in categories" :key="category.code" :label="category.name" :value="category.code">
+              <span>{{ category.name }}</span><small style="float: right; color: var(--el-text-color-secondary); font-size: 12px;">{{ category.template_label }}</small>
+            </el-option>
+          </el-select>
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <el-button type="primary" :icon="Select" :loading="saving" :disabled="!loaded || !rulesValid" @click="save">保存默认格式</el-button>
         </div>
@@ -104,30 +127,35 @@ onMounted(load)
       <div v-else class="admin-activity-rule-grid">
         <section class="admin-activity-rule-card">
           <h3>套装识别规则</h3>
-          <p>先匹配固定映射，再按标识前面的数字提取套装件数。</p>
-          <label class="admin-activity-rule-field">
-            <span>套装标识</span>
-            <el-select v-model="setKeywords" multiple filterable allow-create default-first-option placeholder="输入标识后按回车添加">
-              <el-option v-for="keyword in keywordOptions" :key="keyword" :label="keyword" :value="keyword" />
-            </el-select>
-          </label>
-          <el-checkbox v-model="includeEmptySetKeyword">套装标识为空（从货号末尾提取件数）</el-checkbox>
-          <el-alert v-if="includeEmptySetKeyword" type="warning" :closable="false" show-icon title="空标识会把末尾为 4/5/6/8/10/12 的货号识别为套装" />
-
-          <div class="activity-mapping-heading">
-            <span>固定映射</span>
-            <el-button link type="primary" :icon="Plus" @click="addSetMapping">增加映射</el-button>
-          </div>
-          <div v-if="setMappings.length" class="activity-mapping-list">
-            <div v-for="(mapping, index) in setMappings" :key="index" class="activity-mapping-row">
-              <el-input v-model="mapping.pattern" placeholder="例如：四件组合" maxlength="64" />
-              <el-select v-model="mapping.pieces" aria-label="套装件数">
-                <el-option v-for="pieces in supportedSetPieces" :key="pieces" :label="`${pieces}件套`" :value="pieces" />
+          <template v-if="hasSetPieces">
+            <p>先匹配固定映射，再按标识前面的数字提取套装件数。</p>
+            <label class="admin-activity-rule-field">
+              <span>套装标识</span>
+              <el-select v-model="setKeywords" multiple filterable allow-create default-first-option placeholder="输入标识后按回车添加">
+                <el-option v-for="keyword in keywordOptions" :key="keyword" :label="keyword" :value="keyword" />
               </el-select>
-              <el-button link type="danger" :icon="Delete" aria-label="删除固定映射" @click="removeSetMapping(index)" />
+            </label>
+            <el-checkbox v-model="includeEmptySetKeyword">套装标识为空（从货号末尾提取件数）</el-checkbox>
+            <el-alert v-if="includeEmptySetKeyword" type="warning" :closable="false" show-icon :title="`空标识会把末尾为 ${supportedSetPieces.join('/')} 的货号识别为套装`" />
+
+            <div class="activity-mapping-heading">
+              <span>固定映射</span>
+              <el-button link type="primary" :icon="Plus" @click="addSetMapping">增加映射</el-button>
             </div>
-          </div>
-          <el-empty v-else :image-size="42" description="暂无固定映射" />
+            <div v-if="setMappings.length" class="activity-mapping-list">
+              <div v-for="(mapping, index) in setMappings" :key="index" class="activity-mapping-row">
+                <el-input v-model="mapping.pattern" placeholder="例如：四件组合" maxlength="64" />
+                <el-select v-model="mapping.pieces" aria-label="套装件数">
+                  <el-option v-for="pieces in supportedSetPieces" :key="pieces" :label="`${pieces}件套`" :value="pieces" />
+                </el-select>
+                <el-button link type="danger" :icon="Delete" aria-label="删除固定映射" @click="removeSetMapping(index)" />
+              </div>
+            </div>
+            <el-empty v-else :image-size="42" description="暂无固定映射" />
+          </template>
+          <template v-else>
+            <el-alert type="info" :closable="false" show-icon :title="`「${currentCategory?.name || '当前品类'}」为无套装型，无需配置套装识别规则`" description="该品类所有货号将按单品规则提取货值。" />
+          </template>
         </section>
 
         <section class="admin-activity-rule-card">

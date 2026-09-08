@@ -15,7 +15,7 @@ from openpyxl import load_workbook
 from app.config import (
     ADMIN_PASSWORD,
     ADMIN_USERNAME,
-    HALF_HEADCOST_PATH,
+    CLEANUP_INTERVAL_SECONDS,
     COOKIE_SECURE,
     INVENTORY_PATH,
     MAX_UPLOAD_BYTES,
@@ -31,21 +31,26 @@ from app.database import (
     update_inventory_item,
     delete_user,
     ensure_admin_user,
-    get_activity_skc_rules,
     get_user,
     get_user_by_username,
     list_users,
     update_user_credentials,
     update_user_status,
+    count_half_entries,
     save_activity_skc_rules,
 )
-from app.schemas import ActivitySkuRulesPayload, AdminUserUpdateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest
+from app.schemas import ActivitySkuRulesPayload, AdminUserUpdateRequest, CategoryCreateRequest, CategoryUpdateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest, SystemSettingsPayload
 from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
+from app.services import audit, system
+from app.services.categories import category_allowed_pieces, category_skc_rules, create_category, delete_category, get_category, list_categories, TEMPLATE_TYPES, update_category
+from app.services.cleanup import cleanup_scheduler, purge_all, run_once as run_cleanup_once
 from app.services.half_headcost import delete_entry, load_entries, merge_upload
 from app.services.activity import normalize_id_profit_rules, normalize_parse_config, preview_activity_workbook
 from app.services.activity_tasks import activity_task_manager
 from app.services.inventory import invalidate_cache, inventory_status, load_price_catalog
+from app.services.monitoring import snapshot as monitoring_snapshot
 from app.services.regions import create_region, delete_region, get_region_profile, list_regions, region_snapshot, update_region
+from app.services.taskpool import QueueFullError
 from app.services.tasks import task_manager
 
 
@@ -76,6 +81,7 @@ def bootstrap_admin() -> None:
         ensure_admin_user(ADMIN_USERNAME, hash_password(ADMIN_PASSWORD))
     elif not get_user_by_username(ADMIN_USERNAME):
         logging.getLogger("temubox.auth").warning("ADMIN_PASSWORD 未配置，管理员账号尚未创建")
+    cleanup_scheduler.start()
 
 
 def validate_excel(upload: UploadFile) -> None:
@@ -111,7 +117,7 @@ def health():
 
 
 @app.post("/api/auth/register")
-def register(request: RegisterRequest):
+def register(request: RegisterRequest, http_request: Request):
     try:
         username = validate_username(request.username)
     except ValueError as exc:
@@ -124,13 +130,19 @@ def register(request: RegisterRequest):
         if get_user_by_username(username):
             raise HTTPException(status_code=409, detail="用户名已存在") from exc
         raise
+    audit.record(None, "auth.register", "user", username, "新用户注册，等待审核", http_request)
     return {"message": "注册成功，请等待管理员审核"}
 
 
 @app.post("/api/auth/login")
-def login(request: LoginRequest, response: Response):
-    user = login_user(request.username, request.password)
+def login(request: LoginRequest, http_request: Request, response: Response):
+    try:
+        user = login_user(request.username, request.password)
+    except HTTPException as exc:
+        audit.record(None, "auth.login_failed", "user", request.username, exc.detail, http_request)
+        raise
     response.set_cookie(SESSION_COOKIE_NAME, make_session(user["id"]), max_age=SESSION_MAX_AGE, httponly=True, samesite="lax", secure=COOKIE_SECURE)
+    audit.record(user, "auth.login", "user", user["username"], "登录成功", http_request)
     return public_user(user)
 
 
@@ -147,7 +159,7 @@ def me(user: dict = Depends(current_user)):
 
 @app.get("/api/status")
 def status(user: dict = Depends(current_user)):
-    half_count = len(load_entries())
+    half_count = count_half_entries()
     return {
         "version": app.version,
         "inventory": inventory_status(),
@@ -156,23 +168,32 @@ def status(user: dict = Depends(current_user)):
     }
 
 
+@app.get("/api/categories")
+def public_categories(region_code: Optional[str] = Query(None, max_length=16), _user: dict = Depends(current_user)):
+    return {"items": list_categories(region_code=region_code)}
+
+
 @app.get("/api/regions")
 def public_regions(_user: dict = Depends(current_user)):
     return {"items": list_regions()}
 
 
 @app.get("/api/regions/{code}/settings")
-def public_region_settings(code: str, _user: dict = Depends(current_user)):
+def public_region_settings(code: str, category_code: Optional[str] = Query(None, max_length=16), _user: dict = Depends(current_user)):
     try:
-        return get_region_profile(code)
+        return get_region_profile(code, category_code)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/settings")
-def get_public_settings(region_code: Optional[str] = Query(None, max_length=16), _user: dict = Depends(current_user)):
+def get_public_settings(
+    region_code: Optional[str] = Query(None, max_length=16),
+    category_code: Optional[str] = Query(None, max_length=16),
+    _user: dict = Depends(current_user),
+):
     try:
-        return get_region_profile(region_code)["settings"]
+        return get_region_profile(region_code, category_code)["settings"]
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -201,7 +222,7 @@ def list_inventory_items(
 
 
 @app.post("/api/inventory")
-async def upload_inventory(file: UploadFile = File(...), _admin: dict = Depends(admin_user)):
+async def upload_inventory(request: Request, file: UploadFile = File(...), _admin: dict = Depends(admin_user)):
     candidate = INVENTORY_PATH.with_name("库存统计表.candidate.xlsx")
     await save_upload(file, candidate)
     try:
@@ -214,10 +235,11 @@ async def upload_inventory(file: UploadFile = File(...), _admin: dict = Depends(
         raise HTTPException(status_code=400, detail=f"库存表无法读取：{exc}") from exc
     os.replace(candidate, INVENTORY_PATH)
     invalidate_cache()
+    audit.record(_admin, "inventory.upload", "inventory", "库存统计表", f"上传库存表：{file.filename}", request)
     return {"message": "库存表已更新，缓存将在下次查询时自动重建", **inventory_status()}
 
 
-def parse_activity_rules(value: Optional[str]) -> Optional[dict]:
+def parse_activity_rules(value: Optional[str], allowed_pieces=None) -> Optional[dict]:
     if value is None:
         return None
     if len(value) > 20_000:
@@ -229,7 +251,7 @@ def parse_activity_rules(value: Optional[str]) -> Optional[dict]:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="SKC识别规则必须是JSON对象")
     try:
-        return normalize_parse_config(payload)
+        return normalize_parse_config(payload, allowed_pieces=allowed_pieces)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -255,6 +277,7 @@ async def preview_bulk_activity(
     skc_rules: Optional[str] = Form(None),
     id_profit_rules: Optional[str] = Form(None),
     region_code: Optional[str] = Form(None),
+    category_code: Optional[str] = Form(None),
     _user: dict = Depends(current_user),
 ):
     validate_excel(file)
@@ -262,10 +285,14 @@ async def preview_bulk_activity(
     await file.close()
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="上传文件超过服务器限制")
-    parse_config = parse_activity_rules(skc_rules)
+    try:
+        category = await run_in_threadpool(get_category, category_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    parse_config = parse_activity_rules(skc_rules, category_allowed_pieces(category))
     parsed_id_profit_rules = parse_activity_id_profit_rules(id_profit_rules)
     try:
-        snapshot = await run_in_threadpool(region_snapshot, region_code)
+        snapshot = await run_in_threadpool(region_snapshot, region_code, category_code)
         return await run_in_threadpool(preview_activity_workbook, content, parse_config, snapshot["settings"], parsed_id_profit_rules)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -273,11 +300,13 @@ async def preview_bulk_activity(
 
 @app.post("/api/activities/bulk", status_code=202)
 async def process_bulk_activity(
+    request: Request,
     file: UploadFile = File(...),
     uplift_limit: Optional[float] = Form(None, ge=0, le=1000),
     skc_rules: Optional[str] = Form(None),
     id_profit_rules: Optional[str] = Form(None),
     region_code: Optional[str] = Form(None),
+    category_code: Optional[str] = Form(None),
     user: dict = Depends(current_user),
 ):
     validate_excel(file)
@@ -287,13 +316,23 @@ async def process_bulk_activity(
         raise HTTPException(status_code=413, detail="上传文件超过服务器限制")
 
     upload_name = file.filename or "报名活动.xlsx"
-    parse_config = parse_activity_rules(skc_rules)
+    try:
+        category = await run_in_threadpool(get_category, category_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    parse_config = parse_activity_rules(skc_rules, category_allowed_pieces(category))
     parsed_id_profit_rules = parse_activity_id_profit_rules(id_profit_rules)
     try:
-        snapshot = await run_in_threadpool(region_snapshot, region_code)
+        snapshot = await run_in_threadpool(region_snapshot, region_code, category_code)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    job = await run_in_threadpool(activity_task_manager.create, upload_name, user["id"], content, snapshot, uplift_limit, parse_config, parsed_id_profit_rules)
+    if activity_task_manager.queue_full():
+        raise HTTPException(status_code=429, detail="后台任务队列已满，请稍后再试")
+    try:
+        job = await run_in_threadpool(activity_task_manager.create, upload_name, user["id"], content, snapshot, uplift_limit, parse_config, parsed_id_profit_rules)
+    except QueueFullError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    audit.record(user, "activity.create", "activity_job", job["id"], f"提交批量报名活动：{upload_name}（区域 {snapshot['region']['code']} / 品类 {snapshot['category']['code']}）", request)
     return {
         **job,
         "download_url": f"/api/activities/{job['id']}/download",
@@ -314,12 +353,13 @@ def get_activity_task(job_id: str, user: dict = Depends(current_user)):
 
 
 @app.delete("/api/activities/{job_id}")
-def delete_activity_task(job_id: str, user: dict = Depends(current_user)):
+def delete_activity_task(job_id: str, request: Request, user: dict = Depends(current_user)):
     result = activity_task_manager.delete(job_id, user["id"])
     if result == "active":
         raise HTTPException(status_code=409, detail="处理中任务暂不能删除，请等待任务完成")
     if result == "not_found":
         raise HTTPException(status_code=404, detail="活动任务不存在")
+    audit.record(user, "activity.delete", "activity_job", job_id, "删除自己的报名活动任务", request)
     return {"message": "活动任务记录已删除", "id": job_id}
 
 
@@ -336,9 +376,10 @@ def download_activity(job_id: str, user: dict = Depends(current_user)):
 
 
 @app.post("/api/inventory/rebuild")
-async def rebuild_inventory(_admin: dict = Depends(admin_user)):
+async def rebuild_inventory(request: Request, _admin: dict = Depends(admin_user)):
     invalidate_cache()
     catalog = await run_in_threadpool(load_price_catalog)
+    audit.record(_admin, "inventory.rebuild", "inventory", "price_cache", f"重建库存缓存，共 {len(catalog)} 个 SKU", request)
     return {"message": "库存缓存已重建", "sku_count": len(catalog), **inventory_status()}
 
 
@@ -362,7 +403,7 @@ def admin_inventory_items(
 
 
 @app.post("/api/admin/inventory/items", status_code=201)
-def admin_create_inventory_item(payload: InventoryItemCreateRequest, _admin: dict = Depends(admin_user)):
+def admin_create_inventory_item(payload: InventoryItemCreateRequest, request: Request, _admin: dict = Depends(admin_user)):
     normalized = payload.sku.strip().upper()
     if not normalized:
         raise HTTPException(status_code=400, detail="SKU 不能为空")
@@ -370,11 +411,12 @@ def admin_create_inventory_item(payload: InventoryItemCreateRequest, _admin: dic
         item = create_inventory_item(normalized, payload.price, payload.set_type.strip() or "单品")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit.record(_admin, "inventory.item_create", "inventory_item", normalized, f"新增库存明细：{normalized}", request)
     return {"message": "库存明细已添加", "item": item, **inventory_status()}
 
 
 @app.put("/api/admin/inventory/items/{sku}")
-def admin_update_inventory_item(sku: str, payload: InventoryItemUpdateRequest, _admin: dict = Depends(admin_user)):
+def admin_update_inventory_item(sku: str, payload: InventoryItemUpdateRequest, request: Request, _admin: dict = Depends(admin_user)):
     old_sku = sku.strip().upper()
     normalized = payload.sku.strip().upper()
     if not old_sku or not normalized:
@@ -385,12 +427,14 @@ def admin_update_inventory_item(sku: str, payload: InventoryItemUpdateRequest, _
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not item:
         raise HTTPException(status_code=404, detail="库存 SKU 不存在")
+    audit.record(_admin, "inventory.item_update", "inventory_item", normalized, f"更新库存明细：{old_sku} → {normalized}", request)
     return {"message": "库存明细已更新", "item": item, **inventory_status()}
 @app.delete("/api/admin/inventory/items/{sku}")
-def admin_delete_inventory_item(sku: str, _admin: dict = Depends(admin_user)):
+def admin_delete_inventory_item(sku: str, request: Request, _admin: dict = Depends(admin_user)):
     normalized = sku.strip().upper()
     if not normalized or not delete_inventory_item(normalized):
         raise HTTPException(status_code=404, detail="库存 SKU 不存在")
+    audit.record(_admin, "inventory.item_delete", "inventory_item", normalized, f"删除库存明细：{normalized}", request)
     return {"message": "库存明细已删除", "sku": normalized, **inventory_status()}
 
 
@@ -412,9 +456,14 @@ def list_half_headcost(
     query: str = Query("", max_length=80),
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=10, le=200),
+    category_code: Optional[str] = Query(None, max_length=16),
     _user: dict = Depends(current_user),
 ):
-    entries = load_entries()
+    try:
+        category = get_category(category_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    entries = load_entries(category["id"])
     keyword = query.strip().upper()
     items = [
         {"sku": sku, "set_type": set_type}
@@ -422,47 +471,66 @@ def list_half_headcost(
         if not keyword or keyword in sku.upper()
     ]
     start = (page - 1) * page_size
-    return {"total": len(items), "items": items[start:start + page_size]}
+    return {"total": len(items), "items": items[start:start + page_size], "category": {"code": category["code"], "name": category["name"]}}
 
 
 @app.post("/api/half-headcost/import")
-async def import_half_headcost(file: UploadFile = File(...), _admin: dict = Depends(admin_user)):
+async def import_half_headcost(
+    request: Request,
+    file: UploadFile = File(...),
+    category_code: Optional[str] = Form(None),
+    _admin: dict = Depends(admin_user),
+):
     validate_excel(file)
     content = await file.read(MAX_UPLOAD_BYTES + 1)
     await file.close()
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="上传文件超过服务器限制")
     try:
-        result = await run_in_threadpool(merge_upload, content)
+        category = get_category(category_code, include_disabled=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        result = await run_in_threadpool(merge_upload, content, category["id"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record(_admin, "half_headcost.import", "half_headcost", category["code"], f"导入头程减半名单（品类 {category['code']}）：{file.filename}（新增 {result['added']}）", request)
     return {"message": "头程减半名单已合并", **result}
 
 
 @app.delete("/api/half-headcost/{sku}")
-def remove_half_headcost(sku: str, _admin: dict = Depends(admin_user)):
+def remove_half_headcost(sku: str, request: Request, category_code: Optional[str] = Query(None, max_length=16), _admin: dict = Depends(admin_user)):
     normalized = sku.strip().upper()
-    if not delete_entry(normalized):
+    try:
+        category = get_category(category_code, include_disabled=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not delete_entry(normalized, category["id"]):
         raise HTTPException(status_code=404, detail="SKU 不在头程减半名单中")
+    audit.record(_admin, "half_headcost.delete", "half_headcost", normalized, f"从头程减半名单删除（品类 {category['code']}）：{normalized}", request)
     return {"message": "已删除", "sku": normalized}
 
 
 @app.post("/api/tasks", status_code=202)
 async def create_task(
+    request: Request,
     sales: UploadFile = File(...),
     delivery: UploadFile = File(...),
     half_headcost: Optional[UploadFile] = File(None),
     region_code: Optional[str] = Form(None),
+    category_code: Optional[str] = Form(None),
     user: dict = Depends(current_user),
 ):
     if not INVENTORY_PATH.exists():
         raise HTTPException(status_code=409, detail="服务器尚未配置库存统计表")
+    if task_manager.queue_full():
+        raise HTTPException(status_code=429, detail="后台任务队列已满，请稍后再试")
     validate_excel(sales)
     validate_excel(delivery)
     if half_headcost:
         validate_excel(half_headcost)
     try:
-        snapshot = await run_in_threadpool(region_snapshot, region_code)
+        snapshot = await run_in_threadpool(region_snapshot, region_code, category_code)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     task = task_manager.create(
@@ -480,6 +548,7 @@ async def create_task(
     except Exception:
         raise
     task_manager.queue(task["id"])
+    audit.record(user, "task.create", "task", task["id"], f"提交订单计算（区域 {snapshot['region']['code']} / 品类 {snapshot['category']['code']}）", request)
     return task_manager.get(task["id"], user["id"])
 
 
@@ -497,12 +566,13 @@ def get_task(task_id: str, user: dict = Depends(current_user)):
 
 
 @app.delete("/api/tasks/{task_id}")
-def delete_task(task_id: str, user: dict = Depends(current_user)):
+def delete_task(task_id: str, request: Request, user: dict = Depends(current_user)):
     result = task_manager.delete(task_id, user["id"])
     if result == "active":
         raise HTTPException(status_code=409, detail="处理中任务暂不能删除，请等待任务完成")
     if result == "not_found":
         raise HTTPException(status_code=404, detail="任务不存在")
+    audit.record(user, "task.delete", "task", task_id, "删除自己的订单计算任务", request)
     return {"message": "任务记录已删除", "id": task_id}
 
 
@@ -547,12 +617,13 @@ def admin_activity_tasks(limit: int = Query(100, ge=1, le=500), _admin: dict = D
 
 
 @app.delete("/api/admin/tasks/{task_id}")
-def admin_delete_task(task_id: str, _admin: dict = Depends(admin_user)):
+def admin_delete_task(task_id: str, request: Request, _admin: dict = Depends(admin_user)):
     result = task_manager.delete(task_id, None)
     if result == "active":
         raise HTTPException(status_code=409, detail="处理中任务暂不能删除，请等待任务完成")
     if result == "not_found":
         raise HTTPException(status_code=404, detail="任务不存在")
+    audit.record(_admin, "task.admin_delete", "task", task_id, "管理员删除订单计算任务", request)
     return {"message": "任务记录已删除", "id": task_id}
 
 
@@ -569,12 +640,13 @@ def admin_download_task(task_id: str, _admin: dict = Depends(admin_user)):
 
 
 @app.delete("/api/admin/activity-tasks/{job_id}")
-def admin_delete_activity_task(job_id: str, _admin: dict = Depends(admin_user)):
+def admin_delete_activity_task(job_id: str, request: Request, _admin: dict = Depends(admin_user)):
     result = activity_task_manager.delete(job_id, None)
     if result == "active":
         raise HTTPException(status_code=409, detail="处理中任务暂不能删除，请等待任务完成")
     if result == "not_found":
         raise HTTPException(status_code=404, detail="活动任务不存在")
+    audit.record(_admin, "activity.admin_delete", "activity_job", job_id, "管理员删除报名活动任务", request)
     return {"message": "活动任务记录已删除", "id": job_id}
 
 
@@ -595,29 +667,31 @@ def admin_users(_admin: dict = Depends(admin_user)):
 
 
 @app.post("/api/admin/users/{user_id}/approve")
-def approve_user(user_id: int, _admin: dict = Depends(admin_user)):
+def approve_user(user_id: int, request: Request, _admin: dict = Depends(admin_user)):
     target = get_user(user_id)
     if not target or target["role"] == "admin":
         raise HTTPException(status_code=404, detail="普通用户不存在")
     user = update_user_status(user_id, "approved")
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
+    audit.record(_admin, "user.approve", "user", user["username"], "审核通过用户", request)
     return public_user(user)
 
 
 @app.post("/api/admin/users/{user_id}/reject")
-def reject_user(user_id: int, _admin: dict = Depends(admin_user)):
+def reject_user(user_id: int, request: Request, _admin: dict = Depends(admin_user)):
     target = get_user(user_id)
     if not target or target["role"] == "admin":
         raise HTTPException(status_code=404, detail="普通用户不存在")
     user = update_user_status(user_id, "rejected")
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
+    audit.record(_admin, "user.reject", "user", user["username"], "驳回用户", request)
     return public_user(user)
 
 
 @app.patch("/api/admin/users/{user_id}")
-def admin_update_user(user_id: int, payload: AdminUserUpdateRequest, _admin: dict = Depends(admin_user)):
+def admin_update_user(user_id: int, payload: AdminUserUpdateRequest, request: Request, _admin: dict = Depends(admin_user)):
     target = get_user(user_id)
     if not target or target["role"] == "admin":
         raise HTTPException(status_code=404, detail="普通用户不存在")
@@ -635,23 +709,29 @@ def admin_update_user(user_id: int, payload: AdminUserUpdateRequest, _admin: dic
     )
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
+    audit.record(_admin, "user.update", "user", user["username"], "修改用户账号" + ("及密码" if payload.password else ""), request)
     return public_user(user)
 
 
 @app.delete("/api/admin/users/{user_id}")
-def admin_delete_user(user_id: int, _admin: dict = Depends(admin_user)):
+def admin_delete_user(user_id: int, request: Request, _admin: dict = Depends(admin_user)):
     target = get_user(user_id)
     if not target or target["role"] == "admin":
         raise HTTPException(status_code=404, detail="普通用户不存在")
     if not delete_user(user_id):
         raise HTTPException(status_code=404, detail="用户不存在")
+    audit.record(_admin, "user.delete", "user", target["username"], "删除用户", request)
     return {"message": "用户已删除", "id": user_id}
 
 
 @app.get("/api/admin/settings")
-def admin_get_settings(region_code: Optional[str] = Query(None, max_length=16), _admin: dict = Depends(admin_user)):
+def admin_get_settings(
+    region_code: Optional[str] = Query(None, max_length=16),
+    category_code: Optional[str] = Query(None, max_length=16),
+    _admin: dict = Depends(admin_user),
+):
     try:
-        return get_region_profile(region_code, include_disabled=True)["settings"]
+        return get_region_profile(region_code, category_code, include_disabled=True)["settings"]
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -659,29 +739,82 @@ def admin_get_settings(region_code: Optional[str] = Query(None, max_length=16), 
 @app.put("/api/admin/settings")
 def admin_update_settings(
     payload: SettingsPayload,
+    request: Request,
     region_code: Optional[str] = Query(None, max_length=16),
+    category_code: Optional[str] = Query(None, max_length=16),
     admin: dict = Depends(admin_user),
 ):
     try:
-        profile = get_region_profile(region_code, include_disabled=True)
-        updated = update_region(profile["code"], {**profile, "settings": payload.model_dump()}, admin["id"])
+        profile = get_region_profile(region_code, category_code, include_disabled=True)
+        updated = update_region(profile["code"], {**profile, "settings": payload.model_dump()}, admin["id"], category_code=profile["category"]["code"])
+        audit.record(admin, "settings.update", "region", f"{profile['code']}/{profile['category']['code']}", "更新成本参数", request)
         return updated["settings"]
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/admin/categories")
+def admin_categories(_admin: dict = Depends(admin_user)):
+    return {"items": list_categories(include_disabled=True), "template_types": TEMPLATE_TYPES}
+
+
+@app.post("/api/admin/categories", status_code=201)
+def admin_create_category(payload: CategoryCreateRequest, request: Request, _admin: dict = Depends(admin_user)):
+    try:
+        category = create_category(payload.model_dump(), _admin["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record(_admin, "category.create", "category", category["code"], f"新增品类 {category['name']}（模版 {category['template_label']}）", request)
+    return category
+
+
+@app.put("/api/admin/categories/{code}")
+def admin_update_category(code: str, payload: CategoryUpdateRequest, request: Request, _admin: dict = Depends(admin_user)):
+    try:
+        category = update_category(code, payload.model_dump(), _admin["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record(_admin, "category.update", "category", category["code"], f"更新品类 {category['name']}", request)
+    return category
+
+
+@app.delete("/api/admin/categories/{code}")
+def admin_delete_category(code: str, request: Request, _admin: dict = Depends(admin_user)):
+    try:
+        delete_category(code)
+        audit.record(_admin, "category.delete", "category", code.strip().upper(), "删除品类及其配置", request)
+        return {"message": "品类已删除", "code": code.strip().upper()}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/admin/activity-settings/skc-rules")
-def admin_get_activity_skc_rules(_admin: dict = Depends(admin_user)):
-    return get_activity_skc_rules()
+def admin_get_activity_skc_rules(category_code: Optional[str] = Query(None, max_length=16), _admin: dict = Depends(admin_user)):
+    try:
+        category = get_category(category_code, include_disabled=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return category_skc_rules(category)
 
 
 @app.put("/api/admin/activity-settings/skc-rules")
-def admin_update_activity_skc_rules(payload: ActivitySkuRulesPayload, _admin: dict = Depends(admin_user)):
+def admin_update_activity_skc_rules(
+    payload: ActivitySkuRulesPayload,
+    request: Request,
+    category_code: Optional[str] = Query(None, max_length=16),
+    _admin: dict = Depends(admin_user),
+):
     try:
-        rules = normalize_parse_config(payload.model_dump())
+        category = get_category(category_code, include_disabled=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        rules = normalize_parse_config(payload.model_dump(), allowed_pieces=category_allowed_pieces(category))
         if rules is None:
             raise ValueError("默认SKC识别规则不能为空")
-        return save_activity_skc_rules(rules)
+        saved = save_activity_skc_rules(rules, category["code"])
+        audit.record(_admin, "activity_rules.update", "settings", f"skc_rules/{category['code']}", "更新默认SKC识别规则", request)
+        return saved
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -691,33 +824,103 @@ def admin_regions(_admin: dict = Depends(admin_user)):
 
 
 @app.get("/api/admin/regions/{code}")
-def admin_region(code: str, _admin: dict = Depends(admin_user)):
+def admin_region(code: str, category_code: Optional[str] = Query(None, max_length=16), _admin: dict = Depends(admin_user)):
     try:
-        return get_region_profile(code, include_disabled=True)
+        return get_region_profile(code, category_code, include_disabled=True)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/admin/regions", status_code=201)
-def admin_create_region(payload: RegionCreateRequest, admin: dict = Depends(admin_user)):
+def admin_create_region(payload: RegionCreateRequest, request: Request, admin: dict = Depends(admin_user)):
     try:
-        return create_region(payload.model_dump(), admin["id"])
+        region = create_region(payload.model_dump(), admin["id"])
+        audit.record(admin, "region.create", "region", region["code"], f"新增区域 {region['name']}", request)
+        return region
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.put("/api/admin/regions/{code}")
-def admin_update_region(code: str, payload: RegionUpdateRequest, admin: dict = Depends(admin_user)):
+def admin_update_region(code: str, payload: RegionUpdateRequest, request: Request, category_code: Optional[str] = Query(None, max_length=16), admin: dict = Depends(admin_user)):
     try:
-        return update_region(code, payload.model_dump(), admin["id"])
+        region = update_region(code, payload.model_dump(), admin["id"], category_code=category_code)
+        audit.record(admin, "region.update", "region", region["code"], "更新区域配置", request)
+        return region
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.delete("/api/admin/regions/{code}")
-def admin_delete_region(code: str, _admin: dict = Depends(admin_user)):
+def admin_delete_region(code: str, request: Request, _admin: dict = Depends(admin_user)):
     try:
         delete_region(code)
+        audit.record(_admin, "region.delete", "region", code.strip().upper(), "删除区域", request)
         return {"message": "区域已删除", "code": code.strip().upper()}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/admin/system-settings")
+def admin_get_system_settings(_admin: dict = Depends(admin_user)):
+    return {
+        "settings": system.get(),
+        "pools": {
+            "orders": task_manager.pool_stats(),
+            "activities": activity_task_manager.pool_stats(),
+        },
+        "cleanup": {
+            "interval_seconds": CLEANUP_INTERVAL_SECONDS,
+            "last_run_at": cleanup_scheduler.last_run_at,
+            "last_result": cleanup_scheduler.last_run,
+        },
+    }
+
+
+@app.put("/api/admin/system-settings")
+def admin_update_system_settings(payload: SystemSettingsPayload, request: Request, _admin: dict = Depends(admin_user)):
+    try:
+        settings = system.update(payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    task_manager.apply_pool_settings(settings)
+    activity_task_manager.apply_pool_settings(settings)
+    audit.record(_admin, "system_settings.update", "settings", "system", "更新系统运行参数", request)
+    return {
+        "settings": settings,
+        "pools": {
+            "orders": task_manager.pool_stats(),
+            "activities": activity_task_manager.pool_stats(),
+        },
+    }
+
+
+@app.get("/api/admin/audit-logs")
+def admin_audit_logs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(30, ge=10, le=200),
+    action: str = Query("", max_length=64),
+    actor_id: Optional[int] = Query(None),
+    keyword: str = Query("", max_length=80),
+    _admin: dict = Depends(admin_user),
+):
+    return audit.query(page=page, page_size=page_size, action=action.strip(), actor_id=actor_id, keyword=keyword.strip()) | {"actions": audit.actions()}
+
+
+@app.get("/api/admin/monitoring")
+def admin_monitoring(_admin: dict = Depends(admin_user)):
+    return monitoring_snapshot()
+
+
+@app.post("/api/admin/maintenance/cleanup")
+def admin_run_cleanup(request: Request, _admin: dict = Depends(admin_user)):
+    result = run_cleanup_once()
+    audit.record(_admin, "maintenance.cleanup", "system", "cleanup", f"手动执行清理：{result}", request)
+    return result
+
+
+@app.post("/api/admin/maintenance/purge")
+def admin_run_purge(request: Request, _admin: dict = Depends(admin_user)):
+    result = purge_all()
+    audit.record(_admin, "maintenance.purge", "system", "purge", f"清空全部历史数据：{result}", request)
+    return result

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint, create_engine, select, text
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint, create_engine, func, inspect as sa_inspect, select, text, true as sa_true, false as sa_false
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from app.config import DATA_DIR, DATABASE_URL, DB_CONNECT_TIMEOUT, DB_STATEMENT_TIMEOUT_MS, HALF_HEADCOST_PATH, PRICE_CACHE_PATH, TASKS_DIR
@@ -71,6 +71,8 @@ class InventoryExclusion(Base):
 
 class HalfHeadcostSku(Base):
     __tablename__ = "half_headcost_skus"
+    # 品类隔离：同一 SKU 可出现在不同品类的减半名单中
+    category_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     sku: Mapped[str] = mapped_column(String(255), primary_key=True)
     set_type: Mapped[str] = mapped_column(String(64), default="单品")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -99,11 +101,30 @@ class Region(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
+class Category(Base):
+    __tablename__ = "categories"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    # set_based（套装型）| no_set（无套装型）| custom_set（自定义套装型）
+    template_type: Mapped[str] = mapped_column(String(20), default="set_based")
+    # custom_set 品类的自定义套装档位（JSON 数组，如 ["4","6","8"]）
+    set_types: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 品类开放的区域（JSON 数组存区域代码）；NULL = 全部区域开放
+    allowed_regions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=sa_true())
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false())
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now())
+
+
 class RegionConfig(Base):
     __tablename__ = "region_configs"
-    __table_args__ = (UniqueConstraint("region_id", "module", name="uq_region_config_module"),)
+    __table_args__ = (UniqueConstraint("region_id", "category_id", "module", name="uq_region_config_category_module"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     region_id: Mapped[int] = mapped_column(Integer, index=True)
+    category_id: Mapped[int] = mapped_column(Integer, index=True)
     module: Mapped[str] = mapped_column(String(20))
     strategy: Mapped[str] = mapped_column(String(64))
     config_json: Mapped[str] = mapped_column(Text)
@@ -125,6 +146,8 @@ class ActivityJob(Base):
     logs: Mapped[str] = mapped_column(Text, default="[]")
     region_code: Mapped[str] = mapped_column(String(16), default="US")
     region_name: Mapped[str] = mapped_column(String(80), default="美国区")
+    category_code: Mapped[str] = mapped_column(String(16), default="A")
+    category_name: Mapped[str] = mapped_column(String(80), default="A品类")
     config_version: Mapped[int] = mapped_column(Integer, default=1)
     config_snapshot: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -147,6 +170,20 @@ class AppSetting(Base):
     key: Mapped[str] = mapped_column(String(120), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    # 注：SQLite 的 BIGINT 主键不会自增，必须用 INTEGER
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    actor_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    actor_username: Mapped[str] = mapped_column(String(80), default="")
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    target_type: Mapped[str] = mapped_column(String(32), default="")
+    target_id: Mapped[str] = mapped_column(String(128), default="")
+    detail: Mapped[str] = mapped_column(Text, default="")
+    ip: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
 DEFAULT_SETTINGS = {
@@ -199,8 +236,82 @@ def _merge_dict(default: dict, value: dict) -> dict:
     return merged
 
 
+def _ensure_category_schema() -> None:
+    """为旧库补齐品类维度（本地 create_all 环境的轻量迁移）。
+
+    与 Alembic 迁移 20260908_01 等价：
+    - categories 表种子（默认 A 品类，套装型）
+    - region_configs 增加 category_id 并重建唯一约束
+    - half_headcost_skus 重建为 (category_id, sku) 复合主键
+    - activity_jobs 补齐 category_code / category_name 列（存量归入默认品类）
+    """
+    with engine.begin() as connection:
+        inspector = sa_inspect(connection)
+        if not inspector.has_table("categories"):
+            Category.__table__.create(connection)
+        else:
+            # 旧库补列（allowed_regions：NULL = 全部区域开放）
+            category_columns = {column["name"] for column in inspector.get_columns("categories")}
+            if "allowed_regions" not in category_columns:
+                connection.execute(text("ALTER TABLE categories ADD COLUMN allowed_regions TEXT"))
+        if not connection.execute(text("SELECT 1 FROM categories LIMIT 1")).scalar():
+            connection.execute(text(
+                "INSERT INTO categories (code, name, template_type, set_types, enabled, is_default, sort_order) "
+                "VALUES ('A', 'A品类', 'set_based', '[]', true, true, 10)"
+            ))
+        category = connection.execute(text("SELECT id, code, name FROM categories WHERE is_default LIMIT 1")).first()
+        category_id = category[0] if category else None
+        category_code = str(category[1]) if category else "A"
+        category_name = str(category[2]) if category else "A品类"
+
+        if inspector.has_table("region_configs"):
+            columns = {column["name"] for column in inspector.get_columns("region_configs")}
+            if "category_id" not in columns:
+                # SQLite rename 后旧索引名保留，先删除以释放命名空间（主键 autoindex 跟随表名，无需处理）
+                connection.execute(text("DROP INDEX IF EXISTS ix_region_configs_region_id"))
+                connection.execute(text("ALTER TABLE region_configs RENAME TO region_configs_legacy"))
+                RegionConfig.__table__.create(connection)
+                connection.execute(text(
+                    "INSERT INTO region_configs (region_id, category_id, module, strategy, config_json, version, updated_by, updated_at) "
+                    "SELECT region_id, :cid, module, strategy, config_json, version, updated_by, updated_at FROM region_configs_legacy"
+                ), {"cid": category_id})
+                connection.execute(text("DROP TABLE region_configs_legacy"))
+            else:
+                connection.execute(text("UPDATE region_configs SET category_id = :cid WHERE category_id IS NULL"), {"cid": category_id})
+
+        if inspector.has_table("half_headcost_skus"):
+            columns = {column["name"] for column in inspector.get_columns("half_headcost_skus")}
+            if "category_id" not in columns:
+                connection.execute(text("ALTER TABLE half_headcost_skus RENAME TO half_headcost_skus_legacy"))
+                HalfHeadcostSku.__table__.create(connection)
+                connection.execute(text(
+                    "INSERT INTO half_headcost_skus (category_id, sku, set_type, updated_at) "
+                    "SELECT :cid, sku, COALESCE(set_type, '单品'), COALESCE(updated_at, CURRENT_TIMESTAMP) FROM half_headcost_skus_legacy"
+                ), {"cid": category_id})
+                connection.execute(text("DROP TABLE half_headcost_skus_legacy"))
+
+        if inspector.has_table("activity_jobs"):
+            columns = {column["name"] for column in inspector.get_columns("activity_jobs")}
+            # SQLite 的 ADD COLUMN DEFAULT 只接受字面量，绑定参数会报语法错误
+            safe_code = category_code.replace("'", "''")
+            safe_name = category_name.replace("'", "''")
+            if "category_code" not in columns:
+                connection.execute(text(f"ALTER TABLE activity_jobs ADD COLUMN category_code VARCHAR(16) NOT NULL DEFAULT '{safe_code}'"))
+            if "category_name" not in columns:
+                connection.execute(text(f"ALTER TABLE activity_jobs ADD COLUMN category_name VARCHAR(80) NOT NULL DEFAULT '{safe_name}'"))
+
+
 def init_database() -> None:
-    Base.metadata.create_all(engine)
+    """Schema ownership:
+    - Production (Docker) sets TEMUBOX_AUTO_CREATE_TABLES=0: Alembic owns the
+      schema exclusively (`alembic upgrade head` runs before the API starts).
+    - Local dev / tests keep the default (create_all) so a fresh SQLite file
+      works without running Alembic.
+    The legacy JSON seeding below is idempotent and only fills empty tables.
+    """
+    if os.environ.get("TEMUBOX_AUTO_CREATE_TABLES", "1") != "0":
+        Base.metadata.create_all(engine)
+        _ensure_category_schema()
     with SessionLocal.begin() as session:
         if session.scalar(select(InventoryItem.sku).limit(1)) is None:
             cache = _json(PRICE_CACHE_PATH, {})
@@ -224,8 +335,10 @@ def init_database() -> None:
         if session.scalar(select(HalfHeadcostSku.sku).limit(1)) is None:
             legacy = _json(HALF_HEADCOST_PATH, {})
             values = legacy.get("sku_types", legacy) if isinstance(legacy, dict) else {}
-            for sku, set_type in values.items():
-                session.add(HalfHeadcostSku(sku=str(sku), set_type=str(set_type)))
+            if values:
+                default_category_id = session.scalar(select(Category.id).where(Category.is_default.is_(True)).order_by(Category.sort_order, Category.id))
+                for sku, set_type in values.items():
+                    session.add(HalfHeadcostSku(category_id=default_category_id, sku=str(sku), set_type=str(set_type)))
         if session.scalar(select(TaskRecord.id).limit(1)) is None:
             for metadata_path in TASKS_DIR.glob("*/task.json"):
                 payload = _json(metadata_path, None)
@@ -251,10 +364,12 @@ def init_database() -> None:
             region = Region(code="US", name="美国区", currency="CNY", enabled=True, is_default=True, sort_order=10)
             session.add(region)
             session.flush()
+            default_category_id = session.scalar(select(Category.id).where(Category.is_default.is_(True)).order_by(Category.sort_order, Category.id))
             session.add_all([
-                RegionConfig(region_id=region.id, module="order", strategy="standard_order_v1", config_json=json.dumps(persisted["order"], ensure_ascii=False), version=1),
-                RegionConfig(region_id=region.id, module="activity", strategy="standard_activity_v1", config_json=json.dumps(persisted["activity"], ensure_ascii=False), version=1),
+                RegionConfig(region_id=region.id, category_id=default_category_id, module="order", strategy="standard_order_v1", config_json=json.dumps(persisted["order"], ensure_ascii=False), version=1),
+                RegionConfig(region_id=region.id, category_id=default_category_id, module="activity", strategy="standard_activity_v1", config_json=json.dumps(persisted["activity"], ensure_ascii=False), version=1),
             ])
+    seed_category_skc_rules()
 
 
 @contextmanager
@@ -374,27 +489,32 @@ def save_inventory_catalog(signature: dict, catalog: dict) -> None:
             session.add(InventoryItem(inventory_version_id=version.id, sku=sku, **{key: item.get(key) for key in ("price", "set_type", "source_sheet", "source_row", "source_column")}))
 
 
-def load_half_entries() -> dict:
+def load_half_entries(category_id: int) -> dict:
     with db_session() as session:
-        return {row.sku: row.set_type for row in session.scalars(select(HalfHeadcostSku)).all()}
+        return {row.sku: row.set_type for row in session.scalars(select(HalfHeadcostSku).where(HalfHeadcostSku.category_id == category_id)).all()}
 
 
-def merge_half_entries(values: dict) -> tuple[int, int]:
+def count_half_entries() -> int:
     with db_session() as session:
-        before = {row.sku for row in session.scalars(select(HalfHeadcostSku)).all()}
+        return session.scalar(select(func.count()).select_from(HalfHeadcostSku)) or 0
+
+
+def merge_half_entries(category_id: int, values: dict) -> tuple[int, int]:
+    with db_session() as session:
+        before = {row.sku for row in session.scalars(select(HalfHeadcostSku).where(HalfHeadcostSku.category_id == category_id)).all()}
         for sku, set_type in values.items():
-            row = session.get(HalfHeadcostSku, sku)
+            row = session.get(HalfHeadcostSku, (category_id, sku))
             if row:
                 row.set_type = set_type
                 row.updated_at = datetime.now(timezone.utc)
             else:
-                session.add(HalfHeadcostSku(sku=sku, set_type=set_type))
+                session.add(HalfHeadcostSku(category_id=category_id, sku=sku, set_type=set_type))
         return len(set(values) - before), len(before | set(values))
 
 
-def delete_half_entry(sku: str) -> bool:
+def delete_half_entry(category_id: int, sku: str) -> bool:
     with db_session() as session:
-        row = session.get(HalfHeadcostSku, sku)
+        row = session.get(HalfHeadcostSku, (category_id, sku))
         if not row:
             return False
         session.delete(row)
@@ -463,12 +583,13 @@ def activity_dict(row: Optional[ActivityJob]) -> Optional[dict]:
         config_snapshot = json.loads(row.config_snapshot or "{}")
     except json.JSONDecodeError:
         config_snapshot = {}
-    return {"id": row.id, "owner_id": row.owner_id, "status": row.status, "filename": row.filename, "output_path": row.output_path, "progress": row.progress, "message": row.message, "logs": logs, "stats": stats, "region_code": row.region_code, "region_name": row.region_name, "config_version": row.config_version, "config_snapshot": config_snapshot, "created_at": row.created_at.isoformat() if row.created_at else None}
+    return {"id": row.id, "owner_id": row.owner_id, "status": row.status, "filename": row.filename, "output_path": row.output_path, "progress": row.progress, "message": row.message, "logs": logs, "stats": stats, "region_code": row.region_code, "region_name": row.region_name, "category_code": row.category_code, "category_name": row.category_name, "config_version": row.config_version, "config_snapshot": config_snapshot, "created_at": row.created_at.isoformat() if row.created_at else None}
 
 
 def create_activity_job(job_id: str, filename: str, owner_id: int, snapshot: Optional[dict] = None) -> dict:
     snapshot = snapshot or {}
     region = snapshot.get("region", {})
+    category = snapshot.get("category", {})
     versions = snapshot.get("versions", {})
     with db_session() as session:
         row = ActivityJob(
@@ -482,6 +603,8 @@ def create_activity_job(job_id: str, filename: str, owner_id: int, snapshot: Opt
             logs="[]",
             region_code=str(region.get("code", "US")),
             region_name=str(region.get("name", "美国区")),
+            category_code=str(category.get("code", "A")),
+            category_name=str(category.get("name", "A品类")),
             config_version=int(versions.get("activity", 1)),
             config_snapshot=json.dumps(snapshot, ensure_ascii=False),
         )
@@ -513,6 +636,24 @@ def list_all_activity_jobs(limit: int = 100) -> list[dict]:
         return [activity_dict(row) for row in rows]
 
 
+def list_activity_jobs_by_status(statuses: tuple[str, ...]) -> list[dict]:
+    with db_session() as session:
+        rows = session.scalars(select(ActivityJob).where(ActivityJob.status.in_(statuses)).order_by(ActivityJob.created_at.asc())).all()
+        return [activity_dict(row) for row in rows]
+
+
+def task_status_counts() -> dict[str, int]:
+    with db_session() as session:
+        rows = session.execute(select(TaskRecord.status, func.count()).group_by(TaskRecord.status)).all()
+        return {status: count for status, count in rows}
+
+
+def activity_job_status_counts() -> dict[str, int]:
+    with db_session() as session:
+        rows = session.execute(select(ActivityJob.status, func.count()).group_by(ActivityJob.status)).all()
+        return {status: count for status, count in rows}
+
+
 def delete_activity_job(job_id: str, owner_id: Optional[int]) -> str:
     with db_session() as session:
         row = session.get(ActivityJob, job_id)
@@ -539,23 +680,42 @@ def update_activity_job(job_id: str, **values) -> Optional[dict]:
         return activity_dict(row)
 
 
-def get_activity_skc_rules() -> dict:
+def get_activity_skc_rules(category_code: Optional[str] = None) -> dict:
+    """读取品类的默认 SKC 识别规则；无品类时回落到旧全局键（兼容历史数据）。"""
     with db_session() as session:
-        row = session.get(AppSetting, "activity_skc_rules")
+        row = None
+        if category_code:
+            row = session.get(AppSetting, f"activity_skc_rules:{category_code}")
+        if row is None:
+            row = session.get(AppSetting, "activity_skc_rules")
         value = _json_value(row.value, {}) if row else {}
         return deepcopy(value if isinstance(value, dict) else DEFAULT_SETTINGS["activity"]["default_skc_rules"])
 
 
-def save_activity_skc_rules(rules: dict) -> dict:
+def save_activity_skc_rules(rules: dict, category_code: Optional[str] = None) -> dict:
     with db_session() as session:
-        row = session.get(AppSetting, "activity_skc_rules")
+        key = f"activity_skc_rules:{category_code}" if category_code else "activity_skc_rules"
         encoded = json.dumps(rules, ensure_ascii=False)
+        row = session.get(AppSetting, key)
         if row:
             row.value = encoded
             row.updated_at = datetime.now(timezone.utc)
         else:
-            session.add(AppSetting(key="activity_skc_rules", value=encoded))
-    return get_activity_skc_rules()
+            session.add(AppSetting(key=key, value=encoded))
+    return get_activity_skc_rules(category_code)
+
+
+def seed_category_skc_rules() -> None:
+    """把旧全局 SKC 规则复制为默认品类的规则（幂等，仅补空）。"""
+    with db_session() as session:
+        default_category = session.scalar(select(Category).where(Category.is_default.is_(True)).order_by(Category.sort_order, Category.id))
+        if not default_category:
+            return
+        key = f"activity_skc_rules:{default_category.code}"
+        if session.get(AppSetting, key) is None:
+            legacy = session.get(AppSetting, "activity_skc_rules")
+            value = legacy.value if legacy else json.dumps(DEFAULT_SETTINGS["activity"]["default_skc_rules"], ensure_ascii=False)
+            session.add(AppSetting(key=key, value=value))
 
 
 def get_settings() -> dict:
@@ -587,6 +747,73 @@ def save_settings(settings: dict) -> dict:
             else:
                 session.add(AppSetting(key=key, value=encoded))
     return get_settings()
+
+
+def get_system_settings(defaults: dict) -> dict:
+    with db_session() as session:
+        row = session.get(AppSetting, "system")
+        value = _json_value(row.value, {}) if row else {}
+        return _merge_dict(defaults, value if isinstance(value, dict) else {})
+
+
+def save_system_settings(settings: dict) -> None:
+    with db_session() as session:
+        encoded = json.dumps(settings, ensure_ascii=False)
+        row = session.get(AppSetting, "system")
+        if row:
+            row.value = encoded
+            row.updated_at = datetime.now(timezone.utc)
+        else:
+            session.add(AppSetting(key="system", value=encoded))
+
+
+def insert_audit_log(actor_id: Optional[int], actor_username: str, action: str, target_type: str, target_id: str, detail: str, ip: str) -> None:
+    with db_session() as session:
+        session.add(AuditLog(
+            actor_id=actor_id,
+            actor_username=(actor_username or "")[:80],
+            action=action[:64],
+            target_type=(target_type or "")[:32],
+            target_id=str(target_id or "")[:128],
+            detail=(detail or "")[:4000],
+            ip=(ip or "")[:64],
+        ))
+
+
+def list_audit_logs(page: int = 1, page_size: int = 30, action: str = "", actor_id: Optional[int] = None, keyword: str = "") -> dict:
+    with db_session() as session:
+        statement = select(AuditLog)
+        if action:
+            statement = statement.where(AuditLog.action == action)
+        if actor_id is not None:
+            statement = statement.where(AuditLog.actor_id == actor_id)
+        if keyword:
+            like = f"%{keyword}%"
+            statement = statement.where((AuditLog.detail.like(like)) | (AuditLog.target_id.like(like)) | (AuditLog.actor_username.like(like)))
+        total = session.scalar(select(func.count()).select_from(statement.subquery())) or 0
+        rows = session.scalars(statement.order_by(AuditLog.id.desc()).offset((page - 1) * page_size).limit(page_size)).all()
+        items = [{
+            "id": row.id,
+            "actor_id": row.actor_id,
+            "actor_username": row.actor_username,
+            "action": row.action,
+            "target_type": row.target_type,
+            "target_id": row.target_id,
+            "detail": row.detail,
+            "ip": row.ip,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        } for row in rows]
+        return {"total": total, "items": items}
+
+
+def distinct_audit_actions() -> list[str]:
+    with db_session() as session:
+        return list(session.scalars(select(AuditLog.action).distinct().order_by(AuditLog.action)).all())
+
+
+def prune_audit_logs(before: datetime) -> int:
+    with db_session() as session:
+        return session.query(AuditLog).filter(AuditLog.created_at < before).delete(synchronize_session=False)
 
 
 def get_user_by_username(username: str) -> Optional[dict]:

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowRight, Box, Clock, Location, PriceTag, SetUp, UserFilled } from '@element-plus/icons-vue'
+import { ArrowRight, Box, Clock, Document, Goods, Location, Monitor, PriceTag, SetUp, UserFilled } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
@@ -26,6 +26,11 @@ function open(path: string) {
           <span class="admin-module-copy"><strong>区域设置</strong><small>新增、复制、启停并管理各区域配置</small></span>
           <el-icon class="admin-module-arrow"><ArrowRight /></el-icon>
         </button>
+        <button class="admin-module-entry" type="button" @click="open('/admin/categories')">
+          <span class="admin-module-icon"><el-icon><Goods /></el-icon></span>
+          <span class="admin-module-copy"><strong>品类管理</strong><small>按品类配置套装/无套装等参数模版</small></span>
+          <el-icon class="admin-module-arrow"><ArrowRight /></el-icon>
+        </button>
         <button class="admin-module-entry" type="button" @click="open('/admin/settings')">
           <span class="admin-module-icon"><el-icon><SetUp /></el-icon></span>
           <span class="admin-module-copy"><strong>成本参数</strong><small>配置订单计算和批量报名活动的规则</small></span>
@@ -44,6 +49,21 @@ function open(path: string) {
         <button class="admin-module-entry" type="button" @click="open('/admin/tasks')">
           <span class="admin-module-icon"><el-icon><Clock /></el-icon></span>
           <span class="admin-module-copy"><strong>任务记录</strong><small>查看所有用户的订单和报名活动任务</small></span>
+          <el-icon class="admin-module-arrow"><ArrowRight /></el-icon>
+        </button>
+        <button class="admin-module-entry" type="button" @click="open('/admin/system')">
+          <span class="admin-module-icon"><el-icon><SetUp /></el-icon></span>
+          <span class="admin-module-copy"><strong>系统设置</strong><small>任务并发、队列限制与自动清理策略</small></span>
+          <el-icon class="admin-module-arrow"><ArrowRight /></el-icon>
+        </button>
+        <button class="admin-module-entry" type="button" @click="open('/admin/monitoring')">
+          <span class="admin-module-icon"><el-icon><Monitor /></el-icon></span>
+          <span class="admin-module-copy"><strong>系统监控</strong><small>磁盘、内存与后台任务队列状态</small></span>
+          <el-icon class="admin-module-arrow"><ArrowRight /></el-icon>
+        </button>
+        <button class="admin-module-entry" type="button" @click="open('/admin/audit-logs')">
+          <span class="admin-module-icon"><el-icon><Document /></el-icon></span>
+          <span class="admin-module-copy"><strong>审计日志</strong><small>登录、配置变更与关键操作记录</small></span>
           <el-icon class="admin-module-arrow"><ArrowRight /></el-icon>
         </button>
       </div>

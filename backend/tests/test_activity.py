@@ -62,6 +62,29 @@ def test_parse_custom_activity_skc_rules():
     assert parse_skc("SET-A-10", empty_set_marker) == ("set", 10.0)
 
 
+def test_no_set_category_rejects_set_skus_and_custom_set_rules():
+    """无套装品类：套装 SKC 不识别；自定义规则带套装关键字在提交时被拒。"""
+    import pytest
+
+    from app.services.activity import normalize_parse_config, settings_allowed_pieces
+    from app.services.categories import category_defaults
+
+    settings = category_defaults("no_set")
+    assert settings["activity"]["set_prices"] == {}
+    assert settings_allowed_pieces(settings) == frozenset()
+
+    config = normalize_parse_config(settings["activity"]["default_skc_rules"], allowed_pieces=settings_allowed_pieces(settings))
+    assert parse_skc("ABC-4件套", config, normalized=True) is None
+    assert parse_skc("y1-8piece", config, normalized=True) is None
+    assert parse_skc("MB131-A-5", config, normalized=True) == ("single", 5.0)
+
+    with pytest.raises(ValueError, match="无套装档位"):
+        normalize_parse_config({"set_keywords": ["件套"], "set_mappings": [], "single_mode": "last_segment", "single_delimiter": "-", "single_marker": "price"}, allowed_pieces=frozenset())
+
+    # 旧快照（无 set_prices 键）仍回落系统档位
+    assert settings_allowed_pieces({"activity": {"headcost": 5}}) == frozenset({4, 5, 6, 8, 10, 12})
+
+
 def test_activity_price_uses_admin_settings():
     settings = {"activity": {"headcost": 6, "operation_fee": 8, "set_prices": {"4": 50}, "single_tiers": [{"min_price": 0, "profit": 0}, {"min_price": 15, "profit": 4}]}}
     assert activity_base_price(("single", 15.0), settings) == 33.0

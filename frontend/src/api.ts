@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuRules, ActivityTaskItem, AppSettings, BulkActivityResult, HalfHeadcostItem, InventoryStatus, RegionProfile, RegionSummary, SkuResult, TaskItem, User } from './types'
+import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuRules, ActivityTaskItem, AppSettings, AuditLogPage, BulkActivityResult, CategoryPage, CategorySummary, CleanupResult, HalfHeadcostItem, InventoryStatus, MonitoringSnapshot, RegionProfile, RegionSummary, SkuResult, SystemSettings, SystemSettingsInfo, TaskItem, User } from './types'
 
 const http = axios.create({
   baseURL: '/api',
@@ -53,13 +53,19 @@ export async function getRegions() {
   return data.items
 }
 
-export async function getRegionSettings(code: string) {
-  const { data } = await http.get<RegionProfile>(`/regions/${encodeURIComponent(code)}/settings`)
+export async function getCategories(regionCode?: string) {
+  const { data } = await http.get<{ items: CategorySummary[] }>('/categories', { params: regionCode ? { region_code: regionCode } : undefined })
+  return data.items
+}
+
+export async function getRegionSettings(code: string, categoryCode?: string) {
+  const { data } = await http.get<RegionProfile>(`/regions/${encodeURIComponent(code)}/settings`, { params: { category_code: categoryCode } })
   return data
 }
 
-export async function createTask(form: FormData, regionCode: string) {
+export async function createTask(form: FormData, regionCode: string, categoryCode?: string) {
   form.append('region_code', regionCode)
+  if (categoryCode) form.append('category_code', categoryCode)
   const { data } = await uploadHttp.post<TaskItem>('/tasks', form)
   return data
 }
@@ -145,16 +151,17 @@ export async function deleteInventoryItem(sku: string) {
   return data
 }
 
-export async function getHalfHeadcost(query = '', page = 1, pageSize = 30) {
-  const { data } = await http.get<{ total: number; items: HalfHeadcostItem[] }>('/half-headcost', {
-    params: { query, page, page_size: pageSize },
+export async function getHalfHeadcost(query = '', page = 1, pageSize = 30, categoryCode?: string) {
+  const { data } = await http.get<{ total: number; items: HalfHeadcostItem[]; category?: { code: string; name: string } }>('/half-headcost', {
+    params: { query, page, page_size: pageSize, category_code: categoryCode },
   })
   return data
 }
 
-export async function importHalfHeadcost(file: File) {
+export async function importHalfHeadcost(file: File, categoryCode?: string) {
   const form = new FormData()
   form.append('file', file)
+  if (categoryCode) form.append('category_code', categoryCode)
   const { data } = await uploadHttp.post<{ message: string; incoming: number; added: number; total: number }>(
     '/half-headcost/import',
     form,
@@ -162,24 +169,26 @@ export async function importHalfHeadcost(file: File) {
   return data
 }
 
-export async function deleteHalfHeadcost(sku: string) {
-  await http.delete(`/half-headcost/${encodeURIComponent(sku)}`)
+export async function deleteHalfHeadcost(sku: string, categoryCode?: string) {
+  await http.delete(`/half-headcost/${encodeURIComponent(sku)}`, { params: { category_code: categoryCode } })
 }
 
-export async function previewActivitySkuRules(file: File, rules: ActivitySkuRules | undefined, regionCode: string, idProfitRules?: ActivityIdProfitRule[]) {
+export async function previewActivitySkuRules(file: File, rules: ActivitySkuRules | undefined, regionCode: string, idProfitRules?: ActivityIdProfitRule[], categoryCode?: string) {
   const form = new FormData()
   form.append('file', file)
   if (rules) form.append('skc_rules', JSON.stringify(rules))
   if (idProfitRules) form.append('id_profit_rules', JSON.stringify(idProfitRules))
   form.append('region_code', regionCode)
+  if (categoryCode) form.append('category_code', categoryCode)
   const { data } = await uploadHttp.post<ActivitySkuPreview>('/activities/preview', form)
   return data
 }
 
-export async function processBulkActivity(file: File, regionCode: string, upliftLimit?: number, rules?: ActivitySkuRules, idProfitRules?: ActivityIdProfitRule[]) {
+export async function processBulkActivity(file: File, regionCode: string, upliftLimit?: number, rules?: ActivitySkuRules, idProfitRules?: ActivityIdProfitRule[], categoryCode?: string) {
   const form = new FormData()
   form.append('file', file)
   form.append('region_code', regionCode)
+  if (categoryCode) form.append('category_code', categoryCode)
   if (upliftLimit !== undefined) form.append('uplift_limit', String(upliftLimit))
   if (rules) form.append('skc_rules', JSON.stringify(rules))
   if (idProfitRules) form.append('id_profit_rules', JSON.stringify(idProfitRules))
@@ -253,28 +262,47 @@ export async function deleteAdminUser(id: number) {
   await http.delete(`/admin/users/${id}`)
 }
 
-export async function getAdminSettings(regionCode?: string) {
-  const { data } = await http.get<AppSettings>('/admin/settings', { params: { region_code: regionCode } })
+export async function getAdminSettings(regionCode?: string, categoryCode?: string) {
+  const { data } = await http.get<AppSettings>('/admin/settings', { params: { region_code: regionCode, category_code: categoryCode } })
   return data
 }
 
-export async function getSettings(regionCode?: string) {
-  const { data } = await http.get<AppSettings>('/settings', { params: { region_code: regionCode } })
+export async function getSettings(regionCode?: string, categoryCode?: string) {
+  const { data } = await http.get<AppSettings>('/settings', { params: { region_code: regionCode, category_code: categoryCode } })
   return data
 }
 
-export async function saveAdminSettings(settings: AppSettings, regionCode?: string) {
-  const { data } = await http.put<AppSettings>('/admin/settings', settings, { params: { region_code: regionCode } })
+export async function saveAdminSettings(settings: AppSettings, regionCode?: string, categoryCode?: string) {
+  const { data } = await http.put<AppSettings>('/admin/settings', settings, { params: { region_code: regionCode, category_code: categoryCode } })
   return data
 }
 
-export async function getAdminActivitySkuRules() {
-  const { data } = await http.get<ActivitySkuRules>('/admin/activity-settings/skc-rules')
+export async function getAdminCategories() {
+  const { data } = await http.get<CategoryPage>('/admin/categories')
   return data
 }
 
-export async function saveAdminActivitySkuRules(rules: ActivitySkuRules) {
-  const { data } = await http.put<ActivitySkuRules>('/admin/activity-settings/skc-rules', rules)
+export async function createAdminCategory(payload: { code: string; name: string; template_type: string; set_types?: number[]; allowed_regions?: string[] | null; sort_order?: number }) {
+  const { data } = await http.post<CategorySummary>('/admin/categories', payload)
+  return data
+}
+
+export async function updateAdminCategory(code: string, payload: { name: string; template_type: string; set_types?: number[]; allowed_regions?: string[] | null; enabled?: boolean; is_default?: boolean; sort_order?: number }) {
+  const { data } = await http.put<CategorySummary>(`/admin/categories/${encodeURIComponent(code)}`, payload)
+  return data
+}
+
+export async function deleteAdminCategory(code: string) {
+  await http.delete(`/admin/categories/${encodeURIComponent(code)}`)
+}
+
+export async function getAdminActivitySkuRules(categoryCode?: string) {
+  const { data } = await http.get<ActivitySkuRules>('/admin/activity-settings/skc-rules', { params: { category_code: categoryCode } })
+  return data
+}
+
+export async function saveAdminActivitySkuRules(rules: ActivitySkuRules, categoryCode?: string) {
+  const { data } = await http.put<ActivitySkuRules>('/admin/activity-settings/skc-rules', rules, { params: { category_code: categoryCode } })
   return data
 }
 
@@ -283,8 +311,8 @@ export async function getAdminRegions() {
   return data.items
 }
 
-export async function getAdminRegion(code: string) {
-  const { data } = await http.get<RegionProfile>(`/admin/regions/${encodeURIComponent(code)}`)
+export async function getAdminRegion(code: string, categoryCode?: string) {
+  const { data } = await http.get<RegionProfile>(`/admin/regions/${encodeURIComponent(code)}`, { params: { category_code: categoryCode } })
   return data
 }
 
@@ -293,11 +321,41 @@ export async function createAdminRegion(payload: Pick<RegionSummary, 'code' | 'n
   return data
 }
 
-export async function saveAdminRegion(code: string, profile: RegionProfile) {
-  const { data } = await http.put<RegionProfile>(`/admin/regions/${encodeURIComponent(code)}`, profile)
+export async function saveAdminRegion(code: string, profile: RegionProfile, categoryCode?: string) {
+  const { data } = await http.put<RegionProfile>(`/admin/regions/${encodeURIComponent(code)}`, profile, { params: { category_code: categoryCode } })
   return data
 }
 
 export async function deleteAdminRegion(code: string) {
   await http.delete(`/admin/regions/${encodeURIComponent(code)}`)
+}
+
+export async function getAdminSystemSettings() {
+  const { data } = await http.get<SystemSettingsInfo>('/admin/system-settings')
+  return data
+}
+
+export async function saveAdminSystemSettings(settings: SystemSettings) {
+  const { data } = await http.put<{ settings: SystemSettings; pools: SystemSettingsInfo['pools'] }>('/admin/system-settings', settings)
+  return data
+}
+
+export async function getAdminAuditLogs(params: { page: number; page_size: number; action?: string; keyword?: string }) {
+  const { data } = await http.get<AuditLogPage>('/admin/audit-logs', { params })
+  return data
+}
+
+export async function getAdminMonitoring() {
+  const { data } = await http.get<MonitoringSnapshot>('/admin/monitoring')
+  return data
+}
+
+export async function runAdminCleanup() {
+  const { data } = await http.post<CleanupResult>('/admin/maintenance/cleanup')
+  return data
+}
+
+export async function runAdminPurge() {
+  const { data } = await http.post<CleanupResult>('/admin/maintenance/purge')
+  return data
 }

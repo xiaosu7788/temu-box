@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import io
-import json
-import os
 import re
 import threading
-import time
 from pathlib import Path
 from typing import Dict, Union
 
 from openpyxl import load_workbook
 
-from app.config import HALF_HEADCOST_PATH, HALF_HEADCOST_SEED_PATH
+from app.config import HALF_HEADCOST_SEED_PATH
 from app.database import (
     delete_half_entry,
     load_half_entries,
@@ -56,51 +53,26 @@ def extract_sku_types(source: Union[Path, bytes, bytearray]) -> Dict[str, str]:
     return sku_types
 
 
-def _read() -> Dict[str, str]:
-    try:
-        with HALF_HEADCOST_PATH.open("r", encoding="utf-8") as handle:
-            data = json.load(handle)
-        values = data.get("sku_types", data) if isinstance(data, dict) else {}
-        return {str(key): str(value) for key, value in values.items()}
-    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError):
-        return {}
-
-
-def _write(values: Dict[str, str]) -> None:
-    HALF_HEADCOST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = HALF_HEADCOST_PATH.with_suffix(HALF_HEADCOST_PATH.suffix + ".tmp")
-    with temp_path.open("w", encoding="utf-8") as handle:
-        json.dump(
-            {
-                "sku_types": dict(sorted(values.items())),
-                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            },
-            handle,
-            ensure_ascii=False,
-            indent=2,
-        )
-    os.replace(temp_path, HALF_HEADCOST_PATH)
-
-
-def load_entries() -> Dict[str, str]:
+def load_entries(category_id: int) -> Dict[str, str]:
+    """读取品类的头程减半名单；默认品类为空且存在初始名单文件时自动种子。"""
     with _LOCK:
-        values = load_half_entries()
+        values = load_half_entries(category_id)
         if not values and HALF_HEADCOST_SEED_PATH.exists():
-            seeds = extract_sku_types(HALF_HEADCOST_SEED_PATH)
-            merge_half_entries(seeds)
-            values = load_half_entries()
-            _write(values)
+            from app.services.categories import default_category_id
+
+            if category_id == default_category_id():
+                seeds = extract_sku_types(HALF_HEADCOST_SEED_PATH)
+                merge_half_entries(category_id, seeds)
+                values = load_half_entries(category_id)
         return values
 
 
-def merge_upload(source: Union[Path, bytes, bytearray]) -> dict:
+def merge_upload(source: Union[Path, bytes, bytearray], category_id: int) -> dict:
     incoming = extract_sku_types(source)
     if not incoming:
         raise ValueError("上传表格中未识别到 MB131- 开头的 SKU")
     with _LOCK:
-        added, total = merge_half_entries(incoming)
-        values = load_half_entries()
-        _write(values)
+        added, total = merge_half_entries(category_id, incoming)
     return {
         "incoming": len(incoming),
         "added": added,
@@ -108,9 +80,6 @@ def merge_upload(source: Union[Path, bytes, bytearray]) -> dict:
     }
 
 
-def delete_entry(sku: str) -> bool:
+def delete_entry(sku: str, category_id: int) -> bool:
     with _LOCK:
-        existed = delete_half_entry(sku)
-        if existed:
-            _write(load_half_entries())
-        return existed
+        return delete_half_entry(category_id, sku)

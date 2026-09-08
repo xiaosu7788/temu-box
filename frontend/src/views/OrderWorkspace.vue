@@ -6,7 +6,7 @@ import { createTask, downloadUrl, getTask } from '../api'
 import { notifyError } from '../feedback'
 import type { TaskItem } from '../types'
 import CostRules from '../components/CostRules.vue'
-import { selectedRegionCode as regionCode } from '../regionState'
+import { selectedCategoryCode as categoryCode, selectedRegionCode as regionCode } from '../regionState'
 
 const salesFiles = ref<UploadUserFile[]>([])
 const deliveryFiles = ref<UploadUserFile[]>([])
@@ -38,7 +38,7 @@ async function submit() {
   form.append('sales', sales)
   form.append('delivery', delivery)
   try {
-    task.value = await createTask(form, regionCode.value)
+    task.value = await createTask(form, regionCode.value, categoryCode.value)
     startPolling()
   } catch (error) {
     notifyError(error)
@@ -76,7 +76,7 @@ onBeforeUnmount(() => pollTimer && window.clearInterval(pollTimer))
 </script>
 
 <template>
-  <CostRules mode="order" :region-code="regionCode" />
+  <CostRules mode="order" :region-code="regionCode" :category-code="categoryCode" />
 
   <section class="section-band">
     <div class="section-heading">
@@ -129,7 +129,7 @@ onBeforeUnmount(() => pollTimer && window.clearInterval(pollTimer))
     <div class="section-heading">
       <div>
         <h2>任务进度</h2>
-        <p><el-tag size="small" effect="plain">{{ task.region_name }}</el-tag> <span class="mono">{{ task.id }}</span></p>
+        <p><el-tag size="small" effect="plain">{{ task.region_name }}</el-tag> <el-tag v-if="task.category_name" size="small" effect="plain" type="info">{{ task.category_name }}</el-tag> <span class="mono">{{ task.id }}</span></p>
       </div>
       <el-tag :type="task.status === 'completed' ? 'success' : task.status === 'failed' ? 'danger' : 'primary'">
         {{ task.message }}

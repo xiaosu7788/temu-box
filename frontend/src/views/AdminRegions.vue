@@ -25,7 +25,7 @@ async function updateMeta(region: RegionSummary, values: Partial<RegionSummary>)
   savingCode.value = region.code
   try {
     const profile = await getAdminRegion(region.code)
-    await saveAdminRegion(region.code, { ...profile, ...values })
+    await saveAdminRegion(region.code, { ...profile, ...values }, profile.category.code)
     notifySuccess('区域设置已保存')
     await load()
   } catch (error) { notifyError(error) } finally { savingCode.value = '' }
@@ -58,7 +58,7 @@ async function saveEdit() {
       name: editForm.name.trim(),
       currency: editForm.currency.trim().toUpperCase(),
       sort_order: editForm.sort_order,
-    })
+    }, editingProfile.value.category.code)
     editVisible.value = false
     notifySuccess('区域信息已保存')
     await load()

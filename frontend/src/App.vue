@@ -15,7 +15,8 @@ import { getMe, getStatus, logout } from './api'
 import type { User } from './types'
 import AuthView from './views/AuthView.vue'
 import RegionPicker from './components/RegionPicker.vue'
-import { selectedRegionCode } from './regionState'
+import CategoryPicker from './components/CategoryPicker.vue'
+import { selectedCategoryCode, selectedRegionCode } from './regionState'
 
 const route = useRoute()
 const router = useRouter()
@@ -119,6 +120,7 @@ onMounted(bootstrap)
             <p>Temu-Box</p>
           </div>
           <RegionPicker v-if="showRegionPicker" v-model="selectedRegionCode" compact />
+          <CategoryPicker v-if="showRegionPicker" v-model="selectedCategoryCode" compact filter-by-region />
         </template>
         <el-tag v-if="user.role === 'admin' && !inventoryPage" class="role-tag" type="warning">管理员</el-tag>
       </header>

@@ -7,16 +7,18 @@ import shutil
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, Optional
 
-from app.config import TASK_HISTORY_LIMIT, TASK_WORKERS, TASKS_DIR
+from app.config import TASK_HISTORY_LIMIT, TASKS_DIR
 from app.database import delete_task_record, load_task_records, save_task_record
+from app.services import system
+from app.services.categories import default_category_id
 from app.services.regions import region_snapshot
 from app.services.half_headcost import load_entries, merge_upload
 from app.services.inventory import load_price_catalog
 from app.services.orders import build_delivery_sku_map, generate_summary
+from app.services.taskpool import QueueFullError, TaskPool
 
 
 logger = logging.getLogger("temubox.tasks")
@@ -30,8 +32,18 @@ class TaskManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._tasks: Dict[str, dict] = {}
-        self._executor = ThreadPoolExecutor(max_workers=TASK_WORKERS, thread_name_prefix="sales-task")
+        settings = system.get()
+        self._pool = TaskPool("sales-task", settings["task_workers"], settings["task_queue_limit"])
         self._load_existing()
+
+    def apply_pool_settings(self, settings: dict) -> None:
+        self._pool.apply(settings["task_workers"], settings["task_queue_limit"])
+
+    def pool_stats(self) -> dict:
+        return self._pool.stats()
+
+    def queue_full(self) -> bool:
+        return self._pool.full()
 
     def _load_existing(self) -> None:
         TASKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -87,6 +99,8 @@ class TaskManager:
             "result_file": None,
             "region_code": snapshot["region"]["code"],
             "region_name": snapshot["region"]["name"],
+            "category_code": snapshot.get("category", {}).get("code", ""),
+            "category_name": snapshot.get("category", {}).get("name", ""),
             "config_version": snapshot["versions"]["order"],
             "config_snapshot": snapshot,
         }
@@ -101,7 +115,10 @@ class TaskManager:
 
     def queue(self, task_id: str) -> None:
         self._update(task_id, status="queued", progress=5, message="任务已进入处理队列")
-        self._executor.submit(self._run, task_id)
+        try:
+            self._pool.submit(lambda: self._run(task_id))
+        except QueueFullError as exc:
+            self._update(task_id, status="failed", progress=100, finished_at=now_text(), message=f"任务提交失败：{exc}")
 
     def _update(self, task_id: str, **values) -> dict:
         with self._lock:
@@ -127,16 +144,19 @@ class TaskManager:
             self._log(task_id, "正在加载库存数据", 15)
             catalog = load_price_catalog(log=lambda message: self._log(task_id, message, 35))
             task = self._tasks[task_id]
+            snapshot = task.get("config_snapshot", {})
+            category = snapshot.get("category", {})
+            category_id = category.get("id") or default_category_id()
             half_path = self.file_path(task_id, "half_headcost")
             if task["files"].get("half_headcost") and half_path.exists():
-                result = merge_upload(half_path)
+                result = merge_upload(half_path, category_id)
                 self._log(
                     task_id,
                     f"头程减半名单已合并：新增 {result['added']} 个，当前 {result['total']} 个",
                     45,
                 )
-            half_entries = load_entries()
-            settings = task.get("config_snapshot", {}).get("settings") or region_snapshot(task.get("region_code"))["settings"]
+            half_entries = load_entries(category_id)
+            settings = snapshot.get("settings") or region_snapshot(task.get("region_code"), task.get("category_code"))["settings"]
             self._log(task_id, "正在解析派送订单", 55)
             po_map = build_delivery_sku_map(
                 self.file_path(task_id, "delivery"),
@@ -209,6 +229,11 @@ class TaskManager:
             shutil.rmtree(task_dir)
         return "deleted"
 
+    def drop(self, task_id: str) -> None:
+        """仅移除内存缓存（磁盘与数据库记录由清理服务负责）。"""
+        with self._lock:
+            self._tasks.pop(task_id, None)
+
     @staticmethod
     def public(task: dict) -> dict:
         return {
@@ -225,6 +250,8 @@ class TaskManager:
             "download_ready": bool(task.get("result_file") and task.get("status") == "completed"),
             "region_code": task.get("region_code", "US"),
             "region_name": task.get("region_name", "美国区"),
+            "category_code": task.get("category_code", ""),
+            "category_name": task.get("category_name", ""),
             "config_version": task.get("config_version", 1),
         }
 

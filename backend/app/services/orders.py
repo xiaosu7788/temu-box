@@ -44,7 +44,8 @@ def calc_order_cost(sku_items, half_headcost_skus=None, settings=None):
     for price, set_type, quantity, sku in sku_items:
         if price is None:
             return None
-        headcost = float(headcost_map.get(set_type, 5))
+        # 无套装型/自定义套装型品类只配置部分档位：未配置的档位统一按单品头程计算
+        headcost = float(headcost_map.get(set_type, headcost_map.get("单品", 5)))
         if sku in half_headcost_skus:
             headcost /= 2
         total += quantity * (price + headcost)

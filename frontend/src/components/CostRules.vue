@@ -4,7 +4,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { errorMessage, getSettings } from '../api'
 import type { AppSettings } from '../types'
 
-const props = defineProps<{ mode: 'order' | 'activity'; regionCode: string }>()
+const props = defineProps<{ mode: 'order' | 'activity'; regionCode: string; categoryCode?: string }>()
 const settings = ref<AppSettings | null>(null)
 const loading = ref(false)
 const loadError = ref('')
@@ -23,7 +23,7 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    settings.value = await getSettings(props.regionCode)
+    settings.value = await getSettings(props.regionCode, props.categoryCode)
   } catch (error) {
     loadError.value = errorMessage(error)
   } finally {
@@ -31,7 +31,7 @@ async function load() {
   }
 }
 
-watch(() => props.regionCode, (value) => { if (value) void load() })
+watch(() => [props.regionCode, props.categoryCode], ([region, category]) => { if (region) void load() })
 onMounted(() => { if (props.regionCode) void load() })
 </script>
 
@@ -90,7 +90,7 @@ onMounted(() => { if (props.regionCode) void load() })
             <div><dt>默认浮动上限</dt><dd>{{ money(settings.activity.uplift_limit) }}</dd></div>
           </dl>
         </div>
-        <div class="rule-group">
+        <div v-if="activitySetPrices.length" class="rule-group">
           <h3>多件套活动价</h3>
           <dl class="rule-values rule-values--sets">
             <div v-for="([pieces, value]) in activitySetPrices" :key="pieces"><dt>{{ pieces }}件套</dt><dd>{{ money(value) }}</dd></div>

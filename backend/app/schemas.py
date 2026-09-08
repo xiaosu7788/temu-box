@@ -81,6 +81,16 @@ class SettingsPayload(BaseModel):
     order: Dict[str, object]
     activity: Dict[str, object]
 
+
+class SystemSettingsPayload(BaseModel):
+    task_workers: int = Field(ge=1, le=16)
+    task_queue_limit: int = Field(ge=1, le=1000)
+    activity_workers: int = Field(ge=1, le=16)
+    activity_queue_limit: int = Field(ge=1, le=1000)
+    cleanup_enabled: bool = True
+    cleanup_retention_days: int = Field(ge=1, le=3650)
+    audit_retention_days: int = Field(ge=7, le=3650)
+
 class RegionCreateRequest(BaseModel):
     code: str = Field(min_length=2, max_length=16)
     name: str = Field(min_length=1, max_length=80)
@@ -98,3 +108,22 @@ class RegionUpdateRequest(BaseModel):
     order_strategy: str = "standard_order_v1"
     activity_strategy: str = "standard_activity_v1"
     settings: SettingsPayload
+
+
+class CategoryCreateRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=16)
+    name: str = Field(min_length=1, max_length=80)
+    template_type: str = Field(default="set_based", min_length=1, max_length=20)
+    set_types: List[int] = Field(default_factory=list, max_length=12)
+    allowed_regions: Optional[List[str]] = None
+    sort_order: int = Field(default=100, ge=-10000, le=10000)
+
+
+class CategoryUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    template_type: str = Field(min_length=1, max_length=20)
+    set_types: List[int] = Field(default_factory=list, max_length=12)
+    allowed_regions: Optional[List[str]] = None
+    enabled: bool = True
+    is_default: bool = False
+    sort_order: int = Field(default=100, ge=-10000, le=10000)

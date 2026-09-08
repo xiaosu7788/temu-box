@@ -33,6 +33,8 @@ export interface TaskItem {
   download_ready: boolean
   region_code: string
   region_name: string
+  category_code: string
+  category_name: string
   config_version: number
 }
 
@@ -80,6 +82,7 @@ export interface ActivitySkuRules {
   single_mode: ActivitySingleParseMode
   single_delimiter: string
   single_marker: string
+  allowed_pieces?: number[]
 }
 
 export type ActivityIdType = 'SPU' | 'SKC' | 'SKU'
@@ -143,6 +146,8 @@ export interface ActivityTaskItem {
   download_ready: boolean
   region_code: string
   region_name: string
+  category_code: string
+  category_name: string
   config_version: number
 }
 
@@ -185,10 +190,126 @@ export interface RegionSummary {
   sort_order: number
 }
 
+export type CategoryTemplateType = 'set_based' | 'no_set' | 'custom_set'
+
+export interface CategoryBrief {
+  id: number
+  code: string
+  name: string
+  template_type: CategoryTemplateType
+  template_label: string
+  set_types: number[]
+}
+
+export interface CategorySummary extends CategoryBrief {
+  // null = 全部区域开放；数组 = 开放的区域代码列表
+  allowed_regions: string[] | null
+  enabled: boolean
+  is_default: boolean
+  sort_order: number
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface TemplateTypeInfo {
+  label: string
+  description: string
+  customizable: boolean
+}
+
+export interface CategoryPage {
+  items: CategorySummary[]
+  template_types: Record<CategoryTemplateType, TemplateTypeInfo>
+}
+
 export interface RegionProfile extends RegionSummary {
   order_strategy: string
   activity_strategy: string
   order_version: number
   activity_version: number
+  category: CategoryBrief
   settings: AppSettings
+}
+
+export interface SystemSettings {
+  task_workers: number
+  task_queue_limit: number
+  activity_workers: number
+  activity_queue_limit: number
+  cleanup_enabled: boolean
+  cleanup_retention_days: number
+  audit_retention_days: number
+}
+
+export interface TaskPoolStats {
+  workers: number
+  queue_limit: number
+  queued: number
+  active: number
+}
+
+export interface SystemSettingsInfo {
+  settings: SystemSettings
+  pools: { orders: TaskPoolStats; activities: TaskPoolStats }
+  cleanup: {
+    interval_seconds: number
+    last_run_at: string | null
+    last_result: CleanupResult | null
+  }
+}
+
+export interface CleanupResult {
+  skipped?: boolean
+  reason?: string
+  removed_task_dirs: number
+  removed_activity_dirs: number
+  pruned_audit_logs: number
+  retention_days: number
+}
+
+export interface AuditLogItem {
+  id: number
+  actor_id: number | null
+  actor_username: string
+  action: string
+  target_type: string
+  target_id: string
+  detail: string
+  ip: string
+  created_at: string
+}
+
+export interface AuditLogPage {
+  total: number
+  items: AuditLogItem[]
+  actions: string[]
+}
+
+export interface MonitoringSnapshot {
+  disk: {
+    path: string
+    total: number
+    used: number
+    free: number
+    percent: number
+  }
+  memory: {
+    available: boolean
+    total?: number
+    used?: number
+    free?: number
+    percent?: number
+    process_rss?: number
+  }
+  task_pools: { orders: TaskPoolStats; activities: TaskPoolStats }
+  task_counts: { orders: Record<string, number>; activities: Record<string, number> }
+  storage: {
+    tasks_dir: string
+    tasks_bytes: number
+    tasks_size: string
+    activities_dir: string
+    activities_bytes: number
+    activities_size: string
+  }
+  database: { status: string }
 }

@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, Delete, Plus, Refresh, Select } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
-import { errorMessage, getAdminRegions, getAdminSettings, saveAdminSettings } from '../api'
+import { errorMessage, getAdminCategories, getAdminRegions, getAdminSettings, saveAdminSettings } from '../api'
 import { notifyError, notifySuccess } from '../feedback'
-import type { ActivityIdType, AppSettings, RegionSummary } from '../types'
+import type { ActivityIdType, AppSettings, CategorySummary, RegionSummary } from '../types'
 
 const router = useRouter()
 const route = useRoute()
@@ -14,7 +14,9 @@ const saving = ref(false)
 const loaded = ref(false)
 const loadError = ref('')
 const regions = ref<RegionSummary[]>([])
+const categories = ref<CategorySummary[]>([])
 const regionCode = ref('')
+const categoryCode = ref('')
 const settings = reactive<AppSettings>({
   order: {
     headcost: { '单品': 5, '4件套': 5, '5件套': 5, '6件套': 5, '8件套': 10, '10件套': 10, '12件套': 15 },
@@ -39,8 +41,9 @@ const settings = reactive<AppSettings>({
     },
   },
 })
-const orderTypes = ['单品', '4件套', '5件套', '6件套', '8件套', '10件套', '12件套']
-const setTypes = ['4', '5', '6', '8', '10', '12']
+const orderTypes = computed(() => Object.keys(settings.order.headcost))
+const setTypes = computed(() => Object.keys(settings.activity.set_prices).sort((left, right) => Number(left) - Number(right)))
+const currentCategory = computed(() => categories.value.find((item) => item.code === categoryCode.value))
 const idRuleTypes: ActivityIdType[] = ['SPU', 'SKC', 'SKU']
 
 async function load() {
@@ -48,7 +51,7 @@ async function load() {
   loadError.value = ''
   loaded.value = false
   try {
-    Object.assign(settings, await getAdminSettings(regionCode.value))
+    Object.assign(settings, await getAdminSettings(regionCode.value, categoryCode.value))
     loaded.value = true
   } catch (error) {
     loadError.value = errorMessage(error)
@@ -60,7 +63,7 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    Object.assign(settings, await saveAdminSettings(settings, regionCode.value))
+    Object.assign(settings, await saveAdminSettings(settings, regionCode.value, categoryCode.value))
     notifySuccess('成本参数已保存')
   } catch (error) {
     notifyError(error)
@@ -87,10 +90,14 @@ function removeIdProfitRule(index: number) {
 
 async function bootstrap() {
   try {
-    regions.value = await getAdminRegions()
-    const requested = String(route.query.region || '')
-    regionCode.value = regions.value.some((item) => item.code === requested) ? requested : (regions.value.find((item) => item.is_default) || regions.value[0])?.code || ''
-    if (regionCode.value) await load()
+    const [regionItems, categoryPage] = await Promise.all([getAdminRegions(), getAdminCategories()])
+    regions.value = regionItems
+    categories.value = categoryPage.items
+    const requestedRegion = String(route.query.region || '')
+    regionCode.value = regions.value.some((item) => item.code === requestedRegion) ? requestedRegion : (regions.value.find((item) => item.is_default) || regions.value[0])?.code || ''
+    const requestedCategory = String(route.query.category || '')
+    categoryCode.value = categories.value.some((item) => item.code === requestedCategory) ? requestedCategory : (categories.value.find((item) => item.is_default) || categories.value[0])?.code || ''
+    if (regionCode.value && categoryCode.value) await load()
   } catch (error) {
     loadError.value = errorMessage(error)
   }
@@ -104,9 +111,18 @@ onMounted(bootstrap)
     <section class="section-band">
       <div class="section-heading">
         <div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>成本参数</h2><p>参数保存后，后续新任务立即生效</p></div></div>
-        <div class="admin-settings-actions"><el-select v-model="regionCode" class="admin-region-select" placeholder="选择区域" @change="load"><el-option v-for="region in regions" :key="region.code" :label="region.name" :value="region.code" /></el-select><el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button><el-button type="primary" :icon="Select" :loading="saving" :disabled="!loaded" @click="save">保存全部参数</el-button></div>
+        <div class="admin-settings-actions">
+          <el-select v-model="regionCode" class="admin-region-select" placeholder="选择区域" @change="load"><el-option v-for="region in regions" :key="region.code" :label="region.name" :value="region.code" /></el-select>
+          <el-select v-model="categoryCode" class="admin-region-select" placeholder="选择品类" @change="load">
+            <el-option v-for="category in categories" :key="category.code" :label="category.name" :value="category.code">
+              <span>{{ category.name }}</span><small style="float: right; color: var(--el-text-color-secondary); font-size: 12px;">{{ category.template_label }}</small>
+            </el-option>
+          </el-select>
+          <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button><el-button type="primary" :icon="Select" :loading="saving" :disabled="!loaded" @click="save">保存全部参数</el-button>
+        </div>
       </div>
 
+      <el-alert v-if="currentCategory && currentCategory.template_type !== 'set_based'" type="info" :closable="false" show-icon class="settings-template-alert" :title="`当前品类「${currentCategory.name}」为${currentCategory.template_label}，表单档位已按品类模版显示`" :description="currentCategory.template_type === 'no_set' ? '该品类仅单品档位：订单头程为统一单价，活动价只按单品底价计算。' : `自定义套装档位：${currentCategory.set_types.map((item) => `${item}件套`).join('、')}。`" />
       <el-skeleton v-if="!loaded && !loadError" :rows="8" animated />
       <div v-else-if="loadError" class="settings-load-error"><p>{{ loadError }}</p><el-button :icon="Refresh" :loading="loading" @click="load">重新加载</el-button></div>
       <el-tabs v-else type="border-card" class="settings-tabs">
@@ -119,7 +135,7 @@ onMounted(bootstrap)
         <el-tab-pane label="批量报名活动">
           <div class="settings-category-grid">
             <div class="settings-category"><h3>单品费用</h3><div class="settings-form-grid"><label>单品头程<el-input-number v-model="settings.activity.headcost" :min="0" :precision="2" controls-position="right" /></label><label>操作费<el-input-number v-model="settings.activity.operation_fee" :min="0" :precision="2" controls-position="right" /></label><label>默认浮动上限<el-input-number v-model="settings.activity.uplift_limit" :min="0" :max="1000" :precision="2" controls-position="right" /></label></div><p class="settings-note">用户未设置自定义浮动值时使用此默认值。</p></div>
-            <div class="settings-category"><h3>多件套活动价</h3><div class="settings-form-grid"><label v-for="type in setTypes" :key="type">{{ type }}件套活动价<el-input-number v-model="settings.activity.set_prices[type]" :min="0" :precision="2" controls-position="right" /></label></div></div>
+            <div v-if="setTypes.length" class="settings-category"><h3>多件套活动价</h3><div class="settings-form-grid"><label v-for="type in setTypes" :key="type">{{ type }}件套活动价<el-input-number v-model="settings.activity.set_prices[type]" :min="0" :precision="2" controls-position="right" /></label></div></div>
           </div>
           <div class="settings-category settings-category--wide"><h3>单品货值利润条件</h3><p class="settings-note">按货值从低到高设置条件，计算时使用不超过当前货值的最高条件。</p><div v-for="(tier, index) in settings.activity.single_tiers" :key="index" class="tier-row"><span>货值 ≥</span><el-input-number v-model="tier.min_price" :min="0" :precision="2" controls-position="right" /><span>利润 +</span><el-input-number v-model="tier.profit" :min="0" :precision="2" controls-position="right" /><el-button circle text type="danger" :icon="Delete" @click="removeTier(index)" /><span v-if="index === settings.activity.single_tiers.length - 1" class="tier-hint">按最高匹配条件计算</span></div><el-button class="add-tier" text type="primary" :icon="Plus" @click="addTier">新增条件</el-button></div>
           <div class="settings-category settings-category--wide"><h3>指定 ID 利润条件</h3><p class="settings-note">按 SPU ID &gt; SKC ID &gt; SKU ID 匹配，同一行只应用优先级最高的一条规则；正数加价，负数减价。</p><div v-for="(rule, index) in settings.activity.id_profit_rules" :key="index" class="tier-row admin-id-profit-row"><el-select v-model="rule.id_type" class="admin-id-type"><el-option v-for="type in idRuleTypes" :key="type" :label="`${type} ID`" :value="type" /></el-select><el-input v-model="rule.id" placeholder="输入商品 ID" maxlength="120" /><span>利润调整</span><el-input-number v-model="rule.profit" :min="-100000" :max="100000" :precision="2" controls-position="right" /><el-button circle text type="danger" :icon="Delete" @click="removeIdProfitRule(index)" /></div><el-empty v-if="!settings.activity.id_profit_rules.length" :image-size="42" description="暂无指定 ID 利润条件" /><el-button class="add-tier" text type="primary" :icon="Plus" @click="addIdProfitRule">新增 ID 条件</el-button></div>
@@ -128,3 +144,9 @@ onMounted(bootstrap)
     </section>
   </div>
 </template>
+
+<style scoped>
+.settings-template-alert {
+  margin-bottom: 16px;
+}
+</style>

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { Delete, Search, Upload } from '@element-plus/icons-vue'
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
 import { deleteHalfHeadcost, getHalfHeadcost, getMe, importHalfHeadcost } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { HalfHeadcostItem } from '../types'
+import CategoryPicker from '../components/CategoryPicker.vue'
+import { selectedCategoryCode } from '../regionState'
 
 const query = ref('')
 const items = ref<HalfHeadcostItem[]>([])
@@ -18,7 +20,7 @@ const isAdmin = ref(false)
 async function load() {
   loading.value = true
   try {
-    const data = await getHalfHeadcost(query.value, page.value, pageSize)
+    const data = await getHalfHeadcost(query.value, page.value, pageSize, selectedCategoryCode.value)
     items.value = data.items
     total.value = data.total
   } catch (error) {
@@ -42,7 +44,7 @@ async function importList() {
   if (!file) return
   loading.value = true
   try {
-    const result = await importHalfHeadcost(file)
+    const result = await importHalfHeadcost(file, selectedCategoryCode.value)
     notifySuccess(`提取 ${result.incoming} 个，新增 ${result.added} 个`)
     files.value = []
     await load()
@@ -56,13 +58,18 @@ async function importList() {
 async function remove(sku: string) {
   if (!await confirmAction(`从头程减半名单删除 ${sku}？`, '确认删除')) return
   try {
-    await deleteHalfHeadcost(sku)
+    await deleteHalfHeadcost(sku, selectedCategoryCode.value)
     notifySuccess('已删除')
     await load()
   } catch (error) {
     notifyError(error)
   }
 }
+
+watch(selectedCategoryCode, () => {
+  page.value = 1
+  load()
+})
 
 onMounted(async () => {
   try { isAdmin.value = (await getMe()).role === 'admin' } catch (error) { notifyError(error) }
@@ -74,6 +81,7 @@ onMounted(async () => {
   <div class="half-headcost-page">
     <section class="section-band compact-band half-headcost-toolbar">
     <div class="toolbar-row">
+      <CategoryPicker v-model="selectedCategoryCode" />
       <el-input v-model="query" clearable placeholder="搜索 SKU" :prefix-icon="Search" @keyup.enter="search" @clear="search" />
       <el-button type="primary" :icon="Search" @click="search">查询</el-button>
       <el-upload v-if="isAdmin" v-model:file-list="files" :auto-upload="false" :limit="1" accept=".xlsx,.xlsm" :show-file-list="false" @change="keepLatest">

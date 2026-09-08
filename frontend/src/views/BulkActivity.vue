@@ -6,7 +6,7 @@ import { activityDownloadUrl, deleteActivityTask, getActivityTask, getActivityTa
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { ActivityIdProfitRule, ActivityIdType, ActivitySetMapping, ActivitySingleParseMode, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem } from '../types'
 import CostRules from '../components/CostRules.vue'
-import { selectedRegionCode as regionCode } from '../regionState'
+import { selectedCategoryCode as categoryCode, selectedRegionCode as regionCode } from '../regionState'
 
 const files = ref<UploadUserFile[]>([])
 const tasks = ref<ActivityTaskItem[]>([])
@@ -42,7 +42,6 @@ const previewPageSize = 20
 const previewing = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | undefined
 const activityTaskStore = new Map<number, ActivityTaskItem[]>()
-const supportedSetPieces = [4, 5, 6, 8, 10, 12]
 const idRuleTypes: ActivityIdType[] = ['SPU', 'SKC', 'SKU']
 const defaultSkuRules = ref<ActivitySkuRules>({
   set_keywords: [],
@@ -52,6 +51,8 @@ const defaultSkuRules = ref<ActivitySkuRules>({
   single_marker: 'price',
 })
 const keywordOptions = computed(() => defaultSkuRules.value.set_keywords.filter(Boolean))
+const supportedSetPieces = computed(() => (defaultSkuRules.value.allowed_pieces || []).slice().sort((left, right) => left - right))
+const hasSetPieces = computed(() => supportedSetPieces.value.length > 0)
 
 function createDefaultSkuRules(): ActivitySkuRules {
   return {
@@ -91,8 +92,8 @@ const previewItems = computed(() => {
   const start = (previewPage.value - 1) * previewPageSize
   return skuPreview.value?.items.slice(start, start + previewPageSize) || []
 })
-const canPreview = computed(() => !!regionCode.value && files.value.length === 1 && !!files.value[0]?.raw && ((useCustomSkuRules.value && skuRulesConfigured.value) || idProfitRulesValid.value))
-const canSubmit = computed(() => !!regionCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || skuRulesConfigured.value) && (!useCustomIdProfitRules.value || idProfitRulesValid.value))
+const canPreview = computed(() => !!regionCode.value && !!categoryCode.value && files.value.length === 1 && !!files.value[0]?.raw && ((useCustomSkuRules.value && skuRulesConfigured.value) || idProfitRulesValid.value))
+const canSubmit = computed(() => !!regionCode.value && !!categoryCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || skuRulesConfigured.value) && (!useCustomIdProfitRules.value || idProfitRulesValid.value))
 const activeTasks = computed(() => tasks.value.filter((task) => task.status === 'queued' || task.status === 'running'))
 
 function fileChanged(_file: UploadFile, uploadFiles: UploadFiles) {
@@ -232,6 +233,7 @@ async function previewSkuRules() {
       useCustomSkuRules.value ? appliedSkuRules.value : undefined,
       regionCode.value,
       useCustomIdProfitRules.value ? idProfitRules.value : undefined,
+      categoryCode.value,
     )
     previewPage.value = 1
     previewDialogVisible.value = true
@@ -317,6 +319,7 @@ async function submit() {
       useCustomUplift.value ? customUpliftLimit.value : undefined,
       useCustomSkuRules.value ? appliedSkuRules.value : undefined,
       useCustomIdProfitRules.value ? idProfitRules.value : undefined,
+      categoryCode.value,
     )
     mergeTask(task)
     files.value = []
@@ -374,10 +377,10 @@ function formatTime(value?: string) {
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
-async function loadRegionDefaults(code: string) {
+async function loadRegionDefaults(code: string, category?: string) {
   if (!code) return
   try {
-    const settings = await getSettings(code)
+    const settings = await getSettings(code, category)
     defaultUpliftLimit.value = settings.activity.uplift_limit
     customUpliftLimit.value = settings.activity.uplift_limit
     defaultSkuRules.value = {
@@ -396,20 +399,20 @@ async function bootstrap() {
   try {
     const user = await getMe()
     currentUserId.value = user.id
-    await Promise.all([loadTasks(), loadRegionDefaults(regionCode.value)])
+    await Promise.all([loadTasks(), loadRegionDefaults(regionCode.value, categoryCode.value)])
   } catch (error) {
     notifyError(error)
   }
 }
 
-watch(regionCode, (code) => { void loadRegionDefaults(code) })
+watch([regionCode, categoryCode], ([code, category]) => { void loadRegionDefaults(code, category) })
 onMounted(bootstrap)
 onActivated(() => { void loadTasks() })
 onBeforeUnmount(stopPolling)
 </script>
 
 <template>
-  <CostRules mode="activity" :region-code="regionCode" />
+  <CostRules mode="activity" :region-code="regionCode" :category-code="categoryCode" />
 
   <section class="section-band activity-upload-panel">
     <div class="section-heading">
@@ -471,9 +474,10 @@ onBeforeUnmount(stopPolling)
         <el-button type="primary" plain @click="openSkuRulesDialog(false)">修改规则</el-button>
       </div>
       <dl class="activity-skc-summary-list">
-        <div><dt>套装标识</dt><dd>{{ appliedSetKeywords.length ? appliedSetKeywords.join('、') : '未设置' }}</dd></div>
-        <div><dt>固定映射</dt><dd>{{ appliedMappings.length ? appliedMappings.join('；') : '未设置' }}</dd></div>
+        <div v-if="hasSetPieces"><dt>套装标识</dt><dd>{{ appliedSetKeywords.length ? appliedSetKeywords.join('、') : '未设置' }}</dd></div>
+        <div v-if="hasSetPieces"><dt>固定映射</dt><dd>{{ appliedMappings.length ? appliedMappings.join('；') : '未设置' }}</dd></div>
         <div><dt>单品货值</dt><dd>{{ appliedSingleRule }}</dd></div>
+        <div v-if="!hasSetPieces"><dt>套装规则</dt><dd>当前品类无套装档位，仅按单品规则识别</dd></div>
       </dl>
     </div>
 
@@ -528,7 +532,7 @@ onBeforeUnmount(stopPolling)
       @closed="closeSkuRulesDialog"
     >
       <div class="activity-rule-grid">
-        <section class="activity-rule-section">
+        <section v-if="hasSetPieces" class="activity-rule-section">
           <div class="activity-rule-title">
             <div><strong>套装识别规则</strong><span>按固定映射、套装标识的顺序识别</span></div>
           </div>
@@ -539,7 +543,7 @@ onBeforeUnmount(stopPolling)
             </el-select>
           </label>
           <el-checkbox v-model="includeEmptySetKeyword">套装标识为空（从货号末尾提取件数）</el-checkbox>
-          <el-alert v-if="includeEmptySetKeyword" type="warning" :closable="false" show-icon title="空标识会优先把末尾为 4/5/6/8/10/12 的货号识别为套装" />
+          <el-alert v-if="includeEmptySetKeyword" type="warning" :closable="false" show-icon :title="`空标识会优先把末尾为 ${supportedSetPieces.join('/')} 的货号识别为套装`" />
 
           <div class="activity-mapping-heading">
             <span>固定映射</span>
@@ -555,6 +559,12 @@ onBeforeUnmount(stopPolling)
             </div>
           </div>
           <el-empty v-else :image-size="42" description="暂无固定映射" />
+        </section>
+        <section v-else class="activity-rule-section">
+          <div class="activity-rule-title">
+            <div><strong>套装识别规则</strong><span>当前品类无套装档位</span></div>
+          </div>
+          <el-alert type="info" :closable="false" show-icon title="该品类为无套装型，所有货号按单品规则提取货值" />
         </section>
 
         <section class="activity-rule-section">
@@ -658,6 +668,7 @@ onBeforeUnmount(stopPolling)
             <strong>{{ task.filename }}</strong>
             <el-tag :type="statusType(task.status)" size="small">{{ statusText(task.status) }}</el-tag>
             <el-tag size="small" effect="plain">{{ task.region_name }}</el-tag>
+            <el-tag v-if="task.category_name" size="small" effect="plain" type="info">{{ task.category_name }}</el-tag>
           </div>
           <p>{{ task.message }} · {{ formatTime(task.created_at) }}</p>
           <el-progress :percentage="task.progress" :status="task.status === 'failed' ? 'exception' : task.status === 'completed' ? 'success' : undefined" />

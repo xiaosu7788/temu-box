@@ -34,6 +34,7 @@ HALF_HEADCOST_SEED_PATH = Path(
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 512 * 1024 * 1024))
 TASK_WORKERS = max(1, int(os.environ.get("TASK_WORKERS", "2")))
 TASK_HISTORY_LIMIT = max(20, int(os.environ.get("TASK_HISTORY_LIMIT", "100")))
+CLEANUP_INTERVAL_SECONDS = max(600, int(os.environ.get("CLEANUP_INTERVAL_SECONDS", "21600")))
 AUTH_SECRET = os.environ.get("AUTH_SECRET", "change-this-secret-in-production")
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin").strip()
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "").strip()
