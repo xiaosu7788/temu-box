@@ -18,6 +18,34 @@ def _columns(inspector, table: str) -> set:
     return {column["name"] for column in inspector.get_columns(table)}
 
 
+def _release_index_names(inspector, table: str) -> None:
+    """删除表上的全部普通索引。
+
+    表改名后其索引仍占用原名称，直接用原名建新表索引会冲突
+    （SQLite 与 PostgreSQL 行为一致）。唯一约束在 PG 中也以索引
+    形式出现，但只能随表删除，这里跳过——新表使用不同的约束名，
+    不会冲突。
+    """
+    constraint_indexes = {uc.get("name") for uc in inspector.get_unique_constraints(table)}
+    for item in inspector.get_indexes(table):
+        name = item.get("name")
+        if name and name not in constraint_indexes:
+            op.drop_index(name, table_name=table)
+
+
+def _release_pk_name(inspector, table: str) -> None:
+    """PostgreSQL 的主键约束名（{table}_pkey）不随表改名而变化，
+    新建同名表时主键会重名冲突，先改名释放。SQLite 的主键索引为
+    内部命名（sqlite_autoindex_*），无此问题。
+    """
+    bind = op.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    pk_name = (inspector.get_pk_constraint(table) or {}).get("name")
+    if pk_name:
+        op.execute(f'ALTER TABLE {table} RENAME CONSTRAINT "{pk_name}" TO "{table}_legacy_pkey"')
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
@@ -46,6 +74,8 @@ def upgrade() -> None:
     category_id = bind.execute(sa.text("SELECT id FROM categories WHERE is_default LIMIT 1")).scalar()
 
     if "category_id" not in _columns(inspector, "region_configs"):
+        _release_index_names(inspector, "region_configs")
+        _release_pk_name(inspector, "region_configs")
         op.rename_table("region_configs", "region_configs_legacy")
         op.create_table(
             "region_configs",
@@ -71,6 +101,8 @@ def upgrade() -> None:
         bind.execute(sa.text("UPDATE region_configs SET category_id = :cid WHERE category_id IS NULL"), {"cid": category_id})
 
     if "category_id" not in _columns(inspector, "half_headcost_skus"):
+        _release_index_names(inspector, "half_headcost_skus")
+        _release_pk_name(inspector, "half_headcost_skus")
         op.rename_table("half_headcost_skus", "half_headcost_skus_legacy")
         op.create_table(
             "half_headcost_skus",
@@ -101,6 +133,8 @@ def downgrade() -> None:
     if "category_code" in activity_columns:
         op.drop_column("activity_jobs", "category_code")
     if "category_id" in _columns(inspector, "half_headcost_skus"):
+        _release_index_names(inspector, "half_headcost_skus")
+        _release_pk_name(inspector, "half_headcost_skus")
         op.rename_table("half_headcost_skus", "half_headcost_skus_legacy")
         op.create_table(
             "half_headcost_skus",
@@ -114,6 +148,8 @@ def downgrade() -> None:
         ))
         op.drop_table("half_headcost_skus_legacy")
     if "category_id" in _columns(inspector, "region_configs"):
+        _release_index_names(inspector, "region_configs")
+        _release_pk_name(inspector, "region_configs")
         op.rename_table("region_configs", "region_configs_legacy")
         op.create_table(
             "region_configs",
