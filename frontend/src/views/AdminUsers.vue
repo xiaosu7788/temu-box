@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ArrowLeft, CloseBold, Delete, EditPen, Refresh, Select } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
+import { CloseBold, Delete, EditPen, Refresh, Select } from '@element-plus/icons-vue'
 import { deleteAdminUser, getAdminUsers, updateAdminUser, updateUserStatus } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { User } from '../types'
 
-const router = useRouter()
 const users = ref<User[]>([])
 const loading = ref(false)
 const editing = ref<User | null>(null)
@@ -86,7 +84,7 @@ onMounted(load)
 <template>
   <section class="section-band admin-subpage">
     <div class="section-heading">
-      <div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>用户管理</h2><p>审核并管理普通用户的登录账号</p></div></div>
+      <div class="subpage-title"><div><h2>用户管理</h2><p>审核并管理普通用户的登录账号</p></div></div>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </div>
     <el-table v-loading="loading" :data="users" stripe>

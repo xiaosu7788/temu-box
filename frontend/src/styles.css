@@ -41,6 +41,11 @@ button, input, textarea { font: inherit; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #e5484d; }
 .status-dot.online { background: #30a46c; }
 
+/* 后台管理独立布局（AdminLayout） */
+.admin-nav-list { overflow-y: auto; scrollbar-width: thin; }
+.admin-nav-list .nav-item { height: 40px; }
+.admin-back { width: 100%; margin-bottom: 8px; border-top: 1px solid #303a48; border-radius: 0; }
+
 .workspace { min-height: 100vh; margin-left: var(--sidebar-width); }
 .topbar { height: 76px; padding: 0 34px; display: flex; align-items: center; gap: 12px; background: white; border-bottom: 1px solid var(--border); }
 .topbar h1 { margin: 0; font-size: 20px; line-height: 1.25; letter-spacing: 0; }

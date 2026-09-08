@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ArrowLeft, Delete, Plus, Refresh, Select } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
+import { Delete, Plus, Refresh, Select } from '@element-plus/icons-vue'
 import { errorMessage, getAdminActivitySkuRules, getAdminCategories, saveAdminActivitySkuRules } from '../api'
 import { notifyError, notifySuccess } from '../feedback'
 import type { ActivitySetMapping, ActivitySingleParseMode, ActivitySkuRules, CategorySummary } from '../types'
 
-const router = useRouter()
 const loading = ref(false)
 const saving = ref(false)
 const loaded = ref(false)
@@ -108,7 +106,6 @@ onMounted(bootstrap)
     <section class="section-band">
       <div class="section-heading">
         <div class="subpage-title">
-          <el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button>
           <div><h2>批量报活动设置</h2><p>配置用户未启用自定义格式时使用的默认SKC识别规则</p></div>
         </div>
         <div class="admin-settings-actions">

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ArrowLeft, Delete, Edit, Goods, Plus, Refresh } from '@element-plus/icons-vue'
+import { Delete, Edit, Goods, Plus, Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { createAdminCategory, deleteAdminCategory, getAdminCategories, getAdminRegions, updateAdminCategory } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
@@ -187,7 +187,7 @@ onMounted(load)
   <div class="admin-page admin-categories-page">
     <section class="section-band">
       <div class="section-heading">
-        <div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>品类管理</h2><p>按品类配置不同的成本参数模版，参数在「成本参数」页按品类维护</p></div></div>
+        <div class="subpage-title"><div><h2>品类管理</h2><p>按品类配置不同的成本参数模版，参数在「成本参数」页按品类维护</p></div></div>
         <div class="admin-settings-actions"><el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button><el-button type="primary" :icon="Plus" @click="openCreate">新增品类</el-button></div>
       </div>
 

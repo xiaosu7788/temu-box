@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ArrowLeft, Brush, Delete, Refresh, Setting } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
+import { Brush, Delete, Refresh, Setting } from '@element-plus/icons-vue'
 import { getAdminSystemSettings, runAdminCleanup, runAdminPurge, saveAdminSystemSettings } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { CleanupResult, SystemSettings, TaskPoolStats } from '../types'
 
-const router = useRouter()
 const loading = ref(false)
 const saving = ref(false)
 const cleaning = ref(false)
@@ -95,7 +93,7 @@ onMounted(load)
   <div class="admin-page admin-system-page">
     <section class="section-band">
       <div class="section-heading">
-        <div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>系统设置</h2><p>后台任务并发、队列限制与自动清理策略</p></div></div>
+        <div class="subpage-title"><div><h2>系统设置</h2><p>后台任务并发、队列限制与自动清理策略</p></div></div>
         <div class="toolbar-row">
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <el-button :icon="Brush" :loading="cleaning" @click="cleanupNow">立即清理</el-button>

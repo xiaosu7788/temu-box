@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ArrowLeft, Delete, Edit, Plus, Refresh, Search, Upload } from '@element-plus/icons-vue'
+import { Delete, Edit, Plus, Refresh, Search, Upload } from '@element-plus/icons-vue'
 import type { UploadFile } from 'element-plus'
-import { useRouter } from 'vue-router'
 import { createInventoryItem, deleteInventoryItem, getAdminInventory, getAdminInventoryItems, rebuildInventory, updateInventoryItem, uploadInventory } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { InventoryStatus, SkuResult } from '../types'
 
-const router = useRouter()
 const status = ref<InventoryStatus | null>(null)
 const items = ref<SkuResult[]>([])
 const query = ref('')
@@ -184,7 +182,7 @@ onMounted(load)
     </Teleport>
 
     <section class="section-band admin-inventory-data-panel">
-      <div class="section-heading"><div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>库存明细</h2><p>共 {{ total }} 个 SKU，可单独添加、编辑或删除库存记录；重新上传 Excel 后以新表为准</p></div></div></div>
+      <div class="section-heading"><div class="subpage-title"><div><h2>库存明细</h2><p>共 {{ total }} 个 SKU，可单独添加、编辑或删除库存记录；重新上传 Excel 后以新表为准</p></div></div></div>
       <div class="toolbar-row inventory-search-row">
         <el-input v-model="query" clearable placeholder="输入 SKU 查询" :prefix-icon="Search" @keyup.enter="searchItems" @clear="clearSearch" />
         <el-button type="primary" :icon="Search" :loading="itemsLoading" @click="searchItems">查询</el-button>

@@ -16,6 +16,7 @@ import type { User } from './types'
 import AuthView from './views/AuthView.vue'
 import RegionPicker from './components/RegionPicker.vue'
 import CategoryPicker from './components/CategoryPicker.vue'
+import AdminLayout from './components/AdminLayout.vue'
 import { selectedCategoryCode, selectedRegionCode } from './regionState'
 
 const route = useRoute()
@@ -25,10 +26,11 @@ const mobileMenu = ref(false)
 const authLoading = ref(true)
 const user = ref<User | null>(null)
 const pageTitle = computed(() => String(route.meta.title || '工作台'))
-const fixedDataPage = computed(() => route.path === '/inventory' || route.path === '/admin/inventory')
+const fixedDataPage = computed(() => route.path === '/inventory')
 const showRegionPicker = computed(() => route.path === '/orders' || route.path === '/activities')
-const inventoryPage = computed(() => route.path === '/inventory' || route.path === '/admin/inventory')
-const adminInventoryPage = computed(() => route.path === '/admin/inventory')
+const inventoryPage = computed(() => route.path === '/inventory')
+// 后台管理是独立页面：/admin 路由下整体切换为 AdminLayout 外壳
+const isAdminRoute = computed(() => route.path.startsWith('/admin'))
 
 const menuItems = [
   { path: '/orders', label: '订单计算', icon: DataAnalysis },
@@ -73,6 +75,9 @@ onMounted(bootstrap)
 
 <template>
   <AuthView v-if="!authLoading && !user" @authenticated="authenticated" />
+  <AdminLayout v-else-if="user && isAdminRoute" :user="user" :online="online" @sign-out="signOut">
+    <router-view />
+  </AdminLayout>
   <div v-else-if="user" class="app-shell">
     <aside class="sidebar" :class="{ open: mobileMenu }">
       <div class="brand">
@@ -124,7 +129,7 @@ onMounted(bootstrap)
         </template>
         <el-tag v-if="user.role === 'admin' && !inventoryPage" class="role-tag" type="warning">管理员</el-tag>
       </header>
-      <main class="page-content" :class="{ 'page-content--fixed': fixedDataPage, 'page-content--inventory': inventoryPage, 'page-content--admin-inventory': adminInventoryPage }">
+      <main class="page-content" :class="{ 'page-content--fixed': fixedDataPage, 'page-content--inventory': inventoryPage }">
         <router-view />
       </main>
     </div>

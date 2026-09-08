@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowLeft, Delete, Plus, Refresh, Select } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
+import { Delete, Plus, Refresh, Select } from '@element-plus/icons-vue'
 import { errorMessage, getAdminCategories, getAdminRegions, getAdminSettings, saveAdminSettings } from '../api'
 import { notifyError, notifySuccess } from '../feedback'
 import type { ActivityIdType, AppSettings, CategorySummary, RegionSummary } from '../types'
 
-const router = useRouter()
 const route = useRoute()
 const loading = ref(false)
 const saving = ref(false)
@@ -110,7 +108,7 @@ onMounted(bootstrap)
   <div class="admin-page admin-settings-page">
     <section class="section-band">
       <div class="section-heading">
-        <div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>成本参数</h2><p>参数保存后，后续新任务立即生效</p></div></div>
+        <div class="subpage-title"><div><h2>成本参数</h2><p>参数保存后，后续新任务立即生效</p></div></div>
         <div class="admin-settings-actions">
           <el-select v-model="regionCode" class="admin-region-select" placeholder="选择区域" @change="load"><el-option v-for="region in regions" :key="region.code" :label="region.name" :value="region.code" /></el-select>
           <el-select v-model="categoryCode" class="admin-region-select" placeholder="选择品类" @change="load">

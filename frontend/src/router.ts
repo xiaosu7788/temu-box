@@ -4,7 +4,6 @@ const OrderWorkspace = () => import('./views/OrderWorkspace.vue')
 const InventoryManage = () => import('./views/InventoryManage.vue')
 const BulkActivity = () => import('./views/BulkActivity.vue')
 const TaskHistory = () => import('./views/TaskHistory.vue')
-const AdminHome = () => import('./views/AdminHome.vue')
 const AdminUsers = () => import('./views/AdminUsers.vue')
 const AdminRegions = () => import('./views/AdminRegions.vue')
 const AdminCategories = () => import('./views/AdminCategories.vue')
@@ -26,7 +25,7 @@ export const router = createRouter({
     { path: '/half-headcost', redirect: '/inventory?tab=half-headcost' },
     { path: '/activities', component: BulkActivity, meta: { title: '批量报名活动' } },
     { path: '/tasks', component: TaskHistory, meta: { title: '任务记录' } },
-    { path: '/admin', component: AdminHome, meta: { title: '后台管理' } },
+    { path: '/admin', redirect: '/admin/monitoring' },
     { path: '/admin/users', component: AdminUsers, meta: { title: '用户管理' } },
     { path: '/admin/regions', component: AdminRegions, meta: { title: '区域设置' } },
     { path: '/admin/categories', component: AdminCategories, meta: { title: '品类管理' } },

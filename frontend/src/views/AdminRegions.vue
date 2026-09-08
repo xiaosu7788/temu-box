@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ArrowLeft, Delete, Edit, Plus, Refresh } from '@element-plus/icons-vue'
+import { Delete, Edit, Plus, Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { createAdminRegion, deleteAdminRegion, getAdminRegion, getAdminRegions, saveAdminRegion } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
@@ -96,7 +96,7 @@ onMounted(load)
   <div class="admin-page admin-regions-page">
     <section class="section-band">
       <div class="section-heading">
-        <div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>区域设置</h2><p>维护不同区域的成本、活动价格和计算规则</p></div></div>
+        <div class="subpage-title"><div><h2>区域设置</h2><p>维护不同区域的成本、活动价格和计算规则</p></div></div>
         <div class="admin-settings-actions"><el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button><el-button type="primary" :icon="Plus" @click="createVisible = true">新增区域</el-button></div>
       </div>
       <el-table :data="regions" v-loading="loading" stripe>

@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ArrowLeft, Refresh, Search } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
+import { Refresh, Search } from '@element-plus/icons-vue'
 import { getAdminAuditLogs } from '../api'
 import { notifyError } from '../feedback'
 import type { AuditLogItem } from '../types'
 
-const router = useRouter()
 const loading = ref(false)
 const items = ref<AuditLogItem[]>([])
 const actions = ref<string[]>([])
@@ -90,7 +88,7 @@ onMounted(load)
   <div class="admin-page admin-audit-page">
     <section class="section-band">
       <div class="section-heading">
-        <div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>审计日志</h2><p>登录、配置变更与关键操作记录</p></div></div>
+        <div class="subpage-title"><div><h2>审计日志</h2><p>登录、配置变更与关键操作记录</p></div></div>
         <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
       </div>
 

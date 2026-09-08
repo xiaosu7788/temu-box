@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AdminLayout: typeof import('./src/components/AdminLayout.vue')['default']
     AnimatedNumber: typeof import('./src/components/AnimatedNumber.vue')['default']
     CategoryPicker: typeof import('./src/components/CategoryPicker.vue')['default']
     CostRules: typeof import('./src/components/CostRules.vue')['default']
@@ -18,7 +19,6 @@ declare module 'vue' {
     ElButton: typeof import('element-plus/es')['ElButton']
     ElCard: typeof import('element-plus/es')['ElCard']
     ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
-    ElCheckboxGroup: typeof import('element-plus/es')['ElCheckboxGroup']
     ElDescriptions: typeof import('element-plus/es')['ElDescriptions']
     ElDescriptionsItem: typeof import('element-plus/es')['ElDescriptionsItem']
     ElDialog: typeof import('element-plus/es')['ElDialog']

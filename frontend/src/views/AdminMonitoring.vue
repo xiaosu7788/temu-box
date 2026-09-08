@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ArrowLeft, QuestionFilled, Refresh } from '@element-plus/icons-vue'
+import { QuestionFilled, Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { getAdminMonitoring } from '../api'
 import { notifyError } from '../feedback'
@@ -106,7 +106,7 @@ onBeforeUnmount(() => {
   <div class="admin-page admin-monitoring-page">
     <section class="section-band">
       <div class="section-heading">
-        <div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>系统监控</h2><p>磁盘、内存与后台任务队列运行状态</p></div></div>
+        <div class="subpage-title"><div><h2>系统监控</h2><p>磁盘、内存与后台任务队列运行状态</p></div></div>
         <div class="toolbar-row">
           <el-checkbox v-model="autoRefresh" label="30秒自动刷新" />
           <span v-if="autoRefresh" class="countdown-hint">{{ countdown }}s 后刷新</span>

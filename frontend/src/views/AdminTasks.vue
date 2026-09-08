@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ArrowLeft, Delete, Download, Refresh } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
+import { Delete, Download, Refresh } from '@element-plus/icons-vue'
 import { adminActivityDownloadUrl, adminDownloadUrl, deleteAdminActivityTask, deleteAdminTask, getAdminActivityTasks, getAdminTasks } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { ActivityTaskItem, TaskItem } from '../types'
 
-const router = useRouter()
 const orderTasks = ref<TaskItem[]>([])
 const activityTasks = ref<ActivityTaskItem[]>([])
 const loading = ref(false)
@@ -72,7 +70,7 @@ onMounted(load)
   <div class="admin-page admin-tasks-page">
     <section class="section-band">
       <div class="section-heading">
-        <div class="subpage-title"><el-button text :icon="ArrowLeft" @click="router.push('/admin')">后台管理</el-button><div><h2>任务记录</h2><p>查看所有用户的订单计算和批量报名活动任务</p></div></div>
+        <div class="subpage-title"><div><h2>任务记录</h2><p>查看所有用户的订单计算和批量报名活动任务</p></div></div>
         <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
       </div>
       <el-tabs>
