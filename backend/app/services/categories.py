@@ -127,6 +127,23 @@ def _normalize_allowed_regions(value) -> Optional[list[str]]:
     return unique
 
 
+def _normalize_inventory_category(value) -> Optional[str]:
+    """校验品类绑定的库存类目：None/空 = 不绑定（默认用 A）；否则须为已知类目。"""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        key = value.strip().upper()
+        if not key:
+            return None
+        from app.services.inventory import EXTRACTION_PROFILES
+        from app.database import get_inventory_category_defs
+        known = set(EXTRACTION_PROFILES) | set(get_inventory_category_defs())
+        if key not in known:
+            raise ValueError(f"未知库存类目：{key}")
+        return key
+    raise ValueError("库存类目格式不正确")
+
+
 def _category_dict(row: Category) -> dict:
     template = TEMPLATE_TYPES.get(row.template_type, TEMPLATE_TYPES["set_based"])
     return {
@@ -137,6 +154,7 @@ def _category_dict(row: Category) -> dict:
         "template_label": template["label"],
         "set_types": _decode_set_types(row),
         "allowed_regions": _decode_allowed_regions(row),
+        "inventory_category": row.inventory_category,
         "enabled": row.enabled,
         "is_default": row.is_default,
         "sort_order": row.sort_order,
@@ -274,7 +292,7 @@ def create_category(payload: dict, updated_by: Optional[int] = None) -> dict:
     with SessionLocal.begin() as session:
         if session.scalar(select(Category).where(Category.code == code)):
             raise ValueError("品类代码已存在")
-        category = Category(code=code, name=name, template_type=template_type, set_types=json.dumps(set_types) if set_types else None, allowed_regions=json.dumps(allowed_regions) if allowed_regions else None, enabled=True, is_default=False, sort_order=int(payload.get("sort_order", 100)))
+        category = Category(code=code, name=name, template_type=template_type, set_types=json.dumps(set_types) if set_types else None, allowed_regions=json.dumps(allowed_regions) if allowed_regions else None, inventory_category=_normalize_inventory_category(payload.get("inventory_category")), enabled=True, is_default=False, sort_order=int(payload.get("sort_order", 100)))
         session.add(category)
         session.flush()
         result = _category_dict(category)
@@ -314,6 +332,7 @@ def update_category(code: str, payload: dict, updated_by: Optional[int] = None) 
         category.enabled = enabled
         category.is_default = make_default or category.is_default
         category.sort_order = int(payload.get("sort_order", category.sort_order))
+        category.inventory_category = _normalize_inventory_category(payload.get("inventory_category", category.inventory_category))
         category.updated_at = datetime.now(timezone.utc)
         result = _category_dict(category)
         # 品类首次创建时已种子配置；兼容历史数据缺失配置行的情况

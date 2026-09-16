@@ -8,6 +8,33 @@ export interface InventoryStatus {
   modified_at: string | null
 }
 
+export interface InventoryCategory {
+  key: string
+  label: string
+  mode?: string
+  code_pattern?: string | null
+  price_max?: number
+  enabled?: boolean
+  sort_order?: number
+}
+
+export interface InventoryDiffItem {
+  sku: string
+  old?: { price?: number; set_type?: string; source_sheet?: string; source_row?: number; source_column?: number }
+  new?: { price?: number; set_type?: string; source_sheet?: string; source_row?: number; source_column?: number }
+}
+export interface InventoryPreview {
+  uploaded_at: string
+  sku_count: number
+  inventory_category?: string
+  diff: {
+    changed: InventoryDiffItem[]
+    added: InventoryDiffItem[]
+    removed: InventoryDiffItem[]
+    unchanged: string[]
+  }
+}
+
 export interface TaskStats {
   total?: number
   matched?: number
@@ -204,6 +231,8 @@ export interface CategoryBrief {
 export interface CategorySummary extends CategoryBrief {
   // null = 全部区域开放；数组 = 开放的区域代码列表
   allowed_regions: string[] | null
+  // 绑定的库存类目（A/B...；null = 默认 A）
+  inventory_category?: string | null
   enabled: boolean
   is_default: boolean
   sort_order: number

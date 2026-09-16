@@ -7,18 +7,39 @@ from pydantic import BaseModel, Field
 
 class SkuQueryRequest(BaseModel):
     skus: List[str] = Field(default_factory=list, max_length=500)
+    inventory_category: Optional[str] = Field(default=None, max_length=16)
 
 
 class InventoryItemCreateRequest(BaseModel):
     sku: str = Field(min_length=1, max_length=255)
     price: Optional[float] = Field(default=None, ge=0, le=1000000)
     set_type: str = Field(default="单品", min_length=1, max_length=64)
+    inventory_category: Optional[str] = Field(default=None, max_length=16)
 
 
 class InventoryItemUpdateRequest(BaseModel):
     sku: str = Field(min_length=1, max_length=255)
     price: Optional[float] = Field(default=None, ge=0, le=1000000)
     set_type: str = Field(default="单品", min_length=1, max_length=64)
+    inventory_category: Optional[str] = Field(default=None, max_length=16)
+class InventoryApplyRequest(BaseModel):
+    keep_skus: List[str] = Field(default_factory=list)
+    skip_skus: List[str] = Field(default_factory=list)
+    inventory_category: Optional[str] = Field(default=None, max_length=16)
+
+class InventoryCategoryCreateRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=16)
+    label: str = Field(min_length=1, max_length=80)
+    code_pattern: Optional[str] = Field(default=None, max_length=255)
+    price_max: float = Field(default=100, gt=0, le=1000000)
+
+
+class InventoryCategoryUpdateRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    code_pattern: Optional[str] = Field(default=None, max_length=255)
+    price_max: float = Field(gt=0, le=1000000)
+    enabled: bool = True
+    sort_order: int = Field(default=100, ge=-10000, le=10000)
 
 class SkuResult(BaseModel):
     sku: str
@@ -47,6 +68,18 @@ class HalfHeadcostEntry(BaseModel):
     sku: str
     set_type: str
 
+
+class HalfHeadcostCreateRequest(BaseModel):
+    sku: str = Field(min_length=1, max_length=255)
+    set_type: str = Field(default="单品", min_length=1, max_length=64)
+    category_code: Optional[str] = Field(default=None, max_length=16)
+    inventory_category: Optional[str] = Field(default=None, max_length=16)
+
+
+class HalfHeadcostUpdateRequest(BaseModel):
+    set_type: str = Field(default="单品", min_length=1, max_length=64)
+    category_code: Optional[str] = Field(default=None, max_length=16)
+    inventory_category: Optional[str] = Field(default=None, max_length=16)
 
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=80)
@@ -116,6 +149,7 @@ class CategoryCreateRequest(BaseModel):
     template_type: str = Field(default="set_based", min_length=1, max_length=20)
     set_types: List[int] = Field(default_factory=list, max_length=12)
     allowed_regions: Optional[List[str]] = None
+    inventory_category: Optional[str] = Field(default=None, max_length=16)
     sort_order: int = Field(default=100, ge=-10000, le=10000)
 
 
@@ -126,4 +160,5 @@ class CategoryUpdateRequest(BaseModel):
     allowed_regions: Optional[List[str]] = None
     enabled: bool = True
     is_default: bool = False
+    inventory_category: Optional[str] = Field(default=None, max_length=16)
     sort_order: int = Field(default=100, ge=-10000, le=10000)

@@ -141,21 +141,26 @@ class TaskManager:
     def _run(self, task_id: str) -> None:
         try:
             self._update(task_id, status="running", started_at=now_text())
-            self._log(task_id, "正在加载库存数据", 15)
-            catalog = load_price_catalog(log=lambda message: self._log(task_id, message, 35))
+            task = self._tasks[task_id]
+            snapshot0 = task.get("config_snapshot", {})
+            category0 = snapshot0.get("category", {}) or {}
+            # 按品类绑定的库存类目取价目表（未绑定 = A）
+            bound = (category0 or {}).get("inventory_category") or "A"
+            self._log(task_id, f"正在加载库存数据（{bound}类目）", 15)
+            catalog = load_price_catalog(category=bound, log=lambda message: self._log(task_id, message, 35))
             task = self._tasks[task_id]
             snapshot = task.get("config_snapshot", {})
             category = snapshot.get("category", {})
             category_id = category.get("id") or default_category_id()
             half_path = self.file_path(task_id, "half_headcost")
             if task["files"].get("half_headcost") and half_path.exists():
-                result = merge_upload(half_path, category_id)
+                result = merge_upload(half_path, category_id, bound)
                 self._log(
                     task_id,
-                    f"头程减半名单已合并：新增 {result['added']} 个，当前 {result['total']} 个",
+                    f"头程减半名单已合并（{bound}类目）：新增 {result['added']} 个，当前 {result['total']} 个",
                     45,
                 )
-            half_entries = load_entries(category_id)
+            half_entries = load_entries(category_id, bound)
             settings = snapshot.get("settings") or region_snapshot(task.get("region_code"), task.get("category_code"))["settings"]
             self._log(task_id, "正在解析派送订单", 55)
             po_map = build_delivery_sku_map(

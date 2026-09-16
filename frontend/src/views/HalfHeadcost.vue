@@ -1,26 +1,26 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { Delete, Search, Upload } from '@element-plus/icons-vue'
-import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
-import { deleteHalfHeadcost, getHalfHeadcost, getMe, importHalfHeadcost } from '../api'
-import { confirmAction, notifyError, notifySuccess } from '../feedback'
-import type { HalfHeadcostItem } from '../types'
-import CategoryPicker from '../components/CategoryPicker.vue'
+import { Search } from '@element-plus/icons-vue'
+import { getCategories, getHalfHeadcost } from '../api'
+import { notifyError } from '../feedback'
+import type { CategorySummary, HalfHeadcostItem } from '../types'
 import { selectedCategoryCode } from '../regionState'
+
+// 库存类目由「品类管理」中的绑定关系推导，不再单独选择（页面上只保留一个品类选择器）
+const businessCategories = ref<CategorySummary[]>([])
+const inventoryCategory = ref('A')
 
 const query = ref('')
 const items = ref<HalfHeadcostItem[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 30
-const files = ref<UploadUserFile[]>([])
 const loading = ref(false)
-const isAdmin = ref(false)
 
 async function load() {
   loading.value = true
   try {
-    const data = await getHalfHeadcost(query.value, page.value, pageSize, selectedCategoryCode.value)
+    const data = await getHalfHeadcost(query.value, page.value, pageSize, selectedCategoryCode.value, inventoryCategory.value)
     items.value = data.items
     total.value = data.total
   } catch (error) {
@@ -32,64 +32,40 @@ async function load() {
 
 function search() {
   page.value = 1
-  load()
+  void load()
 }
 
-function keepLatest(_file: UploadFile, uploadFiles: UploadFiles) {
-  files.value = uploadFiles.slice(-1)
-}
-
-async function importList() {
-  const file = files.value[0]?.raw
-  if (!file) return
-  loading.value = true
+async function loadBusinessCategories() {
   try {
-    const result = await importHalfHeadcost(file, selectedCategoryCode.value)
-    notifySuccess(`提取 ${result.incoming} 个，新增 ${result.added} 个`)
-    files.value = []
-    await load()
-  } catch (error) {
-    notifyError(error)
-  } finally {
-    loading.value = false
+    businessCategories.value = await getCategories()
+    const selected = businessCategories.value.find((item) => item.code === selectedCategoryCode.value)
+    inventoryCategory.value = selected?.inventory_category || 'A'
+  } catch {
+    inventoryCategory.value = 'A'
   }
 }
 
-async function remove(sku: string) {
-  if (!await confirmAction(`从头程减半名单删除 ${sku}？`, '确认删除')) return
-  try {
-    await deleteHalfHeadcost(sku, selectedCategoryCode.value)
-    notifySuccess('已删除')
-    await load()
-  } catch (error) {
-    notifyError(error)
-  }
-}
-
-watch(selectedCategoryCode, () => {
+watch(selectedCategoryCode, async () => {
+  const selected = businessCategories.value.find((item) => item.code === selectedCategoryCode.value)
+  inventoryCategory.value = selected?.inventory_category || 'A'
   page.value = 1
-  load()
+  await load()
 })
 
 onMounted(async () => {
-  try { isAdmin.value = (await getMe()).role === 'admin' } catch (error) { notifyError(error) }
-  load()
+  await loadBusinessCategories()
+  void load()
 })
 </script>
 
 <template>
   <div class="half-headcost-page">
     <section class="section-band compact-band half-headcost-toolbar">
-    <div class="toolbar-row">
-      <CategoryPicker v-model="selectedCategoryCode" />
-      <el-input v-model="query" clearable placeholder="搜索 SKU" :prefix-icon="Search" @keyup.enter="search" @clear="search" />
-      <el-button type="primary" :icon="Search" @click="search">查询</el-button>
-      <el-upload v-if="isAdmin" v-model:file-list="files" :auto-upload="false" :limit="1" accept=".xlsx,.xlsm" :show-file-list="false" @change="keepLatest">
-        <el-button :icon="Upload">选择名单</el-button>
-      </el-upload>
-      <el-button v-if="isAdmin" type="success" :disabled="!files.length" :loading="loading" @click="importList">导入合并</el-button>
-      <span v-if="files[0]" class="selected-file">{{ files[0].name }}</span>
-    </div>
+      <div class="toolbar-row">
+        <el-input v-model="query" clearable placeholder="搜索 SKU" :prefix-icon="Search" @keyup.enter="search" @clear="search" />
+        <el-button type="primary" :icon="Search" @click="search">查询</el-button>
+        <span class="half-headcost-readonly-hint">名单由管理员在「后台管理 → 库存管理 → 头程减半名单」维护</span>
+      </div>
     </section>
 
     <section class="section-band half-headcost-content">
@@ -97,19 +73,34 @@ onMounted(async () => {
       <el-table v-loading="loading" :data="items" stripe>
         <el-table-column prop="sku" label="SKU" min-width="180" />
         <el-table-column prop="set_type" label="类型" width="130" />
-        <el-table-column label="操作" width="90" align="right">
-          <template #default="scope"><el-button v-if="isAdmin" type="danger" link :icon="Delete" @click="remove(scope.row.sku)">删除</el-button></template>
-        </el-table-column>
       </el-table>
-      <el-pagination
-        v-if="total > pageSize"
-        v-model:current-page="page"
-        class="pagination"
-        layout="prev, pager, next"
-        :page-size="pageSize"
-        :total="total"
-        @current-change="load"
-      />
+      <el-pagination v-if="total > pageSize" v-model:current-page="page" class="pagination" layout="prev, pager, next" :page-size="pageSize" :total="total" @current-change="load" />
     </section>
   </div>
 </template>
+
+<style scoped>
+.half-headcost-toolbar {
+  margin-bottom: 0;
+}
+
+.half-headcost-toolbar .toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.half-headcost-toolbar .toolbar-row .el-input {
+  width: min(340px, 100%);
+}
+
+.half-headcost-readonly-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.half-headcost-content {
+  padding-top: 8px;
+}
+</style>

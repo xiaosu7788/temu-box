@@ -17,6 +17,7 @@ from app.config import (
     ADMIN_USERNAME,
     CLEANUP_INTERVAL_SECONDS,
     COOKIE_SECURE,
+    INVENTORY_DIR,
     INVENTORY_PATH,
     MAX_UPLOAD_BYTES,
     SESSION_COOKIE_NAME,
@@ -37,19 +38,23 @@ from app.database import (
     update_user_credentials,
     update_user_status,
     count_half_entries,
+    create_inventory_category_def,
+    list_inventory_category_defs,
+    update_inventory_category_def,
+    delete_inventory_category_def,
     save_activity_skc_rules,
 )
-from app.schemas import ActivitySkuRulesPayload, AdminUserUpdateRequest, CategoryCreateRequest, CategoryUpdateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest, SystemSettingsPayload
+from app.schemas import ActivitySkuRulesPayload, AdminUserUpdateRequest, CategoryCreateRequest, CategoryUpdateRequest, HalfHeadcostCreateRequest, HalfHeadcostUpdateRequest, InventoryApplyRequest, InventoryCategoryCreateRequest, InventoryCategoryUpdateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest, SystemSettingsPayload
 from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
 from app.services import audit, system
 from app.services.categories import category_allowed_pieces, category_skc_rules, create_category, delete_category, get_category, list_categories, TEMPLATE_TYPES, update_category
 from app.services.cleanup import cleanup_scheduler, purge_all, run_once as run_cleanup_once
-from app.services.half_headcost import delete_entry, load_entries, merge_upload
+from app.services.half_headcost import delete_entry, entry_exists, load_entries, merge_upload, save_entry
 from app.services.activity import normalize_id_profit_rules, normalize_parse_config, preview_activity_workbook
 from app.services.activity_tasks import activity_task_manager
-from app.services.inventory import invalidate_cache, inventory_status, load_price_catalog
 from app.services.monitoring import snapshot as monitoring_snapshot
 from app.services.regions import create_region, delete_region, get_region_profile, list_regions, region_snapshot, update_region
+from app.services.inventory import all_pending_uploads, apply_pending_upload, discard_pending_upload, filter_catalog_items, inventory_categories, inventory_path_for, invalidate_cache, inventory_status, load_price_catalog, pending_upload, resolve_profile, stage_pending_upload
 from app.services.taskpool import QueueFullError
 from app.services.tasks import task_manager
 
@@ -82,6 +87,15 @@ def bootstrap_admin() -> None:
     elif not get_user_by_username(ADMIN_USERNAME):
         logging.getLogger("temubox.auth").warning("ADMIN_PASSWORD 未配置，管理员账号尚未创建")
     cleanup_scheduler.start()
+
+
+def resolve_inventory_category(category: Optional[str]) -> str:
+    """解析库存类目键；类目不存在/已停用时返回 400，而不是静默回退到 A。"""
+    from app.services.inventory import resolve_profile
+    try:
+        return resolve_profile(category or "A")["key"]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def validate_excel(upload: UploadFile) -> None:
@@ -198,32 +212,148 @@ def get_public_settings(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.get("/api/inventory/categories")
+def inventory_categories(_user: dict = Depends(current_user)):
+    from app.services.inventory import inventory_categories as list_inventory_categories
+    return {"items": list_inventory_categories()}
+
+@app.get("/api/admin/inventory/categories")
+def admin_inventory_categories(_admin: dict = Depends(admin_user)):
+    return {"items": list_inventory_category_defs(True)}
+
+
+@app.post("/api/admin/inventory/categories", status_code=201)
+def admin_create_inventory_category(payload: InventoryCategoryCreateRequest, request: Request, _admin: dict = Depends(admin_user)):
+    key = payload.key.strip().upper()
+    if not key.replace("_", "").replace("-", "").isalnum():
+        raise HTTPException(status_code=400, detail="库存类目代码只能包含字母、数字、下划线或短横线")
+    try:
+        result = create_inventory_category_def(key, payload.label.strip(), payload.code_pattern, payload.price_max)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record(_admin, "inventory_category.create", "inventory_category", key, f"新增库存类目：{payload.label}", request)
+    return result
+
+
+@app.put("/api/admin/inventory/categories/{key}")
+def admin_update_inventory_category(key: str, payload: InventoryCategoryUpdateRequest, request: Request, _admin: dict = Depends(admin_user)):
+    try:
+        result = update_inventory_category_def(key.strip().upper(), payload.label.strip(), payload.code_pattern, payload.price_max, payload.enabled, payload.sort_order)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record(_admin, "inventory_category.update", "inventory_category", key, f"更新库存类目：{payload.label}", request)
+    return result
+
+
+@app.delete("/api/admin/inventory/categories/{key}")
+def admin_delete_inventory_category(key: str, request: Request, _admin: dict = Depends(admin_user)):
+    try:
+        delete_inventory_category_def(key.strip().upper())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record(_admin, "inventory_category.delete", "inventory_category", key, "删除库存类目", request)
+    return {"message": "库存类目已删除", "key": key.strip().upper()}
+
+
 @app.get("/api/inventory")
-def get_inventory_status(_user: dict = Depends(current_user)):
-    return inventory_status()
+def get_inventory_status(inventory_category: Optional[str] = Query(None, max_length=16), _user: dict = Depends(current_user)):
+    return inventory_status(inventory_category or "A")
 
 
 @app.get("/api/inventory/items")
 def list_inventory_items(
     query: str = Query("", max_length=80),
+    set_type: str = Query("", max_length=64),
+    source_sheet: str = Query("", max_length=255),
+    price_min: Optional[float] = Query(None, ge=0),
+    price_max: Optional[float] = Query(None, ge=0),
+    row_min: Optional[int] = Query(None, ge=1),
+    row_max: Optional[int] = Query(None, ge=1),
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=10, le=200),
+    inventory_category: Optional[str] = Query(None, max_length=16),
     user: dict = Depends(current_user),
 ):
-    catalog = load_price_catalog()
-    keyword = query.strip().upper()
-    items = [
-        item
-        for sku, item in sorted(catalog.items())
-        if not keyword or keyword in sku.upper()
-    ]
+    catalog = load_price_catalog(category=inventory_category or "A")
+    items = filter_catalog_items(
+        catalog,
+        query=query,
+        set_type=set_type,
+        source_sheet=source_sheet,
+        price_min=price_min,
+        price_max=price_max,
+        row_min=row_min,
+        row_max=row_max,
+    )
     start = (page - 1) * page_size
     return {"total": len(items), "items": items[start:start + page_size]}
 
 
+@app.post("/api/inventory/preview")
+async def stage_inventory_preview(request: Request, file: UploadFile = File(...), inventory_category: Optional[str] = Form(None), _admin: dict = Depends(admin_user)):
+    from app.services.inventory import resolve_profile
+    category = resolve_inventory_category(inventory_category)
+    candidate = INVENTORY_DIR / f"pending_inventory_{category}.candidate.xlsx"
+    await save_upload(file, candidate)
+    try:
+        state = await run_in_threadpool(stage_pending_upload, candidate, category)
+    except Exception as exc:
+        candidate.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"库存表无法读取：{exc}") from exc
+    audit.record(_admin, "inventory.preview", "inventory", "库存统计表", f"上传[{category}类目]库存表待确认：{file.filename}，共 {state['sku_count']} 个 SKU", request)
+    return {"message": "库存表已解析，请确认变更后应用", **state}
+
+
+@app.get("/api/inventory/pending")
+def get_pending_inventory(_admin: dict = Depends(admin_user)):
+    all_states = all_pending_uploads()
+    pending = next((state for state in all_states.values() if state is not None), None)
+    return {"pending": pending, "all": all_states}
+
+
+@app.post("/api/inventory/pending/apply")
+def apply_pending_inventory(payload: InventoryApplyRequest, request: Request, _admin: dict = Depends(admin_user)):
+    from app.services.inventory import resolve_profile
+    category = resolve_inventory_category(payload.inventory_category)
+    keep_skus = sorted({sku.strip().upper() for sku in payload.keep_skus if sku.strip()})
+    skip_skus = sorted({sku.strip().upper() for sku in payload.skip_skus if sku.strip()})
+    try:
+        result = apply_pending_upload(keep_skus, skip_skus, category)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="没有待确认的库存上传") from exc
+    merged = result["merged"]
+    audit.record(
+        _admin, "inventory.apply", "inventory", "库存统计表",
+        f"应用[{category}类目]库存表变更：共 {len(merged)} 个 SKU，保留旧值 {len(keep_skus)} 项，跳过新增 {len(skip_skus)} 项",
+        request,
+    )
+    return {
+        "message": "库存表变更已应用",
+        "sku_count": len(merged),
+        "kept": len(keep_skus),
+        "skipped": len(skip_skus),
+        **inventory_status(category),
+    }
+
+
+@app.post("/api/inventory/pending/discard")
+def discard_pending_inventory(request: Request, payload: Optional[InventoryApplyRequest] = None, _admin: dict = Depends(admin_user)):
+    category = None
+    if payload is not None and payload.inventory_category:
+        from app.services.inventory import resolve_profile
+        category = resolve_inventory_category(payload.inventory_category)
+    discarded = discard_pending_upload(category)
+    if discarded:
+        audit.record(_admin, "inventory.discard", "inventory", "库存统计表", f"取消[{category or 'A'}类目]待确认的库存上传", request)
+    return {"message": "已取消上传" if discarded else "当前没有待确认的上传", "discarded": discarded}
+
+
 @app.post("/api/inventory")
-async def upload_inventory(request: Request, file: UploadFile = File(...), _admin: dict = Depends(admin_user)):
-    candidate = INVENTORY_PATH.with_name("库存统计表.candidate.xlsx")
+async def upload_inventory(request: Request, file: UploadFile = File(...), inventory_category: Optional[str] = Form(None), _admin: dict = Depends(admin_user)):
+    from app.services.inventory import inventory_path_for, resolve_profile
+    category = resolve_inventory_category(inventory_category)
+    destination = inventory_path_for(category)
+    candidate = destination.with_name(f"库存统计表_{category}.candidate.xlsx")
     await save_upload(file, candidate)
     try:
         workbook = await run_in_threadpool(
@@ -233,10 +363,10 @@ async def upload_inventory(request: Request, file: UploadFile = File(...), _admi
     except Exception as exc:
         candidate.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=f"库存表无法读取：{exc}") from exc
-    os.replace(candidate, INVENTORY_PATH)
-    invalidate_cache()
-    audit.record(_admin, "inventory.upload", "inventory", "库存统计表", f"上传库存表：{file.filename}", request)
-    return {"message": "库存表已更新，缓存将在下次查询时自动重建", **inventory_status()}
+    os.replace(candidate, destination)
+    invalidate_cache(category)
+    audit.record(_admin, "inventory.upload", "inventory", "库存统计表", f"上传[{category}类目]库存表：{file.filename}", request)
+    return {"message": "库存表已更新，缓存将在下次查询时自动重建", **inventory_status(category)}
 
 
 def parse_activity_rules(value: Optional[str], allowed_pieces=None) -> Optional[dict]:
@@ -376,28 +506,44 @@ def download_activity(job_id: str, user: dict = Depends(current_user)):
 
 
 @app.post("/api/inventory/rebuild")
-async def rebuild_inventory(request: Request, _admin: dict = Depends(admin_user)):
-    invalidate_cache()
-    catalog = await run_in_threadpool(load_price_catalog)
-    audit.record(_admin, "inventory.rebuild", "inventory", "price_cache", f"重建库存缓存，共 {len(catalog)} 个 SKU", request)
-    return {"message": "库存缓存已重建", "sku_count": len(catalog), **inventory_status()}
+async def rebuild_inventory(request: Request, inventory_category: Optional[str] = Form(None), _admin: dict = Depends(admin_user)):
+    category = resolve_inventory_category(inventory_category)
+    invalidate_cache(category)
+    catalog = await run_in_threadpool(load_price_catalog, category=category)
+    audit.record(_admin, "inventory.rebuild", "inventory", "price_cache", f"重建[{category}类目]库存缓存，共 {len(catalog)} 个 SKU", request)
+    return {"message": "库存缓存已重建", "sku_count": len(catalog), **inventory_status(category)}
 
 
 @app.get("/api/admin/inventory")
-def admin_inventory_status(_admin: dict = Depends(admin_user)):
-    return inventory_status()
+def admin_inventory_status(inventory_category: Optional[str] = Query(None, max_length=16), _admin: dict = Depends(admin_user)):
+    return inventory_status(inventory_category or "A")
 
 
 @app.get("/api/admin/inventory/items")
 def admin_inventory_items(
     query: str = Query("", max_length=80),
+    set_type: str = Query("", max_length=64),
+    source_sheet: str = Query("", max_length=255),
+    price_min: Optional[float] = Query(None, ge=0),
+    price_max: Optional[float] = Query(None, ge=0),
+    row_min: Optional[int] = Query(None, ge=1),
+    row_max: Optional[int] = Query(None, ge=1),
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=10, le=200),
+    inventory_category: Optional[str] = Query(None, max_length=16),
     _admin: dict = Depends(admin_user),
 ):
-    catalog = load_price_catalog()
-    keyword = query.strip().upper()
-    items = [item for sku, item in sorted(catalog.items()) if not keyword or keyword in sku.upper()]
+    catalog = load_price_catalog(category=inventory_category or "A")
+    items = filter_catalog_items(
+        catalog,
+        query=query,
+        set_type=set_type,
+        source_sheet=source_sheet,
+        price_min=price_min,
+        price_max=price_max,
+        row_min=row_min,
+        row_max=row_max,
+    )
     start = (page - 1) * page_size
     return {"total": len(items), "items": items[start:start + page_size]}
 
@@ -408,11 +554,11 @@ def admin_create_inventory_item(payload: InventoryItemCreateRequest, request: Re
     if not normalized:
         raise HTTPException(status_code=400, detail="SKU 不能为空")
     try:
-        item = create_inventory_item(normalized, payload.price, payload.set_type.strip() or "单品")
+        item = create_inventory_item(normalized, payload.price, payload.set_type.strip() or "单品", payload.inventory_category or "A")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     audit.record(_admin, "inventory.item_create", "inventory_item", normalized, f"新增库存明细：{normalized}", request)
-    return {"message": "库存明细已添加", "item": item, **inventory_status()}
+    return {"message": "库存明细已添加", "item": item, **inventory_status(payload.inventory_category or "A")}
 
 
 @app.put("/api/admin/inventory/items/{sku}")
@@ -422,20 +568,22 @@ def admin_update_inventory_item(sku: str, payload: InventoryItemUpdateRequest, r
     if not old_sku or not normalized:
         raise HTTPException(status_code=400, detail="SKU 不能为空")
     try:
-        item = update_inventory_item(old_sku, normalized, payload.price, payload.set_type.strip() or "单品")
+        item = update_inventory_item(old_sku, normalized, payload.price, payload.set_type.strip() or "单品", payload.inventory_category or "A")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not item:
         raise HTTPException(status_code=404, detail="库存 SKU 不存在")
     audit.record(_admin, "inventory.item_update", "inventory_item", normalized, f"更新库存明细：{old_sku} → {normalized}", request)
-    return {"message": "库存明细已更新", "item": item, **inventory_status()}
+    return {"message": "库存明细已更新", "item": item, **inventory_status(payload.inventory_category or "A")}
+
+
 @app.delete("/api/admin/inventory/items/{sku}")
-def admin_delete_inventory_item(sku: str, request: Request, _admin: dict = Depends(admin_user)):
+def admin_delete_inventory_item(sku: str, request: Request, inventory_category: Optional[str] = Query(None, max_length=16), _admin: dict = Depends(admin_user)):
     normalized = sku.strip().upper()
-    if not normalized or not delete_inventory_item(normalized):
+    if not normalized or not delete_inventory_item(normalized, inventory_category or "A"):
         raise HTTPException(status_code=404, detail="库存 SKU 不存在")
     audit.record(_admin, "inventory.item_delete", "inventory_item", normalized, f"删除库存明细：{normalized}", request)
-    return {"message": "库存明细已删除", "sku": normalized, **inventory_status()}
+    return {"message": "库存明细已删除", "sku": normalized, **inventory_status(inventory_category or "A")}
 
 
 @app.post("/api/skus/query")
@@ -443,7 +591,7 @@ async def query_skus(request: SkuQueryRequest, _user: dict = Depends(current_use
     normalized = list(dict.fromkeys(sku.strip().upper() for sku in request.skus if sku.strip()))
     if not normalized:
         raise HTTPException(status_code=400, detail="请输入至少一个 SKU")
-    catalog = await run_in_threadpool(load_price_catalog)
+    catalog = await run_in_threadpool(load_price_catalog, category=request.inventory_category or "A")
     results = []
     for sku in normalized:
         item = catalog.get(sku)
@@ -457,13 +605,15 @@ def list_half_headcost(
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=10, le=200),
     category_code: Optional[str] = Query(None, max_length=16),
+    inventory_category: Optional[str] = Query(None, max_length=16),
     _user: dict = Depends(current_user),
 ):
     try:
         category = get_category(category_code)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    entries = load_entries(category["id"])
+    inventory_key = resolve_inventory_category(inventory_category)
+    entries = load_entries(category["id"], inventory_key)
     keyword = query.strip().upper()
     items = [
         {"sku": sku, "set_type": set_type}
@@ -471,7 +621,7 @@ def list_half_headcost(
         if not keyword or keyword in sku.upper()
     ]
     start = (page - 1) * page_size
-    return {"total": len(items), "items": items[start:start + page_size], "category": {"code": category["code"], "name": category["name"]}}
+    return {"total": len(items), "items": items[start:start + page_size], "category": {"code": category["code"], "name": category["name"]}, "inventory_category": inventory_key}
 
 
 @app.post("/api/half-headcost/import")
@@ -479,6 +629,7 @@ async def import_half_headcost(
     request: Request,
     file: UploadFile = File(...),
     category_code: Optional[str] = Form(None),
+    inventory_category: Optional[str] = Form(None),
     _admin: dict = Depends(admin_user),
 ):
     validate_excel(file)
@@ -490,26 +641,75 @@ async def import_half_headcost(
         category = get_category(category_code, include_disabled=True)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    inventory_key = resolve_inventory_category(inventory_category)
     try:
-        result = await run_in_threadpool(merge_upload, content, category["id"])
+        result = await run_in_threadpool(merge_upload, content, category["id"], inventory_key)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    audit.record(_admin, "half_headcost.import", "half_headcost", category["code"], f"导入头程减半名单（品类 {category['code']}）：{file.filename}（新增 {result['added']}）", request)
-    return {"message": "头程减半名单已合并", **result}
+    audit.record(_admin, "half_headcost.import", "half_headcost", category["code"], f"导入头程减半名单（品类 {category['code']}，库存类目 {inventory_key}）：{file.filename}（新增 {result['added']}）", request)
+    return {"message": "头程减半名单已合并", "inventory_category": inventory_key, **result}
 
 
 @app.delete("/api/half-headcost/{sku}")
-def remove_half_headcost(sku: str, request: Request, category_code: Optional[str] = Query(None, max_length=16), _admin: dict = Depends(admin_user)):
+def remove_half_headcost(sku: str, request: Request, category_code: Optional[str] = Query(None, max_length=16), inventory_category: Optional[str] = Query(None, max_length=16), _admin: dict = Depends(admin_user)):
     normalized = sku.strip().upper()
     try:
         category = get_category(category_code, include_disabled=True)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if not delete_entry(normalized, category["id"]):
+    inventory_key = resolve_inventory_category(inventory_category)
+    if not delete_entry(normalized, category["id"], inventory_key):
         raise HTTPException(status_code=404, detail="SKU 不在头程减半名单中")
-    audit.record(_admin, "half_headcost.delete", "half_headcost", normalized, f"从头程减半名单删除（品类 {category['code']}）：{normalized}", request)
-    return {"message": "已删除", "sku": normalized}
+    audit.record(_admin, "half_headcost.delete", "half_headcost", normalized, f"从头程减半名单删除（品类 {category['code']}，库存类目 {inventory_key}）：{normalized}", request)
+    return {"message": "已删除", "sku": normalized, "inventory_category": inventory_key}
 
+
+
+@app.post("/api/admin/half-headcost", status_code=201)
+def admin_create_half_headcost(payload: HalfHeadcostCreateRequest, request: Request, _admin: dict = Depends(admin_user)):
+    normalized = payload.sku.strip().upper()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="SKU 不能为空")
+    try:
+        category = get_category(payload.category_code, include_disabled=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    inventory_key = resolve_inventory_category(payload.inventory_category)
+    existed = entry_exists(normalized, category["id"], inventory_key)
+    try:
+        item = save_entry(normalized, payload.set_type, category["id"], inventory_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record(
+        _admin,
+        "half_headcost.create",
+        "half_headcost",
+        normalized,
+        f"{'覆盖' if existed else '新增'}头程减半名单（品类 {category['code']}，库存类目 {inventory_key}）：{normalized}（{item['set_type']}）",
+        request,
+    )
+    message = "该 SKU 已存在，已覆盖类型" if existed else "头程减半名单已添加"
+    return {"message": message, "item": item, "category": {"code": category["code"], "name": category["name"]}, "inventory_category": inventory_key}
+
+
+@app.put("/api/admin/half-headcost/{sku}")
+def admin_update_half_headcost(sku: str, payload: HalfHeadcostUpdateRequest, request: Request, _admin: dict = Depends(admin_user)):
+    normalized = sku.strip().upper()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="SKU 不能为空")
+    try:
+        category = get_category(payload.category_code, include_disabled=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    inventory_key = resolve_inventory_category(payload.inventory_category)
+    if not entry_exists(normalized, category["id"], inventory_key):
+        raise HTTPException(status_code=404, detail="SKU 不在头程减半名单中")
+    try:
+        item = save_entry(normalized, payload.set_type, category["id"], inventory_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record(_admin, "half_headcost.update", "half_headcost", normalized, f"更新头程减半名单（品类 {category['code']}，库存类目 {inventory_key}）：{normalized} → {item['set_type']}", request)
+    return {"message": "头程减半名单已更新", "item": item, "category": {"code": category["code"], "name": category["name"]}, "inventory_category": inventory_key}
 
 @app.post("/api/tasks", status_code=202)
 async def create_task(
@@ -521,8 +721,6 @@ async def create_task(
     category_code: Optional[str] = Form(None),
     user: dict = Depends(current_user),
 ):
-    if not INVENTORY_PATH.exists():
-        raise HTTPException(status_code=409, detail="服务器尚未配置库存统计表")
     if task_manager.queue_full():
         raise HTTPException(status_code=429, detail="后台任务队列已满，请稍后再试")
     validate_excel(sales)
@@ -533,6 +731,9 @@ async def create_task(
         snapshot = await run_in_threadpool(region_snapshot, region_code, category_code)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    bound_inventory = (snapshot.get("category", {}) or {}).get("inventory_category") or "A"
+    if not inventory_path_for(bound_inventory).exists():
+        raise HTTPException(status_code=409, detail=f"服务器尚未配置{bound_inventory}类目库存统计表")
     task = task_manager.create(
         sales.filename or "销售订单.xlsx",
         delivery.filename or "派送订单.xlsx",

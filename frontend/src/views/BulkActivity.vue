@@ -2,18 +2,16 @@
 import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Delete, Download, Plus, RefreshRight, UploadFilled } from '@element-plus/icons-vue'
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
-import { activityDownloadUrl, deleteActivityTask, getActivityTask, getActivityTasks, getMe, getSettings, previewActivitySkuRules, processBulkActivity } from '../api'
-import { confirmAction, notifyError, notifySuccess } from '../feedback'
+import { activityDownloadUrl, getActivityTask, getActivityTasks, getSettings, previewActivitySkuRules, processBulkActivity } from '../api'
+import { notifyError, notifySuccess } from '../feedback'
 import type { ActivityIdProfitRule, ActivityIdType, ActivitySetMapping, ActivitySingleParseMode, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem } from '../types'
 import CostRules from '../components/CostRules.vue'
 import { selectedCategoryCode as categoryCode, selectedRegionCode as regionCode } from '../regionState'
 
 const files = ref<UploadUserFile[]>([])
-const tasks = ref<ActivityTaskItem[]>([])
+const task = ref<ActivityTaskItem | null>(null)
 const loading = ref(false)
-const loadingTasks = ref(false)
-const deleting = ref<string | null>(null)
-const currentUserId = ref<number | null>(null)
+const loadingTask = ref(false)
 const useCustomUplift = ref(false)
 const customUpliftLimit = ref(1)
 const defaultUpliftLimit = ref(1)
@@ -41,7 +39,6 @@ const previewPage = ref(1)
 const previewPageSize = 20
 const previewing = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | undefined
-const activityTaskStore = new Map<number, ActivityTaskItem[]>()
 const idRuleTypes: ActivityIdType[] = ['SPU', 'SKC', 'SKU']
 const defaultSkuRules = ref<ActivitySkuRules>({
   set_keywords: [],
@@ -94,7 +91,12 @@ const previewItems = computed(() => {
 })
 const canPreview = computed(() => !!regionCode.value && !!categoryCode.value && files.value.length === 1 && !!files.value[0]?.raw && ((useCustomSkuRules.value && skuRulesConfigured.value) || idProfitRulesValid.value))
 const canSubmit = computed(() => !!regionCode.value && !!categoryCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || skuRulesConfigured.value) && (!useCustomIdProfitRules.value || idProfitRulesValid.value))
-const activeTasks = computed(() => tasks.value.filter((task) => task.status === 'queued' || task.status === 'running'))
+const isActiveTask = computed(() => !!task.value && (task.value.status === 'queued' || task.value.status === 'running'))
+const hasTaskStats = computed(() => task.value?.stats?.processed_rows !== undefined)
+const logLines = computed(() => {
+  if (!task.value) return []
+  return task.value.logs.length ? task.value.logs : [task.value.message]
+})
 
 function fileChanged(_file: UploadFile, uploadFiles: UploadFiles) {
   files.value = uploadFiles.slice(-1)
@@ -255,52 +257,42 @@ function previewTagType(result: ActivitySkuPreviewItem['result']) {
   return result === '套装' ? 'warning' : 'success'
 }
 
-function mergeTask(task: ActivityTaskItem) {
-  const index = tasks.value.findIndex((item) => item.id === task.id)
-  if (index === -1) tasks.value.unshift(task)
-  else tasks.value[index] = task
-  if (currentUserId.value !== null) {
-    const stored = activityTaskStore.get(currentUserId.value) || []
-    const storedIndex = stored.findIndex((item) => item.id === task.id)
-    if (storedIndex === -1) stored.unshift(task)
-    else stored[storedIndex] = task
-    activityTaskStore.set(currentUserId.value, stored)
-  }
+function mergeTask(incoming: ActivityTaskItem) {
+  task.value = incoming
 }
 
-async function loadTasks() {
-  loadingTasks.value = true
+async function loadActiveTask() {
+  loadingTask.value = true
   try {
     const serverTasks = await getActivityTasks()
-    const localActive = (activityTaskStore.get(currentUserId.value || -1) || [])
-      .filter((task) => task.status === 'queued' || task.status === 'running')
-    const merged = new Map(localActive.map((task) => [task.id, task]))
-    serverTasks.forEach((task) => merged.set(task.id, task))
-    tasks.value = [...merged.values()].sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)))
-    activityTaskStore.set(currentUserId.value || -1, tasks.value)
-    startPolling()
+    const active = serverTasks.find((item) => item.status === 'queued' || item.status === 'running')
+    if (active) mergeTask(active)
+    else if (task.value) mergeTask(await getActivityTask(task.value.id))
+    if (isActiveTask.value) startPolling()
+    else stopPolling()
   } catch (error) {
     notifyError(error)
   } finally {
-    loadingTasks.value = false
+    loadingTask.value = false
   }
 }
 
-async function refreshActiveTasks() {
-  const current = [...activeTasks.value]
-  await Promise.all(current.map(async (task) => {
-    try {
-      mergeTask(await getActivityTask(task.id))
-    } catch {
-      // A temporary polling failure should not remove a task from the list.
-    }
-  }))
-  if (!activeTasks.value.length) stopPolling()
+async function refreshActiveTask() {
+  if (!task.value || !isActiveTask.value) {
+    stopPolling()
+    return
+  }
+  try {
+    mergeTask(await getActivityTask(task.value.id))
+  } catch {
+    // 轮询临时失败时保留当前任务展示。
+  }
+  if (!isActiveTask.value) stopPolling()
 }
 
 function startPolling() {
-  if (pollTimer || !activeTasks.value.length) return
-  pollTimer = setInterval(() => { void refreshActiveTasks() }, 1500)
+  if (pollTimer || !isActiveTask.value) return
+  pollTimer = setInterval(() => { void refreshActiveTask() }, 1200)
 }
 
 function stopPolling() {
@@ -313,15 +305,14 @@ async function submit() {
   if (!file) return
   loading.value = true
   try {
-    const task = await processBulkActivity(
+    mergeTask(await processBulkActivity(
       file,
       regionCode.value,
       useCustomUplift.value ? customUpliftLimit.value : undefined,
       useCustomSkuRules.value ? appliedSkuRules.value : undefined,
       useCustomIdProfitRules.value ? idProfitRules.value : undefined,
       categoryCode.value,
-    )
-    mergeTask(task)
+    ))
     files.value = []
     useCustomUplift.value = false
     customUpliftLimit.value = defaultUpliftLimit.value
@@ -346,37 +337,6 @@ function reset() {
   resetIdProfitRules()
 }
 
-async function remove(task: ActivityTaskItem) {
-  if (task.status === 'queued' || task.status === 'running') return
-  try {
-    if (!await confirmAction('删除后将无法恢复这条任务记录，是否继续？', '确认删除')) return
-    deleting.value = task.id
-    await deleteActivityTask(task.id)
-    tasks.value = tasks.value.filter((item) => item.id !== task.id)
-    if (currentUserId.value !== null) activityTaskStore.set(currentUserId.value, tasks.value)
-    notifySuccess('活动任务记录已删除')
-  } catch (error) {
-    notifyError(error)
-  } finally {
-    deleting.value = null
-  }
-}
-
-function statusText(status: string) {
-  return { queued: '排队中', running: '处理中', completed: '已完成', failed: '失败' }[status] || status
-}
-
-function statusType(status: string) {
-  if (status === 'completed') return 'success'
-  if (status === 'failed') return 'danger'
-  return 'primary'
-}
-
-function formatTime(value?: string) {
-  if (!value) return '-'
-  return new Date(value).toLocaleString('zh-CN', { hour12: false })
-}
-
 async function loadRegionDefaults(code: string, category?: string) {
   if (!code) return
   try {
@@ -397,9 +357,7 @@ async function loadRegionDefaults(code: string, category?: string) {
 
 async function bootstrap() {
   try {
-    const user = await getMe()
-    currentUserId.value = user.id
-    await Promise.all([loadTasks(), loadRegionDefaults(regionCode.value, categoryCode.value)])
+    await Promise.all([loadActiveTask(), loadRegionDefaults(regionCode.value, categoryCode.value)])
   } catch (error) {
     notifyError(error)
   }
@@ -407,7 +365,7 @@ async function bootstrap() {
 
 watch([regionCode, categoryCode], ([code, category]) => { void loadRegionDefaults(code, category) })
 onMounted(bootstrap)
-onActivated(() => { void loadTasks() })
+onActivated(() => { void loadActiveTask() })
 onBeforeUnmount(stopPolling)
 </script>
 
@@ -652,35 +610,41 @@ onBeforeUnmount(stopPolling)
     </el-dialog>
     <div class="action-row left">
       <el-button type="primary" :loading="loading" :disabled="!canSubmit" @click="submit">提交处理任务</el-button>
-      <el-button :icon="RefreshRight" :loading="loadingTasks" @click="loadTasks">刷新任务</el-button>
+      <el-button :icon="RefreshRight" :loading="loadingTask" @click="loadActiveTask">刷新任务状态</el-button>
     </div>
   </section>
 
-  <section class="section-band activity-tasks-panel">
+  <section v-if="task" class="section-band task-panel">
     <div class="section-heading">
-      <div><h2>活动处理任务</h2><p>共 {{ tasks.length }} 个任务{{ activeTasks.length ? `，${activeTasks.length} 个处理中` : '' }}</p></div>
+      <div>
+        <h2>任务进度</h2>
+        <p>
+          <el-tag size="small" effect="plain">{{ task.region_name }}</el-tag>
+          <el-tag v-if="task.category_name" size="small" effect="plain" type="info">{{ task.category_name }}</el-tag>
+          <span class="mono">{{ task.filename }}</span>
+          <span class="mono">{{ task.id }}</span>
+        </p>
+      </div>
+      <el-tag :type="task.status === 'completed' ? 'success' : task.status === 'failed' ? 'danger' : 'primary'">
+        {{ task.message }}
+      </el-tag>
     </div>
-    <el-empty v-if="!loadingTasks && !tasks.length" description="暂无活动处理任务" />
-    <div v-else class="activity-task-list">
-      <article v-for="task in tasks" :key="task.id" class="activity-task-item">
-        <div class="activity-task-main">
-          <div class="activity-task-title">
-            <strong>{{ task.filename }}</strong>
-            <el-tag :type="statusType(task.status)" size="small">{{ statusText(task.status) }}</el-tag>
-            <el-tag size="small" effect="plain">{{ task.region_name }}</el-tag>
-            <el-tag v-if="task.category_name" size="small" effect="plain" type="info">{{ task.category_name }}</el-tag>
-          </div>
-          <p>{{ task.message }} · {{ formatTime(task.created_at) }}</p>
-          <el-progress :percentage="task.progress" :status="task.status === 'failed' ? 'exception' : task.status === 'completed' ? 'success' : undefined" />
-          <p v-if="task.status === 'completed'" class="activity-task-stats">处理 {{ task.stats.processed_rows }} 行 · 替换 {{ task.stats.updated_rows }} 行 · 保留 {{ task.stats.unchanged_rows }} 行 · 删除 {{ task.stats.removed_rows }} 行<span v-if="task.stats.id_profit_rule_matches"> · 命中 ID 条件 {{ task.stats.id_profit_rule_matches }} 行</span></p>
-          <p v-if="task.status === 'failed' && task.logs.length" class="activity-error">{{ task.logs[task.logs.length - 1] }}</p>
-        </div>
-        <div class="activity-task-action">
-          <el-button v-if="task.download_ready" type="success" :icon="Download" tag="a" :href="activityDownloadUrl(task.id)">下载结果</el-button>
-          <el-button v-if="task.status !== 'queued' && task.status !== 'running'" link type="danger" :icon="Delete" :loading="deleting === task.id" @click="remove(task)">删除</el-button>
-          <span v-if="!task.download_ready && (task.status === 'queued' || task.status === 'running')" class="activity-task-id mono">{{ task.id }}</span>
-        </div>
-      </article>
+    <el-progress :percentage="task.progress" :status="task.status === 'failed' ? 'exception' : task.status === 'completed' ? 'success' : undefined" />
+
+    <div v-if="hasTaskStats" class="metric-strip activity-metrics">
+      <div><span>处理行数</span><strong>{{ task.stats.processed_rows }}</strong></div>
+      <div><span>替换行数</span><strong>{{ task.stats.updated_rows }}</strong></div>
+      <div><span>保留行数</span><strong>{{ task.stats.unchanged_rows }}</strong></div>
+      <div><span>删除行数</span><strong>{{ task.stats.removed_rows }}</strong></div>
+      <div><span>命中 ID 条件</span><strong>{{ task.stats.id_profit_rule_matches || 0 }}</strong></div>
+    </div>
+
+    <div class="log-view" aria-live="polite">
+      <div v-for="(line, index) in logLines" :key="index">{{ line }}</div>
+    </div>
+
+    <div v-if="task.download_ready" class="action-row left">
+      <el-button type="success" :icon="Download" tag="a" :href="activityDownloadUrl(task.id)">下载结果</el-button>
     </div>
   </section>
 </template>

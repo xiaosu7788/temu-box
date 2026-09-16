@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuRules, ActivityTaskItem, AppSettings, AuditLogPage, BulkActivityResult, CategoryPage, CategorySummary, CleanupResult, HalfHeadcostItem, InventoryStatus, MonitoringSnapshot, RegionProfile, RegionSummary, SkuResult, SystemSettings, SystemSettingsInfo, TaskItem, User } from './types'
+import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuRules, ActivityTaskItem, AppSettings, AuditLogPage, BulkActivityResult, CategoryPage, CategorySummary, CleanupResult, HalfHeadcostItem, InventoryCategory, InventoryDiffItem, InventoryPreview, InventoryStatus, MonitoringSnapshot, RegionProfile, RegionSummary, SkuResult, SystemSettings, SystemSettingsInfo, TaskItem, User } from './types'
 
 const http = axios.create({
   baseURL: '/api',
@@ -101,67 +101,134 @@ export async function querySkus(skus: string[]) {
   return data
 }
 
-export async function getInventory() {
-  const { data } = await http.get<InventoryStatus>('/inventory')
+export async function getInventory(inventoryCategory = 'A') {
+  const { data } = await http.get<InventoryStatus>('/inventory', { params: { inventory_category: inventoryCategory } })
   return data
 }
 
-export async function getInventoryItems(query = '', page = 1, pageSize = 30) {
+export async function getInventoryCategories() {
+  const { data } = await http.get<{ items: InventoryCategory[] }>('/inventory/categories')
+  return data.items
+}
+
+export async function createInventoryCategory(payload: { key: string; label: string; code_pattern?: string | null; price_max: number }) {
+  const { data } = await http.post<InventoryCategory>('/admin/inventory/categories', payload)
+  return data
+}
+
+export async function updateInventoryCategory(key: string, payload: { label: string; code_pattern?: string | null; price_max: number; enabled?: boolean; sort_order?: number }) {
+  const { data } = await http.put<InventoryCategory>(`/admin/inventory/categories/${encodeURIComponent(key)}`, payload)
+  return data
+}
+
+export async function deleteInventoryCategory(key: string) {
+  await http.delete(`/admin/inventory/categories/${encodeURIComponent(key)}`)
+}
+
+export interface InventoryItemFilters {
+  query?: string
+  setType?: string
+  sourceSheet?: string
+  priceMin?: number | null
+  priceMax?: number | null
+  rowMin?: number | null
+  rowMax?: number | null
+}
+
+function inventoryFilterParams(filters: InventoryItemFilters) {
+  return {
+    query: filters.query ?? '',
+    set_type: filters.setType ?? '',
+    source_sheet: filters.sourceSheet ?? '',
+    price_min: filters.priceMin ?? undefined,
+    price_max: filters.priceMax ?? undefined,
+    row_min: filters.rowMin ?? undefined,
+    row_max: filters.rowMax ?? undefined,
+  }
+}
+
+export async function getInventoryItems(filters: InventoryItemFilters = {}, page = 1, pageSize = 30, inventoryCategory = 'A') {
   const { data } = await http.get<{ total: number; items: SkuResult[] }>('/inventory/items', {
-    params: { query, page, page_size: pageSize },
+    params: { ...inventoryFilterParams(filters), page, page_size: pageSize, inventory_category: inventoryCategory },
   })
   return data
 }
 
-export async function uploadInventory(file: File) {
+export async function previewInventory(file: File, inventoryCategory = 'A') {
   const form = new FormData()
   form.append('file', file)
+  form.append('inventory_category', inventoryCategory)
+  const { data } = await uploadHttp.post<InventoryPreview & { message: string }>('/inventory/preview', form)
+  return data
+}
+
+export async function getPendingInventory() {
+  const { data } = await uploadHttp.get<{ pending: InventoryPreview | null; all: Record<string, InventoryPreview | null> }>('/inventory/pending')
+  return data
+}
+
+export async function applyPendingInventory(keepSkus: string[], skipSkus: string[], inventoryCategory = 'A') {
+  const { data } = await uploadHttp.post<InventoryStatus & { message: string; sku_count: number; kept: number; skipped: number }>('/inventory/pending/apply', { keep_skus: keepSkus, skip_skus: skipSkus, inventory_category: inventoryCategory })
+  return data
+}
+
+export async function discardPendingInventory(inventoryCategory = 'A') {
+  const { data } = await uploadHttp.post<{ message: string; discarded: boolean }>('/inventory/pending/discard', { inventory_category: inventoryCategory })
+  return data
+}
+
+export async function uploadInventory(file: File, inventoryCategory = 'A') {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('inventory_category', inventoryCategory)
   const { data } = await uploadHttp.post<InventoryStatus & { message: string }>('/inventory', form)
   return data
 }
 
-export async function rebuildInventory() {
-  const { data } = await uploadHttp.post<InventoryStatus & { message: string }>('/inventory/rebuild')
+export async function rebuildInventory(inventoryCategory = 'A') {
+  const { data } = await uploadHttp.post<InventoryStatus & { message: string }>('/inventory/rebuild', null, { params: { inventory_category: inventoryCategory } })
   return data
 }
 
-export async function getAdminInventory() {
-  const { data } = await http.get<InventoryStatus>('/admin/inventory')
+export async function getAdminInventory(inventoryCategory = 'A') {
+  const { data } = await http.get<InventoryStatus>('/admin/inventory', { params: { inventory_category: inventoryCategory } })
   return data
 }
 
-export async function getAdminInventoryItems(query = '', page = 1, pageSize = 30) {
+export async function getAdminInventoryItems(filters: InventoryItemFilters = {}, page = 1, pageSize = 30, inventoryCategory = 'A') {
   const { data } = await http.get<{ total: number; items: SkuResult[] }>('/admin/inventory/items', {
-    params: { query, page, page_size: pageSize },
+    params: { ...inventoryFilterParams(filters), page, page_size: pageSize, inventory_category: inventoryCategory },
   })
   return data
 }
 
-export async function createInventoryItem(payload: { sku: string; price: number | null; set_type: string }) {
+export async function createInventoryItem(payload: { sku: string; price: number | null; set_type: string; inventory_category?: string }) {
   const { data } = await http.post<{ item: SkuResult }>('/admin/inventory/items', payload)
   return data.item
 }
 
-export async function updateInventoryItem(oldSku: string, payload: { sku: string; price: number | null; set_type: string }) {
+export async function updateInventoryItem(oldSku: string, payload: { sku: string; price: number | null; set_type: string; inventory_category?: string }) {
   const { data } = await http.put<{ item: SkuResult }>(`/admin/inventory/items/${encodeURIComponent(oldSku)}`, payload)
   return data.item
 }
-export async function deleteInventoryItem(sku: string) {
-  const { data } = await http.delete<InventoryStatus & { message: string; sku: string }>(`/admin/inventory/items/${encodeURIComponent(sku)}`)
+
+export async function deleteInventoryItem(sku: string, inventoryCategory = 'A') {
+  const { data } = await http.delete<InventoryStatus & { message: string; sku: string }>(`/admin/inventory/items/${encodeURIComponent(sku)}`, { params: { inventory_category: inventoryCategory } })
   return data
 }
 
-export async function getHalfHeadcost(query = '', page = 1, pageSize = 30, categoryCode?: string) {
-  const { data } = await http.get<{ total: number; items: HalfHeadcostItem[]; category?: { code: string; name: string } }>('/half-headcost', {
-    params: { query, page, page_size: pageSize, category_code: categoryCode },
+export async function getHalfHeadcost(query = '', page = 1, pageSize = 30, categoryCode?: string, inventoryCategory = 'A') {
+  const { data } = await http.get<{ total: number; items: HalfHeadcostItem[]; category?: { code: string; name: string }; inventory_category?: string }>('/half-headcost', {
+    params: { query, page, page_size: pageSize, category_code: categoryCode, inventory_category: inventoryCategory },
   })
   return data
 }
 
-export async function importHalfHeadcost(file: File, categoryCode?: string) {
+export async function importHalfHeadcost(file: File, categoryCode?: string, inventoryCategory = 'A') {
   const form = new FormData()
   form.append('file', file)
   if (categoryCode) form.append('category_code', categoryCode)
+  form.append('inventory_category', inventoryCategory)
   const { data } = await uploadHttp.post<{ message: string; incoming: number; added: number; total: number }>(
     '/half-headcost/import',
     form,
@@ -169,8 +236,18 @@ export async function importHalfHeadcost(file: File, categoryCode?: string) {
   return data
 }
 
-export async function deleteHalfHeadcost(sku: string, categoryCode?: string) {
-  await http.delete(`/half-headcost/${encodeURIComponent(sku)}`, { params: { category_code: categoryCode } })
+export async function deleteHalfHeadcost(sku: string, categoryCode?: string, inventoryCategory = 'A') {
+  await http.delete(`/half-headcost/${encodeURIComponent(sku)}`, { params: { category_code: categoryCode, inventory_category: inventoryCategory } })
+}
+
+export async function createHalfHeadcost(payload: { sku: string; set_type: string; category_code?: string; inventory_category?: string }) {
+  const { data } = await http.post<{ message: string; item: HalfHeadcostItem }>('/admin/half-headcost', payload)
+  return data
+}
+
+export async function updateHalfHeadcost(sku: string, payload: { set_type: string; category_code?: string; inventory_category?: string }) {
+  const { data } = await http.put<{ message: string; item: HalfHeadcostItem }>(`/admin/half-headcost/${encodeURIComponent(sku)}`, payload)
+  return data
 }
 
 export async function previewActivitySkuRules(file: File, rules: ActivitySkuRules | undefined, regionCode: string, idProfitRules?: ActivityIdProfitRule[], categoryCode?: string) {
@@ -282,12 +359,12 @@ export async function getAdminCategories() {
   return data
 }
 
-export async function createAdminCategory(payload: { code: string; name: string; template_type: string; set_types?: number[]; allowed_regions?: string[] | null; sort_order?: number }) {
+export async function createAdminCategory(payload: { code: string; name: string; template_type: string; set_types?: number[]; allowed_regions?: string[] | null; inventory_category?: string | null; sort_order?: number }) {
   const { data } = await http.post<CategorySummary>('/admin/categories', payload)
   return data
 }
 
-export async function updateAdminCategory(code: string, payload: { name: string; template_type: string; set_types?: number[]; allowed_regions?: string[] | null; enabled?: boolean; is_default?: boolean; sort_order?: number }) {
+export async function updateAdminCategory(code: string, payload: { name: string; template_type: string; set_types?: number[]; allowed_regions?: string[] | null; enabled?: boolean; is_default?: boolean; inventory_category?: string | null; sort_order?: number }) {
   const { data } = await http.put<CategorySummary>(`/admin/categories/${encodeURIComponent(code)}`, payload)
   return data
 }

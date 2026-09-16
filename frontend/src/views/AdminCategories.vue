@@ -2,9 +2,9 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { Delete, Edit, Goods, Plus, Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
-import { createAdminCategory, deleteAdminCategory, getAdminCategories, getAdminRegions, updateAdminCategory } from '../api'
+import { createAdminCategory, deleteAdminCategory, getAdminCategories, getAdminRegions, getInventoryCategories, updateAdminCategory } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
-import type { CategorySummary, CategoryTemplateType, RegionSummary, TemplateTypeInfo } from '../types'
+import type { CategorySummary, CategoryTemplateType, InventoryCategory, RegionSummary, TemplateTypeInfo } from '../types'
 
 const router = useRouter()
 const categories = ref<CategorySummary[]>([])
@@ -15,12 +15,18 @@ const saving = ref(false)
 const createVisible = ref(false)
 const editVisible = ref(false)
 const editingCode = ref('')
-const createForm = reactive<{ code: string; name: string; template_type: CategoryTemplateType; setTypesText: string; regionCodes: string[]; sort_order: number }>({
-  code: '', name: '', template_type: 'set_based', setTypesText: '', regionCodes: [], sort_order: 100,
+const createForm = reactive<{ code: string; name: string; template_type: CategoryTemplateType; setTypesText: string; regionCodes: string[]; sort_order: number; inventory_category: string | null }>({
+  code: '', name: '', template_type: 'set_based', setTypesText: '', regionCodes: [], sort_order: 100, inventory_category: null,
 })
-const editForm = reactive<{ name: string; template_type: CategoryTemplateType; setTypesText: string; regionCodes: string[]; enabled: boolean; is_default: boolean; sort_order: number }>({
-  name: '', template_type: 'set_based', setTypesText: '', regionCodes: [], enabled: true, is_default: false, sort_order: 100,
+const editForm = reactive<{ name: string; template_type: CategoryTemplateType; setTypesText: string; regionCodes: string[]; enabled: boolean; is_default: boolean; sort_order: number; inventory_category: string | null }>({
+  name: '', template_type: 'set_based', setTypesText: '', regionCodes: [], enabled: true, is_default: false, sort_order: 100, inventory_category: null,
 })
+const inventoryCategories = ref<InventoryCategory[]>([])
+
+function inventoryCategoryLabel(key: string | null | undefined) {
+  if (!key) return 'A类目（默认）'
+  return inventoryCategories.value.find((item) => item.key === key)?.label ?? `${key}类目`
+}
 
 const templateOptions = computed(() => Object.entries(templateTypes.value).map(([value, info]) => ({ value, ...info })))
 const createTemplateInfo = computed(() => templateTypes.value[createForm.template_type])
@@ -70,6 +76,11 @@ async function load() {
   } finally {
     loading.value = false
   }
+  try {
+    inventoryCategories.value = await getInventoryCategories()
+  } catch {
+    // 库存类目加载失败不阻塞页面
+  }
 }
 
 async function create() {
@@ -87,10 +98,11 @@ async function create() {
       template_type: createForm.template_type,
       set_types: setTypes,
       allowed_regions: allowedRegions,
+      inventory_category: createForm.inventory_category,
       sort_order: createForm.sort_order,
     })
     createVisible.value = false
-    Object.assign(createForm, { code: '', name: '', template_type: 'set_based', setTypesText: '', sort_order: 100 })
+    Object.assign(createForm, { code: '', name: '', template_type: 'set_based', setTypesText: '', sort_order: 100, inventory_category: null })
     notifySuccess('品类已创建，已为开放区域生成默认参数')
     await load()
   } catch (error) {
@@ -110,10 +122,10 @@ function openEdit(category: CategorySummary) {
     enabled: category.enabled,
     is_default: category.is_default,
     sort_order: category.sort_order,
+    inventory_category: category.inventory_category ?? null,
   })
   editVisible.value = true
 }
-
 async function saveEdit() {
   const setTypes = editForm.template_type === 'custom_set' ? parseSetTypes(editForm.setTypesText) : []
   if (editForm.template_type === 'custom_set' && !setTypesValid(setTypes)) {
@@ -130,6 +142,7 @@ async function saveEdit() {
       allowed_regions: allowedRegions,
       enabled: editForm.enabled,
       is_default: editForm.is_default,
+      inventory_category: editForm.inventory_category,
       sort_order: editForm.sort_order,
     })
     editVisible.value = false
@@ -151,6 +164,7 @@ async function toggleEnabled(category: CategorySummary) {
       allowed_regions: category.allowed_regions,
       enabled: !category.enabled,
       is_default: category.is_default,
+      inventory_category: category.inventory_category ?? null,
       sort_order: category.sort_order,
     })
     notifySuccess(category.enabled ? '品类已停用' : '品类已启用')
@@ -199,6 +213,7 @@ onMounted(load)
         <el-table-column prop="sort_order" label="排序" width="70" />
         <el-table-column label="状态" width="110"><template #default="scope"><el-tag :type="scope.row.enabled ? 'success' : 'info'">{{ scope.row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
         <el-table-column label="默认品类" width="120"><template #default="scope"><el-tag v-if="scope.row.is_default" type="primary">默认</el-tag></template></el-table-column>
+        <el-table-column label="库存类目" width="130"><template #default="scope">{{ inventoryCategoryLabel(scope.row.inventory_category) }}</template></el-table-column>
         <el-table-column label="操作" min-width="330" align="right">
           <template #default="scope">
             <el-button link type="primary" :icon="Edit" @click="openEdit(scope.row)">编辑</el-button>
@@ -241,6 +256,12 @@ onMounted(load)
             <el-option v-for="region in regions" :key="region.code" :label="region.name" :value="region.code" />
           </el-select>
         </el-form-item>
+        <el-form-item label="绑定库存类目">
+          <el-select v-model="createForm.inventory_category" clearable placeholder="默认（A类目）" class="category-region-select">
+            <el-option v-for="cat in inventoryCategories" :key="cat.key" :value="cat.key" :label="cat.label" />
+          </el-select>
+          <div class="region-code-hint">该品类计算成本时使用的库存表类目；不选 = 默认 A 类目</div>
+        </el-form-item>
         <el-form-item label="显示排序"><el-input-number v-model="createForm.sort_order" :min="-10000" :max="10000" controls-position="right" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="createVisible = false">取消</el-button><el-button type="primary" :loading="saving" :disabled="!createForm.code.trim() || !createForm.name.trim()" @click="create">创建品类</el-button></template>
@@ -270,6 +291,12 @@ onMounted(load)
           </el-form-item>
         </div>
         <el-form-item label="默认品类"><el-switch v-model="editForm.is_default" active-text="设为默认" :disabled="!editForm.enabled && !editForm.is_default" /><div class="region-code-hint">用户未选择品类时使用默认品类</div></el-form-item>
+        <el-form-item label="绑定库存类目">
+          <el-select v-model="editForm.inventory_category" clearable placeholder="默认（A类目）" class="category-region-select">
+            <el-option v-for="cat in inventoryCategories" :key="cat.key" :value="cat.key" :label="cat.label" />
+          </el-select>
+          <div class="region-code-hint">该品类计算成本时使用的库存表类目；不选 = 默认 A 类目</div>
+        </el-form-item>
       </el-form>
       <template #footer><el-button @click="editVisible = false">取消</el-button><el-button type="primary" :loading="saving" :disabled="!editForm.name.trim() || !editForm.regionCodes.length" @click="saveEdit">保存修改</el-button></template>
     </el-dialog>

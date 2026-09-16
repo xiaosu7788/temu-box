@@ -11,6 +11,8 @@ data/inventories/*.xlsx
 data/half_headcost_skus.json
 data/头程减半初始名单.xlsx
 data/inventories/*.upload
+data/pending_inventory_catalog*.json
+data/inventories/*.candidate.xlsx
 __pycache__/
 *.py[cod]
 .pytest_cache/

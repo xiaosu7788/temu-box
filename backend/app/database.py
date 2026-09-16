@@ -48,6 +48,8 @@ class InventoryVersion(Base):
     parser_version: Mapped[int] = mapped_column(Integer)
     sku_count: Mapped[int] = mapped_column(Integer, default=0)
     is_current: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 所属库存类目（A/B...；历史数据归 A）
+    category: Mapped[str] = mapped_column(String(16), default="A", server_default="A", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
@@ -60,6 +62,7 @@ class InventoryItem(Base):
     source_row: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     source_column: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     inventory_version_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    category: Mapped[str] = mapped_column(String(16), primary_key=True, default="A", server_default="A", index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
@@ -69,11 +72,30 @@ class InventoryExclusion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
+class InventoryCategoryDef(Base):
+    """库存类目定义（管理员可新建）；A/B 为内置，新类目默认自动探测模式。"""
+    __tablename__ = "inventory_category_defs"
+    key: Mapped[str] = mapped_column(String(16), primary_key=True)
+    label: Mapped[str] = mapped_column(String(80))
+    # 提取模式：auto（自动探测）| mapped（固定 sheet 列映射，暂只有内置 A）
+    mode: Mapped[str] = mapped_column(String(16), default="auto", server_default="auto")
+    # SKU 编码正则（自动探测模式使用）
+    code_pattern: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # 价格上限
+    price_max: Mapped[float] = mapped_column(Float, default=100.0, server_default="100")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=sa_true())
+    sort_order: Mapped[int] = mapped_column(Integer, default=100, server_default="100")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 class HalfHeadcostSku(Base):
     __tablename__ = "half_headcost_skus"
     # 品类隔离：同一 SKU 可出现在不同品类的减半名单中
     category_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     sku: Mapped[str] = mapped_column(String(255), primary_key=True)
+    # 所属库存类目；同一业务品类同一 SKU 可分别存在于 A/B 库存类目
+    inventory_category: Mapped[str] = mapped_column(String(16), primary_key=True, default="A", server_default="A", index=True)
     set_type: Mapped[str] = mapped_column(String(64), default="单品")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -112,6 +134,8 @@ class Category(Base):
     set_types: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # 品类开放的区域（JSON 数组存区域代码）；NULL = 全部区域开放
     allowed_regions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 绑定的库存类目（A/B...；NULL = 默认 A）
+    inventory_category: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=sa_true())
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false())
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -244,20 +268,58 @@ def _ensure_category_schema() -> None:
     - region_configs 增加 category_id 并重建唯一约束
     - half_headcost_skus 重建为 (category_id, sku) 复合主键
     - activity_jobs 补齐 category_code / category_name 列（存量归入默认品类）
+    - inventory_versions / inventory_items / half_headcost_skus 补类目列（历史数据归 A）
     """
     with engine.begin() as connection:
         inspector = sa_inspect(connection)
         if not inspector.has_table("categories"):
             Category.__table__.create(connection)
         else:
-            # 旧库补列（allowed_regions：NULL = 全部区域开放）
+            # 旧库补列（allowed_regions：NULL = 全部区域开放；inventory_category：绑定的库存类目）
             category_columns = {column["name"] for column in inspector.get_columns("categories")}
             if "allowed_regions" not in category_columns:
                 connection.execute(text("ALTER TABLE categories ADD COLUMN allowed_regions TEXT"))
+            if "inventory_category" not in category_columns:
+                connection.execute(text("ALTER TABLE categories ADD COLUMN inventory_category VARCHAR(16)"))
+        # 库存表补类目列（历史数据归 A）
+        for table_name in ("inventory_versions", "inventory_items", "half_headcost_skus"):
+            if inspector.has_table(table_name):
+                table_columns = {column["name"] for column in inspector.get_columns(table_name)}
+                if table_name == "half_headcost_skus":
+                    if "inventory_category" not in table_columns:
+                        connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN inventory_category VARCHAR(16) NOT NULL DEFAULT 'A'"))
+                elif "category" not in table_columns:
+                    connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN category VARCHAR(16) NOT NULL DEFAULT 'A'"))
+        if not inspector.has_table("inventory_category_defs"):
+            InventoryCategoryDef.__table__.create(connection)
+        if connection.dialect.name == "sqlite" and inspector.has_table("inventory_items"):
+            pk_columns = inspector.get_pk_constraint("inventory_items").get("constrained_columns") or []
+            if set(pk_columns) != {"sku", "category"}:
+                connection.execute(text("ALTER TABLE inventory_items RENAME TO inventory_items_legacy_category"))
+                InventoryItem.__table__.create(connection)
+                connection.execute(text("INSERT INTO inventory_items (sku, price, set_type, source_sheet, source_row, source_column, inventory_version_id, category, updated_at) SELECT sku, price, set_type, source_sheet, source_row, source_column, inventory_version_id, COALESCE(category, 'A'), updated_at FROM inventory_items_legacy_category"))
+                connection.execute(text("DROP TABLE inventory_items_legacy_category"))
+        if connection.dialect.name == "sqlite" and inspector.has_table("half_headcost_skus"):
+            half_columns = {column["name"] for column in inspector.get_columns("half_headcost_skus")}
+            if "category_id" in half_columns:
+                half_pk = inspector.get_pk_constraint("half_headcost_skus").get("constrained_columns") or []
+                if set(half_pk) != {"category_id", "sku", "inventory_category"}:
+                    connection.execute(text("ALTER TABLE half_headcost_skus RENAME TO half_headcost_skus_legacy_inventory"))
+                    HalfHeadcostSku.__table__.create(connection)
+                    connection.execute(text("INSERT INTO half_headcost_skus (category_id, sku, inventory_category, set_type, updated_at) SELECT category_id, sku, COALESCE(inventory_category, 'A'), set_type, updated_at FROM half_headcost_skus_legacy_inventory"))
+                    connection.execute(text("DROP TABLE half_headcost_skus_legacy_inventory"))
+        # 品类种子（默认 A 品类）
         if not connection.execute(text("SELECT 1 FROM categories LIMIT 1")).scalar():
             connection.execute(text(
                 "INSERT INTO categories (code, name, template_type, set_types, enabled, is_default, sort_order) "
                 "VALUES ('A', 'A品类', 'set_based', '[]', true, true, 10)"
+            ))
+        # 库存类目定义种子（A/B 内置）
+        if not connection.execute(text("SELECT 1 FROM inventory_category_defs LIMIT 1")).scalar():
+            connection.execute(text(
+                "INSERT INTO inventory_category_defs (key, label, mode, price_max, enabled, sort_order, created_at, updated_at) "
+                "VALUES ('A', 'A类目', 'mapped', 100, true, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), "
+                "('B', 'B类目', 'auto', 100, true, 20, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             ))
         category = connection.execute(text("SELECT id, code, name FROM categories WHERE is_default LIMIT 1")).first()
         category_id = category[0] if category else None
@@ -385,15 +447,21 @@ def db_session() -> Iterator:
         session.close()
 
 
-def inventory_signature_matches(signature: dict) -> bool:
+def _category_key(category: Optional[str]) -> str:
+    return (category or "A").strip().upper()
+
+
+def inventory_signature_matches(signature: dict, category: Optional[str] = "A") -> bool:
+    key = _category_key(category)
     with db_session() as session:
-        version = session.scalar(select(InventoryVersion).where(InventoryVersion.is_current.is_(True)).order_by(InventoryVersion.id.desc()))
+        version = session.scalar(select(InventoryVersion).where(InventoryVersion.is_current.is_(True), InventoryVersion.category == key).order_by(InventoryVersion.id.desc()))
         return bool(version and version.source_path == signature["path"] and version.file_size == signature["size"] and version.mtime_ns == signature["mtime_ns"] and version.parser_version == signature["parser_version"])
 
 
-def current_inventory_metadata() -> Optional[dict]:
+def current_inventory_metadata(category: Optional[str] = "A") -> Optional[dict]:
+    key = _category_key(category)
     with db_session() as session:
-        version = session.scalar(select(InventoryVersion).where(InventoryVersion.is_current.is_(True)).order_by(InventoryVersion.id.desc()))
+        version = session.scalar(select(InventoryVersion).where(InventoryVersion.is_current.is_(True), InventoryVersion.category == key).order_by(InventoryVersion.id.desc()))
         if not version:
             return None
         return {
@@ -406,120 +474,205 @@ def current_inventory_metadata() -> Optional[dict]:
         }
 
 
-def invalidate_inventory_catalog() -> None:
+def invalidate_inventory_catalog(category: Optional[str] = None) -> None:
+    """category 为 None 时清全部类目版本；否则只清该类目。"""
     with db_session() as session:
-        session.query(InventoryVersion).update({InventoryVersion.is_current: False})
+        statement = session.query(InventoryVersion)
+        if category is not None:
+            statement = statement.filter(InventoryVersion.category == _category_key(category))
+        statement.update({InventoryVersion.is_current: False})
 
 
-def get_inventory_catalog() -> dict:
+def get_inventory_catalog(category: Optional[str] = "A") -> dict:
+    key = _category_key(category)
     with db_session() as session:
         excluded = set(session.scalars(select(InventoryExclusion.sku)).all())
-        rows = session.scalars(select(InventoryItem)).all()
-        return {row.sku: {key: getattr(row, key) for key in ("sku", "price", "set_type", "source_sheet", "source_row", "source_column")} for row in rows if row.sku not in excluded}
+        rows = session.scalars(select(InventoryItem).where(InventoryItem.category == key)).all()
+        return {row.sku: {key2: getattr(row, key2) for key2 in ("sku", "price", "set_type", "source_sheet", "source_row", "source_column")} for row in rows if row.sku not in excluded}
 
 
 def _inventory_item_values(row: InventoryItem) -> dict:
     return {key: getattr(row, key) for key in ("sku", "price", "set_type", "source_sheet", "source_row", "source_column")}
 
 
-def _update_current_inventory_count(session) -> None:
+def _update_current_inventory_count(session, category: Optional[str] = None) -> None:
     session.flush()
-    version = session.scalar(select(InventoryVersion).where(InventoryVersion.is_current.is_(True)).order_by(InventoryVersion.id.desc()))
+    statement = select(InventoryVersion).where(InventoryVersion.is_current.is_(True))
+    if category is not None:
+        statement = statement.where(InventoryVersion.category == _category_key(category))
+    version = session.scalar(statement.order_by(InventoryVersion.id.desc()))
     if version:
-        version.sku_count = session.query(InventoryItem).count()
+        count_statement = session.query(InventoryItem)
+        if category is not None:
+            count_statement = count_statement.filter(InventoryItem.category == _category_key(category))
+        version.sku_count = count_statement.count()
 
 
-def create_inventory_item(sku: str, price: Optional[float], set_type: str) -> dict:
+def create_inventory_item(sku: str, price: Optional[float], set_type: str, category: Optional[str] = "A") -> dict:
+    key = _category_key(category)
     with db_session() as session:
-        if session.get(InventoryItem, sku):
+        if session.get(InventoryItem, (sku, key)):
             raise ValueError("库存 SKU 已存在")
         session.query(InventoryExclusion).filter(InventoryExclusion.sku == sku).delete()
-        row = InventoryItem(sku=sku, price=price, set_type=set_type, source_sheet="手动维护")
+        row = InventoryItem(sku=sku, price=price, set_type=set_type, source_sheet="手动维护", category=key)
         session.add(row)
-        _update_current_inventory_count(session)
+        _update_current_inventory_count(session, key)
         session.flush()
         return _inventory_item_values(row)
 
 
-def update_inventory_item(old_sku: str, sku: str, price: Optional[float], set_type: str) -> Optional[dict]:
+def update_inventory_item(old_sku: str, sku: str, price: Optional[float], set_type: str, category: Optional[str] = "A") -> Optional[dict]:
+    key = _category_key(category)
     with db_session() as session:
-        row = session.get(InventoryItem, old_sku)
+        row = session.get(InventoryItem, (old_sku, key))
         if not row:
             return None
-        if sku != old_sku and session.get(InventoryItem, sku):
+        if sku != old_sku and session.get(InventoryItem, (sku, key)):
             raise ValueError("库存 SKU 已存在")
         if sku != old_sku:
             session.delete(row)
             session.flush()
-            row = InventoryItem(sku=sku)
+            row = InventoryItem(sku=sku, category=key)
             session.add(row)
         row.price = price
         row.set_type = set_type
         row.source_sheet = "手动维护"
         row.source_row = None
         row.source_column = None
+        row.category = key
         row.inventory_version_id = None
         session.query(InventoryExclusion).filter(InventoryExclusion.sku.in_([old_sku, sku])).delete(synchronize_session=False)
-        _update_current_inventory_count(session)
+        _update_current_inventory_count(session, key)
         session.flush()
         return _inventory_item_values(row)
 
 
-def delete_inventory_item(sku: str) -> bool:
+def delete_inventory_item(sku: str, category: Optional[str] = "A") -> bool:
+    key = _category_key(category)
     with db_session() as session:
-        row = session.get(InventoryItem, sku)
+        row = session.get(InventoryItem, (sku, key))
         if not row:
             return False
         session.delete(row)
         if not session.get(InventoryExclusion, sku):
             session.add(InventoryExclusion(sku=sku))
-        _update_current_inventory_count(session)
+        _update_current_inventory_count(session, key)
         return True
 
 
-def save_inventory_catalog(signature: dict, catalog: dict) -> None:
+def save_inventory_catalog(signature: dict, catalog: dict, category: Optional[str] = "A") -> None:
+    key = _category_key(category)
     with db_session() as session:
-        session.query(InventoryVersion).update({InventoryVersion.is_current: False})
-        session.query(InventoryExclusion).delete()
-        version = InventoryVersion(source_path=signature["path"], file_size=signature["size"], mtime_ns=signature["mtime_ns"], parser_version=signature["parser_version"], sku_count=len(catalog), is_current=True)
+        session.query(InventoryVersion).filter(InventoryVersion.category == key).update({InventoryVersion.is_current: False})
+        if key == "A":
+            # A 类目沿用历史行为：新表覆盖时清空全部排除名单
+            session.query(InventoryExclusion).delete(synchronize_session=False)
+        else:
+            # 其他类目：只保留 A 类目 SKU 的排除，避免 B 新表误清 A 的删除标记
+            a_skus = {row.sku for row in session.query(InventoryItem.sku).filter(InventoryItem.category == "A").all()}
+            session.query(InventoryExclusion).filter(~InventoryExclusion.sku.in_(a_skus or {""})).delete(synchronize_session=False)
+        version = InventoryVersion(source_path=signature["path"], file_size=signature["size"], mtime_ns=signature["mtime_ns"], parser_version=signature["parser_version"], sku_count=len(catalog), is_current=True, category=key)
         session.add(version)
         session.flush()
-        session.query(InventoryItem).delete()
+        # 删除该类目旧明细（排除名单中的 SKU 保留在别的类目不受影响——排除表是全局按 SKU）
+        session.query(InventoryItem).filter(InventoryItem.category == key).delete(synchronize_session=False)
         for sku, item in catalog.items():
-            session.add(InventoryItem(inventory_version_id=version.id, sku=sku, **{key: item.get(key) for key in ("price", "set_type", "source_sheet", "source_row", "source_column")}))
+            session.add(InventoryItem(inventory_version_id=version.id, sku=sku, category=key, **{k: item.get(k) for k in ("price", "set_type", "source_sheet", "source_row", "source_column")}))
 
 
-def load_half_entries(category_id: int) -> dict:
+def get_inventory_category_defs() -> dict:
     with db_session() as session:
-        return {row.sku: row.set_type for row in session.scalars(select(HalfHeadcostSku).where(HalfHeadcostSku.category_id == category_id)).all()}
+        rows = session.query(InventoryCategoryDef).filter(InventoryCategoryDef.enabled.is_(True)).order_by(InventoryCategoryDef.sort_order, InventoryCategoryDef.key).all()
+        return {row.key: {"label": row.label, "mode": row.mode, "code_pattern": row.code_pattern, "price_max": row.price_max, "sort_order": row.sort_order} for row in rows}
 
 
-def count_half_entries() -> int:
+def list_inventory_category_defs(include_disabled: bool = True) -> list[dict]:
     with db_session() as session:
-        return session.scalar(select(func.count()).select_from(HalfHeadcostSku)) or 0
+        rows = session.query(InventoryCategoryDef).order_by(InventoryCategoryDef.sort_order, InventoryCategoryDef.key).all()
+        return [{"key": row.key, "label": row.label, "mode": row.mode, "code_pattern": row.code_pattern, "price_max": row.price_max, "enabled": row.enabled, "sort_order": row.sort_order} for row in rows if include_disabled or row.enabled]
 
 
-def merge_half_entries(category_id: int, values: dict) -> tuple[int, int]:
+def create_inventory_category_def(key: str, label: str, code_pattern: Optional[str], price_max: float, mode: str = "auto") -> dict:
     with db_session() as session:
-        before = {row.sku for row in session.scalars(select(HalfHeadcostSku).where(HalfHeadcostSku.category_id == category_id)).all()}
+        if session.get(InventoryCategoryDef, key):
+            raise ValueError("库存类目代码已存在")
+        row = InventoryCategoryDef(key=key, label=label, mode=mode, code_pattern=code_pattern, price_max=price_max, enabled=True)
+        session.add(row)
+        session.flush()
+        return {"key": row.key, "label": row.label, "mode": row.mode, "code_pattern": row.code_pattern, "price_max": row.price_max, "enabled": row.enabled, "sort_order": row.sort_order}
+
+
+def update_inventory_category_def(key: str, label: str, code_pattern: Optional[str], price_max: float, enabled: bool, sort_order: int) -> dict:
+    with db_session() as session:
+        row = session.get(InventoryCategoryDef, key)
+        if not row:
+            raise ValueError("库存类目不存在")
+        if key in ("A", "B") and not enabled:
+            raise ValueError("内置库存类目不能停用")
+        row.label, row.code_pattern, row.price_max, row.enabled, row.sort_order = label, code_pattern, price_max, enabled, sort_order
+        row.updated_at = datetime.now(timezone.utc)
+        return {"key": row.key, "label": row.label, "mode": row.mode, "code_pattern": row.code_pattern, "price_max": row.price_max, "enabled": row.enabled, "sort_order": row.sort_order}
+
+
+def delete_inventory_category_def(key: str) -> None:
+    if key in ("A", "B"):
+        raise ValueError("内置库存类目不能删除")
+    with db_session() as session:
+        row = session.get(InventoryCategoryDef, key)
+        if not row:
+            raise ValueError("库存类目不存在")
+        session.delete(row)
+def load_half_entries(category_id: int, inventory_category: Optional[str] = "A") -> dict:
+    key = (inventory_category or "A").strip().upper()
+    with db_session() as session:
+        return {row.sku: row.set_type for row in session.scalars(select(HalfHeadcostSku).where(HalfHeadcostSku.category_id == category_id, HalfHeadcostSku.inventory_category == key)).all()}
+
+
+def count_half_entries(inventory_category: Optional[str] = None) -> int:
+    with db_session() as session:
+        statement = select(func.count()).select_from(HalfHeadcostSku)
+        if inventory_category:
+            statement = statement.where(HalfHeadcostSku.inventory_category == (inventory_category or "A").strip().upper())
+        return session.scalar(statement) or 0
+
+
+def merge_half_entries(category_id: int, values: dict, inventory_category: Optional[str] = "A") -> tuple[int, int]:
+    key = (inventory_category or "A").strip().upper()
+    with db_session() as session:
+        before = {row.sku for row in session.scalars(select(HalfHeadcostSku).where(HalfHeadcostSku.category_id == category_id, HalfHeadcostSku.inventory_category == key)).all()}
         for sku, set_type in values.items():
-            row = session.get(HalfHeadcostSku, (category_id, sku))
+            row = session.get(HalfHeadcostSku, (category_id, sku, key))
             if row:
                 row.set_type = set_type
                 row.updated_at = datetime.now(timezone.utc)
             else:
-                session.add(HalfHeadcostSku(category_id=category_id, sku=sku, set_type=set_type))
+                session.add(HalfHeadcostSku(category_id=category_id, sku=sku, inventory_category=key, set_type=set_type))
         return len(set(values) - before), len(before | set(values))
 
 
-def delete_half_entry(category_id: int, sku: str) -> bool:
+def delete_half_entry(category_id: int, sku: str, inventory_category: Optional[str] = "A") -> bool:
+    key = (inventory_category or "A").strip().upper()
     with db_session() as session:
-        row = session.get(HalfHeadcostSku, (category_id, sku))
+        row = session.get(HalfHeadcostSku, (category_id, sku, key))
         if not row:
             return False
         session.delete(row)
         return True
 
+
+def upsert_half_entry(category_id: int, sku: str, set_type: str, inventory_category: Optional[str] = "A") -> dict:
+    """新增或更新单条头程减半名单（主键：品类 + SKU + 库存类目）。"""
+    key = (inventory_category or "A").strip().upper()
+    with db_session() as session:
+        row = session.get(HalfHeadcostSku, (category_id, sku, key))
+        if row:
+            row.set_type = set_type
+            row.updated_at = datetime.now(timezone.utc)
+        else:
+            row = HalfHeadcostSku(category_id=category_id, sku=sku, inventory_category=key, set_type=set_type)
+            session.add(row)
+        session.flush()
+        return {"sku": row.sku, "set_type": row.set_type, "category_id": row.category_id, "inventory_category": row.inventory_category}
 
 def save_task_record(task: dict) -> None:
     with db_session() as session:
@@ -906,3 +1059,27 @@ def database_status() -> dict:
 
 if os.environ.get("TEMUBOX_SKIP_DB_INIT") != "1":
     init_database()
+
+
+def get_flag(key: str) -> bool:
+    """读取布尔标记（存于 app_settings，值为 JSON true/false）。"""
+    with db_session() as session:
+        row = session.get(AppSetting, key)
+        if not row:
+            return False
+        try:
+            return bool(json.loads(row.value))
+        except (json.JSONDecodeError, TypeError):
+            return False
+
+
+def set_flag(key: str, value: bool = True) -> None:
+    """写入布尔标记。用于记录「一次性初始化是否已完成」这类状态。"""
+    with db_session() as session:
+        row = session.get(AppSetting, key)
+        encoded = json.dumps(bool(value))
+        if row:
+            row.value = encoded
+            row.updated_at = datetime.now(timezone.utc)
+        else:
+            session.add(AppSetting(key=key, value=encoded))
