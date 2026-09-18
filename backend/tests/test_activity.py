@@ -363,3 +363,163 @@ def test_admin_frontend_activity_list_is_scoped_but_admin_list_includes_all_jobs
         assert job_id in admin_ids
         assert client.get(f"/api/activities/{job_id}").status_code == 404
         assert client.delete(f"/api/activities/{job_id}").status_code == 404
+
+
+def make_paged_activity_workbook(rows: int = 12) -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "活动申报价格"
+    sheet.append(["SKC货号", "活动申报价格"])
+    for index in range(rows):
+        # 5 号单品基础活动价 17；申报价 20 触发上浮，申报价 16 触发删除
+        skc = f"MB{index:03d}-A-5"
+        price = 20 if index % 3 == 0 else 16 if index % 3 == 1 else 17
+        sheet.append([skc, price])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+    return content.getvalue()
+
+
+def test_preview_pagination_returns_every_row_once():
+    content = make_paged_activity_workbook(12)
+    seen_rows = []
+    for page in range(1, 4):
+        preview = preview_activity_workbook(content, page=page, page_size=5)
+        assert preview["total_items"] == 12
+        assert preview["total_pages"] == 3
+        assert preview["page"] == page
+        assert preview["page_size"] == 5
+        seen_rows.extend(item["row"] for item in preview["items"])
+
+    assert seen_rows == list(range(2, 14))
+
+
+def test_preview_page_is_clamped_and_size_is_capped():
+    content = make_paged_activity_workbook(3)
+    beyond = preview_activity_workbook(content, page=99, page_size=1000)
+    assert beyond["page"] == 1
+    assert beyond["page_size"] == 500
+    assert len(beyond["items"]) == 3
+
+
+def test_preview_result_filter_only_affects_details():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SKC货号", "活动申报价格"])
+    sheet.append(["MB131-A-5", 20])
+    sheet.append(["y1-4piece", 60])
+    sheet.append(["UNKNOWN", 20])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    preview = preview_activity_workbook(content.getvalue(), result_filter="套装")
+
+    assert preview["result_filter"] == "套装"
+    assert preview["total_rows"] == 3
+    assert preview["single_rows"] == 1
+    assert preview["set_rows"] == 1
+    assert preview["unrecognized_rows"] == 1
+    assert preview["total_items"] == 1
+    assert [item["result"] for item in preview["items"]] == ["套装"]
+
+
+def test_preview_reports_final_price_range_and_actions():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SKC货号", "活动申报价格"])
+    sheet.append(["MB131-A-5", 20])   # 基础 17，申报 20 → 上浮到 (17, 18]
+    sheet.append(["MB131-B-5", 17])   # 基础 17，申报 17 → 不变
+    sheet.append(["MB131-C-5", 16])   # 申报低于基础 → 将被删除
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    preview = preview_activity_workbook(content.getvalue(), settings={"activity": {"uplift_limit": 1}})
+    items = {item["skc"]: item for item in preview["items"]}
+
+    assert preview["uplift_limit"] == 1
+    uplift = items["MB131-A-5"]
+    assert uplift["base_price"] == 17
+    assert uplift["reference_price"] == 20
+    assert uplift["final_price_low"] == 17
+    assert uplift["final_price_high"] == 18
+    assert uplift["action"] == "上浮"
+
+    unchanged = items["MB131-B-5"]
+    assert unchanged["action"] == "不变"
+    assert unchanged["final_price_low"] == unchanged["final_price_high"] == 17
+
+    removed = items["MB131-C-5"]
+    assert removed["action"] == "将被删除"
+    assert removed["final_price_low"] is None and removed["final_price_high"] is None
+
+
+def test_preview_final_price_high_is_capped_by_reference_price():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SKC货号", "活动申报价格"])
+    sheet.append(["MB131-A-5", 17.4])  # 浮动上限 1，但申报价只允许上浮 0.4
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    preview = preview_activity_workbook(content.getvalue(), settings={"activity": {"uplift_limit": 1}})
+
+    assert preview["items"][0]["final_price_high"] == 17.4
+
+
+def test_preview_includes_id_profit_rule_in_base_price():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["SPU ID", "SKC货号", "活动申报价格"])
+    sheet.append(["9001", "MB131-A-5", 30])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    rules = [{"id_type": "SPU", "id": "9001", "profit": 2}]
+    preview = preview_activity_workbook(content.getvalue(), settings={"activity": {"uplift_limit": 1}}, id_profit_rules=rules)
+
+    item = preview["items"][0]
+    assert item["profit_adjustment"] == 2
+    assert item["base_price"] == 19
+    assert item["final_price_low"] == 19
+    assert item["final_price_high"] == 20
+
+
+def test_activity_preview_endpoint_paginates_and_rejects_bad_filter():
+    create_user("activity_page_user", hash_password("pagepass123"), status="approved")
+    content = make_paged_activity_workbook(12)
+
+    with TestClient(app) as client:
+        client.post("/api/auth/login", json={"username": "activity_page_user", "password": "pagepass123"})
+        response = client.post(
+            "/api/activities/preview",
+            data={"page": "2", "page_size": "5"},
+            files={"file": ("preview.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["page"] == 2
+        assert payload["total_pages"] == 3
+        assert payload["total_items"] == 12
+        assert len(payload["items"]) == 5
+        assert payload["items"][0]["row"] == 7
+
+        filtered = client.post(
+            "/api/activities/preview",
+            data={"result_filter": "无法识别"},
+            files={"file": ("preview.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert filtered.status_code == 200
+        assert filtered.json()["total_items"] == 0
+        assert filtered.json()["total_rows"] == 12
+
+        bad = client.post(
+            "/api/activities/preview",
+            data={"result_filter": "乱填"},
+            files={"file": ("preview.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert bad.status_code == 400

@@ -30,6 +30,8 @@ REQUIRED_HEADER_KEYS = {"skc", "price"}
 ID_RULE_TYPES = ("SPU", "SKC", "SKU")
 SINGLE_PARSE_MODES = {"first_segment", "last_segment", "after_marker"}
 MAX_PREVIEW_ROWS = 100
+MAX_PREVIEW_PAGE_SIZE = 500
+PREVIEW_RESULT_FILTERS = ("单品", "套装", "无法识别")
 MAX_ID_PROFIT_RULES = 1000
 
 
@@ -300,7 +302,20 @@ def settings_allowed_pieces(settings=None) -> frozenset[int]:
     return frozenset(pieces)
 
 
-def preview_activity_workbook(source: bytes, parse_config: Optional[dict] = None, settings=None, id_profit_rules: Optional[list[dict]] = None) -> dict:
+def preview_activity_workbook(
+    source: bytes,
+    parse_config: Optional[dict] = None,
+    settings=None,
+    id_profit_rules: Optional[list[dict]] = None,
+    page: int = 1,
+    page_size: int = MAX_PREVIEW_ROWS,
+    result_filter: Optional[str] = None,
+) -> dict:
+    """预览识别结果。
+
+    统计数字始终基于全表；明细按 page/page_size 分页返回（真分页，可翻到任意一行）。
+    result_filter 可选 "单品" / "套装" / "无法识别"，只影响明细，不影响统计。
+    """
     if not source:
         raise ValueError("上传的报名表为空")
     workbook = load_workbook(io.BytesIO(source), data_only=False, read_only=True, keep_links=False)
@@ -313,10 +328,21 @@ def preview_activity_workbook(source: bytes, parse_config: Optional[dict] = None
             id_profit_rules if id_profit_rules is not None else activity_settings.get("id_profit_rules", [])
         )
         skc_column = columns["skc"]
-        items = []
+        price_column = columns["price"]
+        # 需要 SKC/价格列与三个 ID 列中最大者；iter_rows 只到这一列即可
+        last_column = max([skc_column, price_column] + [columns[k] for k in ("spu_id", "skc_id", "sku_id") if k in columns])
+        # 列号 → ID 规则类型（SPU/SKC/SKU），与 match_id_profit_rule 的键保持一致
+        id_columns = {columns[key]: id_type for id_type, key in (("SPU", "spu_id"), ("SKC", "skc_id"), ("SKU", "sku_id")) if key in columns}
+        uplift_limit = float(activity_settings.get("uplift_limit", 1))
+        all_items = []
         total = single_rows = set_rows = unrecognized_rows = id_rule_matches = 0
-        for row in range(header_row + 1, worksheet.max_row + 1):
-            skc = worksheet.cell(row, skc_column).value
+        # read_only 模式下 ws.cell(row, col) 每次调用都重扫 XML 流（O(N²)），
+        # 是预览慢的根因；iter_rows 顺序流式读取，一次扫完。
+        for row_index, row_cells in enumerate(
+            worksheet.iter_rows(min_row=header_row + 1, max_col=last_column, values_only=True),
+            start=header_row + 1,
+        ):
+            skc = row_cells[skc_column - 1]
             if not _text(skc):
                 continue
             total += 1
@@ -328,19 +354,28 @@ def preview_activity_workbook(source: bytes, parse_config: Optional[dict] = None
                 else:
                     single_rows += 1
                 result = "套装" if kind == "set" else "单品"
-                identifiers = {
-                    id_type: worksheet.cell(row, columns[id_key]).value
-                    for id_type, id_key in (("SPU", "spu_id"), ("SKC", "skc_id"), ("SKU", "sku_id"))
-                    if id_key in columns
-                }
+                identifiers = {id_type: row_cells[col - 1] for col, id_type in id_columns.items()}
                 matched_rule = match_id_profit_rule(identifiers, effective_id_rules)
                 adjustment = float(matched_rule["profit"]) if matched_rule else 0
                 if matched_rule:
                     id_rule_matches += 1
-                base_price = activity_base_price((kind, detail["value"]), settings)
-                adjusted_price = base_price + adjustment
+                base_price = activity_base_price((kind, detail["value"]), settings, adjustment)
+                # 正式处理会把价格上浮到 (base, reference] 区间内（受 uplift_limit 封顶）；
+                # 预览据此给出实际会写入的价格区间，并标出「参照价低于底价 → 该行会被删除」。
+                reference = _reference_price(row_cells[price_column - 1])
+                if reference is None:
+                    final_low = final_high = None
+                    action = "无法识别"
+                elif reference < base_price:
+                    final_low = final_high = None
+                    action = "将被删除"
+                else:
+                    cap = min(uplift_limit, max(0.0, reference - base_price))
+                    final_low = round(base_price, 2)
+                    final_high = round(base_price + cap, 2)
+                    action = "不变" if abs(reference - base_price) < 0.000001 else "上浮"
                 item = {
-                    "row": row,
+                    "row": row_index,
                     "skc": _text(skc),
                     "spu_id": _text(identifiers.get("SPU")) or None,
                     "skc_id": _text(identifiers.get("SKC")) or None,
@@ -348,7 +383,10 @@ def preview_activity_workbook(source: bytes, parse_config: Optional[dict] = None
                     "result": result,
                     "value": detail["value"],
                     "base_price": round(base_price, 2),
-                    "adjusted_price": round(adjusted_price, 2),
+                    "reference_price": reference,
+                    "final_price_low": final_low,
+                    "final_price_high": final_high,
+                    "action": action,
                     "profit_adjustment": round(adjustment, 2),
                     "matched_id_type": matched_rule["id_type"] if matched_rule else None,
                     "matched_id": matched_rule["matched_id"] if matched_rule else None,
@@ -356,9 +394,26 @@ def preview_activity_workbook(source: bytes, parse_config: Optional[dict] = None
                 }
             else:
                 unrecognized_rows += 1
-                item = {"row": row, "skc": _text(skc), "result": "无法识别", "value": None, "base_price": None, "method": "未匹配规则或套装件数未配置"}
-            if len(items) < MAX_PREVIEW_ROWS:
-                items.append(item)
+                item = {
+                    "row": row_index,
+                    "skc": _text(skc),
+                    "result": "无法识别",
+                    "value": None,
+                    "base_price": None,
+                    "reference_price": _reference_price(row_cells[price_column - 1]),
+                    "final_price_low": None,
+                    "final_price_high": None,
+                    "action": "无法识别",
+                    "method": "未匹配规则或套装件数未配置",
+                }
+            all_items.append(item)
+        # 明细过滤（只影响明细，不影响上面的全量统计）
+        filtered = all_items if not result_filter else [i for i in all_items if i["result"] == result_filter]
+        safe_size = max(1, min(int(page_size or MAX_PREVIEW_ROWS), MAX_PREVIEW_PAGE_SIZE))
+        total_items = len(filtered)
+        total_pages = max(1, (total_items + safe_size - 1) // safe_size)
+        safe_page = max(1, min(int(page or 1), total_pages))
+        start = (safe_page - 1) * safe_size
         return {
             "sheet": worksheet.title,
             "header_row": header_row,
@@ -367,8 +422,13 @@ def preview_activity_workbook(source: bytes, parse_config: Optional[dict] = None
             "set_rows": set_rows,
             "unrecognized_rows": unrecognized_rows,
             "id_profit_rule_matches": id_rule_matches,
-            "preview_limit": MAX_PREVIEW_ROWS,
-            "items": items,
+            "uplift_limit": round(uplift_limit, 2),
+            "page": safe_page,
+            "page_size": safe_size,
+            "total_items": total_items,
+            "total_pages": total_pages,
+            "result_filter": result_filter or None,
+            "items": filtered[start:start + safe_size],
         }
     finally:
         workbook.close()

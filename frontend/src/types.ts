@@ -120,13 +120,18 @@ export interface ActivityIdProfitRule {
   profit: number
 }
 
+export type ActivitySkuPreviewAction = '上浮' | '不变' | '将被删除' | '无法识别'
+
 export interface ActivitySkuPreviewItem {
   row: number
   skc: string
   result: '单品' | '套装' | '无法识别'
   value: number | null
   base_price: number | null
-  adjusted_price: number | null
+  reference_price: number | null
+  final_price_low: number | null
+  final_price_high: number | null
+  action: ActivitySkuPreviewAction
   profit_adjustment: number
   matched_id_type: ActivityIdType | null
   matched_id: string | null
@@ -144,7 +149,12 @@ export interface ActivitySkuPreview {
   set_rows: number
   unrecognized_rows: number
   id_profit_rule_matches: number
-  preview_limit: number
+  uplift_limit: number
+  page: number
+  page_size: number
+  total_items: number
+  total_pages: number
+  result_filter: '单品' | '套装' | '无法识别' | null
   items: ActivitySkuPreviewItem[]
 }
 

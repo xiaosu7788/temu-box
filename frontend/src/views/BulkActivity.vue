@@ -36,8 +36,10 @@ const singleMarker = ref('price')
 const skuPreview = ref<ActivitySkuPreview | null>(null)
 const previewDialogVisible = ref(false)
 const previewPage = ref(1)
-const previewPageSize = 20
+const previewPageSize = ref(100)
+const previewFilter = ref<ActivitySkuPreviewItem['result'] | ''>('')
 const previewing = ref(false)
+const previewLoading = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | undefined
 const idRuleTypes: ActivityIdType[] = ['SPU', 'SKC', 'SKU']
 const defaultSkuRules = ref<ActivitySkuRules>({
@@ -85,11 +87,10 @@ const appliedSingleRule = computed(() => {
   if (appliedSkuRules.value.single_mode === 'after_marker') return `“${appliedSkuRules.value.single_marker}”后的数字`
   return `最后一个“${appliedSkuRules.value.single_delimiter}”后的数字`
 })
-const previewItems = computed(() => {
-  const start = (previewPage.value - 1) * previewPageSize
-  return skuPreview.value?.items.slice(start, start + previewPageSize) || []
-})
 const canPreview = computed(() => !!regionCode.value && !!categoryCode.value && files.value.length === 1 && !!files.value[0]?.raw && ((useCustomSkuRules.value && skuRulesConfigured.value) || idProfitRulesValid.value))
+const previewItems = computed(() => skuPreview.value?.items || [])
+const previewTotal = computed(() => skuPreview.value?.total_items || 0)
+const previewFilterOptions: ActivitySkuPreviewItem['result'][] = ['单品', '套装', '无法识别']
 const canSubmit = computed(() => !!regionCode.value && !!categoryCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || skuRulesConfigured.value) && (!useCustomIdProfitRules.value || idProfitRulesValid.value))
 const isActiveTask = computed(() => !!task.value && (task.value.status === 'queued' || task.value.status === 'running'))
 const hasTaskStats = computed(() => task.value?.stats?.processed_rows !== undefined)
@@ -225,26 +226,72 @@ function removeSetMapping(index: number) {
   setMappings.value.splice(index, 1)
 }
 
-async function previewSkuRules() {
+let previewRequestId = 0
+
+async function fetchPreview(page = previewPage.value) {
   const file = files.value[0]?.raw
   if (!file || !canPreview.value) return
-  previewing.value = true
+  const requestId = ++previewRequestId
+  previewLoading.value = true
   try {
-    skuPreview.value = await previewActivitySkuRules(
+    const payload = await previewActivitySkuRules(
       file,
       useCustomSkuRules.value ? appliedSkuRules.value : undefined,
       regionCode.value,
       useCustomIdProfitRules.value ? idProfitRules.value : undefined,
       categoryCode.value,
+      { page, pageSize: previewPageSize.value, resultFilter: previewFilter.value || null },
     )
-    previewPage.value = 1
-    previewDialogVisible.value = true
-    notifySuccess('SKC识别预览已更新')
+    if (requestId !== previewRequestId) return  // 已有更新的请求，丢弃过期响应
+    skuPreview.value = payload
+    previewPage.value = payload.page
   } catch (error) {
-    notifyError(error)
+    if (requestId === previewRequestId) notifyError(error)
+  } finally {
+    if (requestId === previewRequestId) previewLoading.value = false
+  }
+}
+
+async function previewSkuRules() {
+  const file = files.value[0]?.raw
+  if (!file || !canPreview.value) return
+  previewing.value = true
+  try {
+    previewPage.value = 1
+    await fetchPreview(1)
+    previewDialogVisible.value = true
+    if (skuPreview.value) notifySuccess('SKC识别预览已更新')
   } finally {
     previewing.value = false
   }
+}
+
+function previewPageChanged(page: number) {
+  previewPage.value = page
+  void fetchPreview(page)
+}
+
+function previewPageSizeChanged(size: number) {
+  previewPageSize.value = size
+  previewPage.value = 1
+  void fetchPreview(1)
+}
+
+function previewFilterChanged() {
+  previewPage.value = 1
+  void fetchPreview(1)
+}
+
+function previewPriceRange(item: ActivitySkuPreviewItem) {
+  if (item.final_price_low === null || item.final_price_high === null) return '-'
+  if (item.action === '不变') return `¥${item.final_price_low.toFixed(2)}`
+  return `¥${item.final_price_low.toFixed(2)} ~ ¥${item.final_price_high.toFixed(2)}`
+}
+
+function previewActionType(action: ActivitySkuPreviewItem['action']) {
+  if (action === '将被删除' || action === '无法识别') return 'danger'
+  if (action === '不变') return 'info'
+  return 'success'
 }
 
 function previewValue(item: ActivitySkuPreviewItem) {
@@ -560,22 +607,42 @@ onBeforeUnmount(stopPolling)
       append-to-body
       destroy-on-close
     >
-      <div v-if="skuPreview" class="activity-sku-preview">
+      <div v-if="skuPreview" v-loading="previewLoading" class="activity-sku-preview">
         <div class="activity-preview-summary">
           <span>有效数据 <strong>{{ skuPreview.total_rows }}</strong></span>
           <span>单品 <strong>{{ skuPreview.single_rows }}</strong></span>
           <span>套装 <strong>{{ skuPreview.set_rows }}</strong></span>
           <span :class="{ danger: skuPreview.unrecognized_rows > 0 }">无法识别 <strong>{{ skuPreview.unrecognized_rows }}</strong></span>
         </div>
+        <div class="activity-preview-toolbar">
+          <div class="activity-preview-toolbar-info">
+            浮动上限 <strong>¥{{ skuPreview.uplift_limit.toFixed(2) }}</strong>
+            <span>实际写入价 = 基础活动价（含 ID 利润调整）加上不超过该上限的随机浮动，且不高于申报价；申报价低于基础价的行会被删除。</span>
+          </div>
+          <el-select
+            v-model="previewFilter"
+            class="activity-preview-filter"
+            placeholder="全部明细"
+            clearable
+            aria-label="明细筛选"
+            @change="previewFilterChanged"
+            @clear="previewFilterChanged"
+          >
+            <el-option v-for="option in previewFilterOptions" :key="option" :label="`只看${option}`" :value="option" />
+          </el-select>
+        </div>
         <div class="activity-preview-table-wrap">
           <el-table :data="previewItems" height="100%" stripe>
             <el-table-column prop="row" label="行号" width="72" />
             <el-table-column prop="skc" label="SKC货号" min-width="210" show-overflow-tooltip />
-            <el-table-column label="识别结果" width="110">
+            <el-table-column label="识别结果" width="100">
               <template #default="scope"><el-tag :type="previewTagType(scope.row.result)" size="small">{{ scope.row.result }}</el-tag></template>
             </el-table-column>
-            <el-table-column label="货值/件数" width="120">
+            <el-table-column label="货值/件数" width="110">
               <template #default="scope">{{ previewValue(scope.row) }}</template>
+            </el-table-column>
+            <el-table-column label="申报价" width="100">
+              <template #default="scope">{{ scope.row.reference_price === null ? '-' : `¥${scope.row.reference_price.toFixed(2)}` }}</template>
             </el-table-column>
             <el-table-column label="基础活动价" width="120">
               <template #default="scope">{{ scope.row.base_price === null ? '-' : `¥${scope.row.base_price.toFixed(2)}` }}</template>
@@ -586,23 +653,32 @@ onBeforeUnmount(stopPolling)
                 <span v-else>-</span>
               </template>
             </el-table-column>
-            <el-table-column label="调整后活动价" width="140">
-              <template #default="scope">{{ scope.row.adjusted_price === null ? '-' : `¥${scope.row.adjusted_price.toFixed(2)}` }}</template>
+            <el-table-column label="处理动作" width="110">
+              <template #default="scope"><el-tag :type="previewActionType(scope.row.action)" size="small" effect="plain">{{ scope.row.action }}</el-tag></template>
             </el-table-column>
-            <el-table-column prop="method" label="识别依据" min-width="220" show-overflow-tooltip />
+            <el-table-column label="调整后活动价" width="180">
+              <template #default="scope">{{ previewPriceRange(scope.row) }}</template>
+            </el-table-column>
+            <el-table-column prop="method" label="识别依据" min-width="200" show-overflow-tooltip />
           </el-table>
         </div>
-        <p class="activity-preview-note">统计数量包含全部数据，明细仅展示前 {{ skuPreview.preview_limit }} 条样本。</p>
+        <p class="activity-preview-note">
+          统计数量基于全表；明细共 {{ skuPreview.total_items }} 条，当前第 {{ skuPreview.page }} / {{ skuPreview.total_pages }} 页。
+        </p>
       </div>
+      <el-empty v-else description="暂无预览数据" />
       <template #footer>
         <div class="activity-preview-footer">
           <el-pagination
-            v-if="skuPreview && skuPreview.items.length > previewPageSize"
             v-model:current-page="previewPage"
-            :page-size="previewPageSize"
-            :total="skuPreview.items.length"
-            layout="prev, pager, next"
+            v-model:page-size="previewPageSize"
+            :total="previewTotal"
+            :page-sizes="[50, 100, 200, 500]"
+            layout="total, sizes, prev, pager, next, jumper"
+            :disabled="previewLoading"
             background
+            @current-change="previewPageChanged"
+            @size-change="previewPageSizeChanged"
           />
           <el-button @click="previewDialogVisible = false">关闭</el-button>
         </div>

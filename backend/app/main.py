@@ -50,7 +50,7 @@ from app.services import audit, system
 from app.services.categories import category_allowed_pieces, category_skc_rules, create_category, delete_category, get_category, list_categories, TEMPLATE_TYPES, update_category
 from app.services.cleanup import cleanup_scheduler, purge_all, run_once as run_cleanup_once
 from app.services.half_headcost import delete_entry, entry_exists, load_entries, merge_upload, save_entry
-from app.services.activity import normalize_id_profit_rules, normalize_parse_config, preview_activity_workbook
+from app.services.activity import MAX_PREVIEW_PAGE_SIZE, MAX_PREVIEW_ROWS, PREVIEW_RESULT_FILTERS, normalize_id_profit_rules, normalize_parse_config, preview_activity_workbook
 from app.services.activity_tasks import activity_task_manager
 from app.services.monitoring import snapshot as monitoring_snapshot
 from app.services.regions import create_region, delete_region, get_region_profile, list_regions, region_snapshot, update_region
@@ -408,6 +408,9 @@ async def preview_bulk_activity(
     id_profit_rules: Optional[str] = Form(None),
     region_code: Optional[str] = Form(None),
     category_code: Optional[str] = Form(None),
+    page: int = Form(1, ge=1),
+    page_size: int = Form(MAX_PREVIEW_ROWS, ge=1, le=MAX_PREVIEW_PAGE_SIZE),
+    result_filter: Optional[str] = Form(None),
     _user: dict = Depends(current_user),
 ):
     validate_excel(file)
@@ -415,6 +418,8 @@ async def preview_bulk_activity(
     await file.close()
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="上传文件超过服务器限制")
+    if result_filter is not None and result_filter not in PREVIEW_RESULT_FILTERS:
+        raise HTTPException(status_code=400, detail="result_filter 只能是 单品 / 套装 / 无法识别")
     try:
         category = await run_in_threadpool(get_category, category_code)
     except ValueError as exc:
@@ -423,7 +428,16 @@ async def preview_bulk_activity(
     parsed_id_profit_rules = parse_activity_id_profit_rules(id_profit_rules)
     try:
         snapshot = await run_in_threadpool(region_snapshot, region_code, category_code)
-        return await run_in_threadpool(preview_activity_workbook, content, parse_config, snapshot["settings"], parsed_id_profit_rules)
+        return await run_in_threadpool(
+            preview_activity_workbook,
+            content,
+            parse_config,
+            snapshot["settings"],
+            parsed_id_profit_rules,
+            page,
+            page_size,
+            result_filter or None,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

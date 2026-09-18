@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuRules, ActivityTaskItem, AppSettings, AuditLogPage, BulkActivityResult, CategoryPage, CategorySummary, CleanupResult, HalfHeadcostItem, InventoryCategory, InventoryDiffItem, InventoryPreview, InventoryStatus, MonitoringSnapshot, RegionProfile, RegionSummary, SkuResult, SystemSettings, SystemSettingsInfo, TaskItem, User } from './types'
+import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem, AppSettings, AuditLogPage, BulkActivityResult, CategoryPage, CategorySummary, CleanupResult, HalfHeadcostItem, InventoryCategory, InventoryDiffItem, InventoryPreview, InventoryStatus, MonitoringSnapshot, RegionProfile, RegionSummary, SkuResult, SystemSettings, SystemSettingsInfo, TaskItem, User } from './types'
 
 const http = axios.create({
   baseURL: '/api',
@@ -250,13 +250,29 @@ export async function updateHalfHeadcost(sku: string, payload: { set_type: strin
   return data
 }
 
-export async function previewActivitySkuRules(file: File, rules: ActivitySkuRules | undefined, regionCode: string, idProfitRules?: ActivityIdProfitRule[], categoryCode?: string) {
+export interface ActivityPreviewQuery {
+  page?: number
+  pageSize?: number
+  resultFilter?: ActivitySkuPreviewItem['result'] | null
+}
+
+export async function previewActivitySkuRules(
+  file: File,
+  rules: ActivitySkuRules | undefined,
+  regionCode: string,
+  idProfitRules?: ActivityIdProfitRule[],
+  categoryCode?: string,
+  query: ActivityPreviewQuery = {},
+) {
   const form = new FormData()
   form.append('file', file)
   if (rules) form.append('skc_rules', JSON.stringify(rules))
   if (idProfitRules) form.append('id_profit_rules', JSON.stringify(idProfitRules))
   form.append('region_code', regionCode)
   if (categoryCode) form.append('category_code', categoryCode)
+  form.append('page', String(query.page ?? 1))
+  if (query.pageSize) form.append('page_size', String(query.pageSize))
+  if (query.resultFilter) form.append('result_filter', query.resultFilter)
   const { data } = await uploadHttp.post<ActivitySkuPreview>('/activities/preview', form)
   return data
 }
