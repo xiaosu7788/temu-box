@@ -162,10 +162,11 @@ def normalize_parse_config(config: object, allowed_pieces=None) -> Optional[dict
         "set_keywords": keywords,
         "set_mappings": mappings,
         "single_rules": single_rules,
-        # 兼容字段：回显原始单条配置（旧前端仍按原样读取）
+        # 兼容字段：旧前端仍按单条读取。优先回显传入的旧字段，
+        # 新格式（只给 single_rules）时回落到第一条规则，避免出现空值。
         "single_mode": _text(config.get("single_mode")) or single_rules[0]["mode"],
-        "single_delimiter": _text(config.get("single_delimiter")),
-        "single_marker": _text(config.get("single_marker")),
+        "single_delimiter": _text(config.get("single_delimiter")) or single_rules[0].get("delimiter", ""),
+        "single_marker": _text(config.get("single_marker")) or single_rules[0].get("marker", ""),
         "allowed_pieces": sorted(allowed),
     }
 
