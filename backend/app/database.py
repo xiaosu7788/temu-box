@@ -228,9 +228,7 @@ DEFAULT_SETTINGS = {
         "default_skc_rules": {
             "set_keywords": ["piece", "件套", "套装"],
             "set_mappings": [],
-            "single_mode": "last_segment",
-            "single_delimiter": "-",
-            "single_marker": "price",
+            "single_rules": [{"mode": "last_segment", "delimiter": "-"}],
         },
     },
 }

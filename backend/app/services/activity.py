@@ -29,6 +29,7 @@ HEADER_NAMES = {
 REQUIRED_HEADER_KEYS = {"skc", "price"}
 ID_RULE_TYPES = ("SPU", "SKC", "SKU")
 SINGLE_PARSE_MODES = {"first_segment", "last_segment", "after_marker"}
+MAX_SINGLE_RULES = 20
 MAX_PREVIEW_ROWS = 100
 MAX_PREVIEW_PAGE_SIZE = 500
 PREVIEW_RESULT_FILTERS = ("单品", "套装", "无法识别")
@@ -155,25 +156,63 @@ def normalize_parse_config(config: object, allowed_pieces=None) -> Optional[dict
 
     if not allowed and (keywords or mappings):
         raise ValueError("该品类无套装档位，不能配置套装识别规则")
-
-    single_mode = _text(config.get("single_mode")) or "last_segment"
-    if single_mode not in SINGLE_PARSE_MODES:
-        raise ValueError("单品货值提取方式不正确")
-    delimiter = _text(config.get("single_delimiter"))
-    marker = _text(config.get("single_marker"))
-    if single_mode in {"first_segment", "last_segment"} and (not delimiter or len(delimiter) > 10):
-        raise ValueError("单品分隔符不能为空且不能超过10个字符")
-    if single_mode == "after_marker" and (not marker or len(marker) > 32):
-        raise ValueError("单品指定文字不能为空且不能超过32个字符")
+    single_rules = _normalize_single_rules(config)
 
     return {
         "set_keywords": keywords,
         "set_mappings": mappings,
-        "single_mode": single_mode,
-        "single_delimiter": delimiter,
-        "single_marker": marker,
+        "single_rules": single_rules,
+        # 兼容字段：回显原始单条配置（旧前端仍按原样读取）
+        "single_mode": _text(config.get("single_mode")) or single_rules[0]["mode"],
+        "single_delimiter": _text(config.get("single_delimiter")),
+        "single_marker": _text(config.get("single_marker")),
         "allowed_pieces": sorted(allowed),
     }
+
+
+def _normalize_single_rules(config: dict) -> list[dict]:
+    """单品货值提取规则：支持多条，按顺序依次尝试（先匹配先用）。
+
+    - 新格式 single_rules: [{"mode": ..., "delimiter"/"marker": ...}, ...]
+    - 旧格式 single_mode/single_delimiter/single_marker 自动转成只有一条的列表
+    """
+    raw_rules = config.get("single_rules")
+    if raw_rules is None:
+        # 旧格式兼容：单条规则
+        raw_rules = [{
+            "mode": config.get("single_mode"),
+            "delimiter": config.get("single_delimiter"),
+            "marker": config.get("single_marker"),
+        }]
+    if not isinstance(raw_rules, list) or not raw_rules:
+        raise ValueError("单品货值提取规则至少需要配置1条")
+    if len(raw_rules) > MAX_SINGLE_RULES:
+        raise ValueError(f"单品货值提取规则最多可设置{MAX_SINGLE_RULES}条")
+
+    rules = []
+    seen = set()
+    for index, item in enumerate(raw_rules, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"第{index}条单品货值提取规则格式不正确")
+        mode = _text(item.get("mode")) or "last_segment"
+        if mode not in SINGLE_PARSE_MODES:
+            raise ValueError(f"第{index}条单品货值提取方式不正确")
+        delimiter = _text(item.get("delimiter"))
+        marker = _text(item.get("marker"))
+        if mode in {"first_segment", "last_segment"}:
+            if not delimiter or len(delimiter) > 10:
+                raise ValueError(f"第{index}条单品分隔符不能为空且不能超过10个字符")
+            rule = {"mode": mode, "delimiter": delimiter}
+        else:
+            if not marker or len(marker) > 32:
+                raise ValueError(f"第{index}条单品指定文字不能为空且不能超过32个字符")
+            rule = {"mode": mode, "marker": marker}
+        key = (rule["mode"], rule.get("delimiter", ""), rule.get("marker", ""))
+        if key in seen:
+            raise ValueError(f"第{index}条单品货值提取规则与前面的规则重复")
+        seen.add(key)
+        rules.append(rule)
+    return rules
 
 
 def parse_skc_detail(skc: object, parse_config: Optional[dict] = None, *, normalized: bool = False) -> Optional[dict]:
@@ -205,25 +244,34 @@ def parse_skc_detail(skc: object, parse_config: Optional[dict] = None, *, normal
                     return None
                 return {"kind": "set", "value": float(pieces), "method": method}
 
-        mode = config["single_mode"]
-        candidate = ""
-        method = ""
-        if mode == "first_segment":
-            delimiter = config["single_delimiter"]
-            candidate = value.split(delimiter, 1)[0] if delimiter in value else ""
-            method = f"第一个“{delimiter}”前的数字"
-        elif mode == "last_segment":
-            delimiter = config["single_delimiter"]
-            candidate = value.rsplit(delimiter, 1)[-1] if delimiter in value else ""
-            method = f"最后一个“{delimiter}”后的数字"
-        else:
-            marker = config["single_marker"]
-            match = re.search(rf"{re.escape(marker)}\s*([0-9]+(?:\.[0-9]+)?)", value, re.IGNORECASE)
-            candidate = match.group(1) if match else ""
-            method = f"文字“{marker}”后的数字"
-
-        if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", candidate.strip()):
-            return {"kind": "single", "value": float(candidate), "method": method}
+        # 多条规则按顺序依次尝试，先匹配先用（方案1）
+        single_rules = config.get("single_rules")
+        if not single_rules:
+            # 兜底：未归一化的旧结构
+            single_rules = [{
+                "mode": config.get("single_mode", "last_segment"),
+                "delimiter": config.get("single_delimiter", ""),
+                "marker": config.get("single_marker", ""),
+            }]
+        for index, rule in enumerate(single_rules, start=1):
+            mode = rule.get("mode")
+            if mode == "first_segment":
+                delimiter = rule.get("delimiter", "")
+                candidate = value.split(delimiter, 1)[0] if delimiter and delimiter in value else ""
+                method = f"第一个“{delimiter}”前的数字"
+            elif mode == "last_segment":
+                delimiter = rule.get("delimiter", "")
+                candidate = value.rsplit(delimiter, 1)[-1] if delimiter and delimiter in value else ""
+                method = f"最后一个“{delimiter}”后的数字"
+            else:
+                marker = rule.get("marker", "")
+                match = re.search(rf"{re.escape(marker)}\s*([0-9]+(?:\.[0-9]+)?)", value, re.IGNORECASE) if marker else None
+                candidate = match.group(1) if match else ""
+                method = f"文字“{marker}”后的数字"
+            if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", candidate.strip()):
+                if len(single_rules) > 1:
+                    method = f"{method}（第{index}条规则）"
+                return {"kind": "single", "value": float(candidate), "method": method}
         return None
 
     set_match = SET_SKC_RE.fullmatch(value)

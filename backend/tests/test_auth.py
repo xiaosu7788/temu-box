@@ -81,7 +81,7 @@ def test_admin_can_manage_default_activity_skc_rules():
         client.post("/api/auth/login", json={"username": "activity_rules_admin", "password": "rulesadmin123"})
         saved = client.put("/api/admin/activity-settings/skc-rules", json=rules)
         assert saved.status_code == 200
-        expected = {**rules, "allowed_pieces": [4, 5, 6, 8, 10, 12]}
+        expected = {**rules, "single_rules": [{"mode": "after_marker", "marker": "price"}], "allowed_pieces": [4, 5, 6, 8, 10, 12]}
         assert saved.json() == expected
         assert client.get("/api/admin/activity-settings/skc-rules").json() == expected
         assert client.get("/api/settings").json()["activity"]["default_skc_rules"] == expected

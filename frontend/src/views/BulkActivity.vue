@@ -4,7 +4,7 @@ import { Delete, Download, Plus, RefreshRight, UploadFilled } from '@element-plu
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
 import { activityDownloadUrl, getActivityTask, getActivityTasks, getSettings, previewActivitySkuRules, processBulkActivity } from '../api'
 import { notifyError, notifySuccess } from '../feedback'
-import type { ActivityIdProfitRule, ActivityIdType, ActivitySetMapping, ActivitySingleParseMode, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem } from '../types'
+import type { ActivityIdProfitRule, ActivityIdType, ActivitySetMapping, ActivitySingleRule, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem } from '../types'
 import CostRules from '../components/CostRules.vue'
 import { selectedCategoryCode as categoryCode, selectedRegionCode as regionCode } from '../regionState'
 
@@ -30,9 +30,7 @@ const dialogOpenedBySwitch = ref(false)
 const setKeywords = ref<string[]>([])
 const includeEmptySetKeyword = ref(false)
 const setMappings = ref<ActivitySetMapping[]>([])
-const singleMode = ref<ActivitySingleParseMode>('last_segment')
-const singleDelimiter = ref('-')
-const singleMarker = ref('price')
+const singleRules = ref<ActivitySingleRule[]>([{ mode: 'last_segment', delimiter: '-' }])
 const skuPreview = ref<ActivitySkuPreview | null>(null)
 const previewDialogVisible = ref(false)
 const previewPage = ref(1)
@@ -45,19 +43,23 @@ const idRuleTypes: ActivityIdType[] = ['SPU', 'SKC', 'SKU']
 const defaultSkuRules = ref<ActivitySkuRules>({
   set_keywords: [],
   set_mappings: [],
-  single_mode: 'last_segment',
-  single_delimiter: '-',
-  single_marker: 'price',
+  single_rules: [{ mode: 'last_segment', delimiter: '-' }],
 })
 const keywordOptions = computed(() => defaultSkuRules.value.set_keywords.filter(Boolean))
 const supportedSetPieces = computed(() => (defaultSkuRules.value.allowed_pieces || []).slice().sort((left, right) => left - right))
 const hasSetPieces = computed(() => supportedSetPieces.value.length > 0)
+
+function cloneSingleRules(rules: ActivitySingleRule[] | undefined): ActivitySingleRule[] {
+  if (!rules?.length) return [{ mode: 'last_segment', delimiter: '-' }]
+  return rules.map((rule) => ({ ...rule }))
+}
 
 function createDefaultSkuRules(): ActivitySkuRules {
   return {
     ...defaultSkuRules.value,
     set_keywords: [...defaultSkuRules.value.set_keywords],
     set_mappings: defaultSkuRules.value.set_mappings.map((item) => ({ ...item })),
+    single_rules: cloneSingleRules(defaultSkuRules.value.single_rules),
   }
 }
 
@@ -65,15 +67,27 @@ const appliedSkuRules = ref<ActivitySkuRules>(createDefaultSkuRules())
 const draftSkuRules = computed<ActivitySkuRules>(() => ({
   set_keywords: [...new Set(setKeywords.value.map((item) => item.trim()).filter(Boolean).concat(includeEmptySetKeyword.value ? [''] : []))],
   set_mappings: setMappings.value.map((item) => ({ pattern: item.pattern.trim(), pieces: item.pieces })),
-  single_mode: singleMode.value,
-  single_delimiter: singleDelimiter.value.trim(),
-  single_marker: singleMarker.value.trim(),
+  single_rules: singleRules.value.map((rule) => (
+    rule.mode === 'after_marker'
+      ? { mode: rule.mode, marker: (rule.marker || '').trim() }
+      : { mode: rule.mode, delimiter: (rule.delimiter || '').trim() }
+  )),
 }))
 const skuRulesValid = computed(() => {
   if (setMappings.value.some((item) => !item.pattern.trim())) return false
-  if (singleMode.value === 'after_marker') return !!singleMarker.value.trim()
-  return !!singleDelimiter.value.trim()
+  if (!singleRules.value.length) return false
+  return singleRules.value.every((rule) =>
+    rule.mode === 'after_marker' ? !!rule.marker?.trim() : !!rule.delimiter?.trim(),
+  )
 })
+
+function addSingleRule() {
+  singleRules.value.push({ mode: 'last_segment', delimiter: '-' })
+}
+
+function removeSingleRule(index: number) {
+  singleRules.value.splice(index, 1)
+}
 const idProfitRulesValid = computed(() => !useCustomIdProfitRules.value || (idProfitRules.value.length > 0 && idProfitRules.value.every((rule) => rule.id.trim() && Number.isFinite(rule.profit))))
 const idProfitRulesSummary = computed(() => {
   if (!idProfitRules.value.length) return '尚未设置'
@@ -82,10 +96,15 @@ const idProfitRulesSummary = computed(() => {
 })
 const appliedSetKeywords = computed(() => appliedSkuRules.value.set_keywords.map((item) => item || '空标识'))
 const appliedMappings = computed(() => appliedSkuRules.value.set_mappings.map((item) => `${item.pattern} → ${item.pieces}件套`))
+function describeSingleRule(rule: ActivitySingleRule) {
+  if (rule.mode === 'first_segment') return `第一个“${rule.delimiter}”前的数字`
+  if (rule.mode === 'after_marker') return `“${rule.marker}”后的数字`
+  return `最后一个“${rule.delimiter}”后的数字`
+}
 const appliedSingleRule = computed(() => {
-  if (appliedSkuRules.value.single_mode === 'first_segment') return `第一个“${appliedSkuRules.value.single_delimiter}”前的数字`
-  if (appliedSkuRules.value.single_mode === 'after_marker') return `“${appliedSkuRules.value.single_marker}”后的数字`
-  return `最后一个“${appliedSkuRules.value.single_delimiter}”后的数字`
+  const rules = appliedSkuRules.value.single_rules
+  if (!rules?.length) return '未配置'
+  return rules.map((rule, index) => (rules.length > 1 ? `${index + 1}. ${describeSingleRule(rule)}` : describeSingleRule(rule))).join('；')
 })
 const canPreview = computed(() => !!regionCode.value && !!categoryCode.value && files.value.length === 1 && !!files.value[0]?.raw && ((useCustomSkuRules.value && skuRulesConfigured.value) || idProfitRulesValid.value))
 const previewItems = computed(() => skuPreview.value?.items || [])
@@ -112,9 +131,7 @@ function resetSkuRules() {
   setKeywords.value = rules.set_keywords.filter(Boolean)
   includeEmptySetKeyword.value = rules.set_keywords.includes('')
   setMappings.value = rules.set_mappings.map((item) => ({ ...item }))
-  singleMode.value = rules.single_mode
-  singleDelimiter.value = rules.single_delimiter
-  singleMarker.value = rules.single_marker
+  singleRules.value = cloneSingleRules(rules.single_rules)
   skuPreview.value = null
 }
 
@@ -179,9 +196,7 @@ function loadSkuRuleDraft() {
   setKeywords.value = rules.set_keywords.filter(Boolean)
   includeEmptySetKeyword.value = rules.set_keywords.includes('')
   setMappings.value = rules.set_mappings.map((item) => ({ ...item }))
-  singleMode.value = rules.single_mode
-  singleDelimiter.value = rules.single_delimiter
-  singleMarker.value = rules.single_marker
+  singleRules.value = cloneSingleRules(rules.single_rules)
 }
 
 function openSkuRulesDialog(fromSwitch = false) {
@@ -574,24 +589,29 @@ onBeforeUnmount(stopPolling)
 
         <section class="activity-rule-section">
           <div class="activity-rule-title">
-            <div><strong>单品货值提取规则</strong><span>套装未匹配时再按此规则提取货值</span></div>
+            <div><strong>单品货值提取规则</strong><span>套装未匹配时，按从上到下的顺序依次尝试</span></div>
+            <el-button link type="primary" :icon="Plus" :disabled="singleRules.length >= 20" @click="addSingleRule">增加规则</el-button>
           </div>
-          <label class="activity-rule-field">
-            <span>提取方式</span>
-            <el-select v-model="singleMode">
-              <el-option label="第一个分隔符前的数字（5-MB131-A → 5）" value="first_segment" />
-              <el-option label="最后一个分隔符后的数字（MB131-A-5 → 5）" value="last_segment" />
-              <el-option label="指定文字后的数字（MB131-price17.1 → 17.1）" value="after_marker" />
-            </el-select>
-          </label>
-          <label v-if="singleMode !== 'after_marker'" class="activity-rule-field">
-            <span>分隔符</span>
-            <el-input v-model="singleDelimiter" maxlength="10" placeholder="例如：-" />
-          </label>
-          <label v-else class="activity-rule-field">
-            <span>指定文字</span>
-            <el-input v-model="singleMarker" maxlength="32" placeholder="例如：price" />
-          </label>
+          <div v-if="singleRules.length" class="activity-single-rule-list">
+            <div v-for="(rule, index) in singleRules" :key="index" class="activity-single-rule-row">
+              <span class="activity-single-rule-order">{{ index + 1 }}</span>
+              <el-select v-model="rule.mode" aria-label="单品货值提取方式">
+                <el-option label="第一个分隔符前的数字（5-MB131-A → 5）" value="first_segment" />
+                <el-option label="最后一个分隔符后的数字（MB131-A-5 → 5）" value="last_segment" />
+                <el-option label="指定文字后的数字（MB131-price17.1 → 17.1）" value="after_marker" />
+              </el-select>
+              <el-input
+                v-if="rule.mode === 'after_marker'"
+                v-model="rule.marker"
+                maxlength="32"
+                placeholder="指定文字，例如：price"
+              />
+              <el-input v-else v-model="rule.delimiter" maxlength="10" placeholder="分隔符，例如：-" />
+              <el-button link type="danger" :icon="Delete" :disabled="singleRules.length <= 1" aria-label="删除该规则" @click="removeSingleRule(index)" />
+            </div>
+          </div>
+          <el-empty v-else :image-size="42" description="至少需要一条规则" />
+          <p v-if="singleRules.length > 1" class="activity-rule-hint">多条规则按顺序尝试，命中第一条即停止；前置规则若误匹配，后面的规则不会再执行。</p>
         </section>
       </div>
       <template #footer>

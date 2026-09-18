@@ -171,9 +171,7 @@ def category_defaults(template_type: str, set_types=None) -> dict:
     skc_rules = {
         "set_keywords": ["piece", "件套", "套装"] if set_keys else [],
         "set_mappings": [],
-        "single_mode": "last_segment",
-        "single_delimiter": "-",
-        "single_marker": "price",
+        "single_rules": [{"mode": "last_segment", "delimiter": "-"}],
     }
     return {
         "order": {

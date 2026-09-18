@@ -294,6 +294,14 @@ a:focus-visible {
 .activity-mapping-list { display: grid; gap: 9px; }
 .activity-mapping-row { display: grid; grid-template-columns: minmax(160px, 1fr) 120px 32px; gap: 8px; align-items: center; }
 .activity-mapping-row .el-button { width: 32px; height: 32px; margin: 0; }
+/* 单品货值提取规则：可增删的多条规则，序号 + 方式 + 分隔符/文字 + 删除 */
+.activity-single-rule-list { display: grid; gap: 8px; }
+.activity-single-rule-row { display: grid; grid-template-columns: 24px minmax(200px, 1.4fr) minmax(140px, 1fr) 32px; gap: 8px; align-items: center; }
+.activity-single-rule-row .el-button { width: 32px; height: 32px; margin: 0; }
+.activity-single-rule-order { display: grid; place-items: center; width: 24px; height: 24px; color: var(--muted); font-size: 12px; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 50%; }
+.activity-rule-hint { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.admin-activity-rule-card .activity-single-rule-row { grid-template-columns: 24px minmax(180px, 1.4fr) minmax(120px, 1fr) 32px; }
+.admin-activity-rule-card .activity-single-rule-list { margin-top: 4px; }
 .activity-rule-section .el-empty { padding: 12px 0 0; }
 .activity-rule-section .el-empty__description { margin-top: 4px; }
 .activity-preview-actions { margin-top: 20px; padding-top: 18px; display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--border); }

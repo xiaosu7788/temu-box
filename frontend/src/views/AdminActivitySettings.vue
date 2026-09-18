@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Delete, Plus, Refresh, Select } from '@element-plus/icons-vue'
 import { errorMessage, getAdminActivitySkuRules, getAdminCategories, saveAdminActivitySkuRules } from '../api'
 import { notifyError, notifySuccess } from '../feedback'
-import type { ActivitySetMapping, ActivitySingleParseMode, ActivitySkuRules, CategorySummary } from '../types'
+import type { ActivitySetMapping, ActivitySingleRule, ActivitySkuRules, CategorySummary } from '../types'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -15,9 +15,7 @@ const availableSetKeywords = ref<string[]>([])
 const setKeywords = ref<string[]>([])
 const includeEmptySetKeyword = ref(false)
 const setMappings = ref<ActivitySetMapping[]>([])
-const singleMode = ref<ActivitySingleParseMode>('last_segment')
-const singleDelimiter = ref('-')
-const singleMarker = ref('price')
+const singleRules = ref<ActivitySingleRule[]>([])
 const allowedPieces = ref<number[]>([])
 const supportedSetPieces = computed(() => allowedPieces.value.slice().sort((left, right) => left - right))
 const hasSetPieces = computed(() => supportedSetPieces.value.length > 0)
@@ -26,18 +24,30 @@ const keywordOptions = computed(() => availableSetKeywords.value)
 
 const rulesValid = computed(() => {
   if (setMappings.value.some((item) => !item.pattern.trim())) return false
-  if (singleMode.value === 'after_marker') return !!singleMarker.value.trim()
-  return !!singleDelimiter.value.trim()
+  if (!singleRules.value.length) return false
+  return singleRules.value.every((rule) =>
+    rule.mode === 'after_marker' ? !!rule.marker?.trim() : !!rule.delimiter?.trim(),
+  )
 })
+
+function addSingleRule() {
+  singleRules.value.push({ mode: 'last_segment', delimiter: '-' })
+}
+
+function removeSingleRule(index: number) {
+  singleRules.value.splice(index, 1)
+}
 
 function applyRules(rules: ActivitySkuRules) {
   availableSetKeywords.value = rules.set_keywords.filter(Boolean)
   setKeywords.value = [...availableSetKeywords.value]
   includeEmptySetKeyword.value = rules.set_keywords.includes('')
   setMappings.value = rules.set_mappings.map((item) => ({ ...item }))
-  singleMode.value = rules.single_mode
-  singleDelimiter.value = rules.single_delimiter
-  singleMarker.value = rules.single_marker
+  // 新格式优先；旧数据（只有单值字段）自动升级为一条规则
+  singleRules.value = (rules.single_rules?.length
+    ? rules.single_rules
+    : [{ mode: rules.single_mode || 'last_segment', delimiter: rules.single_delimiter || '-', marker: rules.single_marker || 'price' }]
+  ).map((rule) => ({ ...rule }))
   allowedPieces.value = rules.allowed_pieces || []
 }
 
@@ -45,9 +55,11 @@ function buildRules(): ActivitySkuRules {
   return {
     set_keywords: [...new Set(setKeywords.value.map((item) => item.trim()).filter(Boolean).concat(includeEmptySetKeyword.value && hasSetPieces.value ? [''] : []))],
     set_mappings: hasSetPieces.value ? setMappings.value.map((item) => ({ pattern: item.pattern.trim(), pieces: item.pieces })) : [],
-    single_mode: singleMode.value,
-    single_delimiter: singleDelimiter.value.trim(),
-    single_marker: singleMarker.value.trim(),
+    single_rules: singleRules.value.map((rule) => (
+      rule.mode === 'after_marker'
+        ? { mode: rule.mode, marker: (rule.marker || '').trim() }
+        : { mode: rule.mode, delimiter: (rule.delimiter || '').trim() }
+    )),
   }
 }
 
@@ -157,23 +169,38 @@ onMounted(bootstrap)
 
         <section class="admin-activity-rule-card">
           <h3>单品货值提取规则</h3>
-          <p>套装规则未匹配时，按以下方式从SKC货号中提取单品货值。</p>
-          <label class="admin-activity-rule-field">
-            <span>提取方式</span>
-            <el-select v-model="singleMode">
-              <el-option label="第一个分隔符前的数字（5-MB131-A → 5）" value="first_segment" />
-              <el-option label="最后一个分隔符后的数字（MB131-A-5 → 5）" value="last_segment" />
-              <el-option label="指定文字后的数字（MB131-price17.1 → 17.1）" value="after_marker" />
-            </el-select>
-          </label>
-          <label v-if="singleMode !== 'after_marker'" class="admin-activity-rule-field">
-            <span>分隔符</span>
-            <el-input v-model="singleDelimiter" maxlength="10" placeholder="例如：-" />
-          </label>
-          <label v-else class="admin-activity-rule-field">
-            <span>指定文字</span>
-            <el-input v-model="singleMarker" maxlength="32" placeholder="例如：price" />
-          </label>
+          <p>套装规则未匹配时，按以下顺序依次尝试提取单品货值，先匹配先用。</p>
+          <div class="activity-mapping-heading">
+            <span>规则顺序（从上到下依次尝试）</span>
+            <el-button link type="primary" :icon="Plus" :disabled="singleRules.length >= 20" @click="addSingleRule">增加规则</el-button>
+          </div>
+          <div v-if="singleRules.length" class="activity-single-rule-list">
+            <div v-for="(rule, index) in singleRules" :key="index" class="activity-single-rule-row">
+              <span class="activity-single-rule-order">{{ index + 1 }}</span>
+              <el-select v-model="rule.mode" aria-label="单品货值提取方式">
+                <el-option label="第一个分隔符前的数字（5-MB131-A → 5）" value="first_segment" />
+                <el-option label="最后一个分隔符后的数字（MB131-A-5 → 5）" value="last_segment" />
+                <el-option label="指定文字后的数字（MB131-price17.1 → 17.1）" value="after_marker" />
+              </el-select>
+              <el-input
+                v-if="rule.mode === 'after_marker'"
+                v-model="rule.marker"
+                maxlength="32"
+                placeholder="指定文字，例如：price"
+              />
+              <el-input v-else v-model="rule.delimiter" maxlength="10" placeholder="分隔符，例如：-" />
+              <el-button link type="danger" :icon="Delete" :disabled="singleRules.length <= 1" aria-label="删除该规则" @click="removeSingleRule(index)" />
+            </div>
+          </div>
+          <el-empty v-else :image-size="42" description="至少需要一条规则" />
+          <el-alert
+            v-if="singleRules.length > 1"
+            type="info"
+            :closable="false"
+            show-icon
+            title="多条规则按从上到下的顺序尝试，命中第一条即停止"
+            description="建议把最可靠的规则放在最上面；前置规则若误匹配，后面的规则不会再执行。"
+          />
         </section>
       </div>
     </section>

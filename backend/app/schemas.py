@@ -102,10 +102,18 @@ class ActivitySetMappingPayload(BaseModel):
     pieces: int
 
 
+class ActivitySingleRulePayload(BaseModel):
+    mode: str
+    delimiter: str = ""
+    marker: str = ""
+
+
 class ActivitySkuRulesPayload(BaseModel):
     set_keywords: List[str] = Field(default_factory=list)
     set_mappings: List[ActivitySetMappingPayload] = Field(default_factory=list)
-    single_mode: str
+    single_rules: Optional[List[ActivitySingleRulePayload]] = None
+    # 兼容旧前端：单条规则的旧字段
+    single_mode: Optional[str] = None
     single_delimiter: str = "-"
     single_marker: str = "price"
 

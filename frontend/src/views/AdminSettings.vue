@@ -33,9 +33,7 @@ const settings = reactive<AppSettings>({
     default_skc_rules: {
       set_keywords: [],
       set_mappings: [],
-      single_mode: 'last_segment',
-      single_delimiter: '-',
-      single_marker: 'price',
+      single_rules: [{ mode: 'last_segment', delimiter: '-' }],
     },
   },
 })

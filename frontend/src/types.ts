@@ -98,6 +98,12 @@ export interface BulkActivityStats {
 
 export type ActivitySingleParseMode = 'first_segment' | 'last_segment' | 'after_marker'
 
+export interface ActivitySingleRule {
+  mode: ActivitySingleParseMode
+  delimiter?: string
+  marker?: string
+}
+
 export interface ActivitySetMapping {
   pattern: string
   pieces: number
@@ -106,9 +112,11 @@ export interface ActivitySetMapping {
 export interface ActivitySkuRules {
   set_keywords: string[]
   set_mappings: ActivitySetMapping[]
-  single_mode: ActivitySingleParseMode
-  single_delimiter: string
-  single_marker: string
+  single_rules: ActivitySingleRule[]
+  // 兼容字段：后端仍会回显，前端不再使用
+  single_mode?: ActivitySingleParseMode
+  single_delimiter?: string
+  single_marker?: string
   allowed_pieces?: number[]
 }
 

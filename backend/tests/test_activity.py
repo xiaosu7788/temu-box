@@ -6,7 +6,7 @@ from openpyxl import Workbook, load_workbook
 
 from app.database import create_user
 from app.main import app
-from app.services.activity import activity_base_price, match_id_profit_rule, normalize_id_profit_rules, parse_skc, preview_activity_workbook, process_activity_workbook
+from app.services.activity import activity_base_price, match_id_profit_rule, normalize_id_profit_rules, parse_skc, parse_skc_detail, preview_activity_workbook, process_activity_workbook
 from app.services.auth import hash_password
 
 
@@ -523,3 +523,85 @@ def test_activity_preview_endpoint_paginates_and_rejects_bad_filter():
             files={"file": ("preview.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
         )
         assert bad.status_code == 400
+
+
+def test_single_rules_try_multiple_formats_in_order():
+    """方案1：多条单品规则按顺序依次尝试，先匹配先用。"""
+    from app.services.activity import normalize_parse_config
+
+    config = normalize_parse_config({
+        "set_keywords": [],
+        "set_mappings": [],
+        "single_rules": [
+            {"mode": "first_segment", "delimiter": "-"},
+            {"mode": "after_marker", "marker": "price"},
+            {"mode": "last_segment", "delimiter": "-"},
+            {"mode": "last_segment", "delimiter": "_"},
+        ],
+    })
+
+    # 同一套配置覆盖 4 种货号格式
+    assert parse_skc("5-MB131-A", config, normalized=True) == ("single", 5.0)
+    assert parse_skc("MB131-price17.1", config, normalized=True) == ("single", 17.1)
+    assert parse_skc("MB131-A-8", config, normalized=True) == ("single", 8.0)
+    assert parse_skc("MB131_A_9", config, normalized=True) == ("single", 9.0)
+    assert parse_skc("完全没有数字", config, normalized=True) is None
+
+    # 命中哪一条要在识别依据里体现，便于排查
+    detail = parse_skc_detail("MB131_A_9", config, normalized=True)
+    assert detail["method"] == "最后一个“_”后的数字（第4条规则）"
+    # 只有一条规则时不加序号后缀
+    single = normalize_parse_config({"set_keywords": [], "set_mappings": [], "single_rules": [{"mode": "last_segment", "delimiter": "-"}]})
+    assert parse_skc_detail("MB131-A-8", single, normalized=True)["method"] == "最后一个“-”后的数字"
+
+
+def test_single_rules_first_match_wins():
+    """先匹配先用：前面的规则命中后不再尝试后面的规则。"""
+    from app.services.activity import normalize_parse_config
+
+    config = normalize_parse_config({
+        "set_keywords": [],
+        "set_mappings": [],
+        "single_rules": [
+            {"mode": "last_segment", "delimiter": "-"},
+            {"mode": "first_segment", "delimiter": "-"},
+        ],
+    })
+    # "5-A" 最后一段是 A（非数字）→ 第1条不命中；第1段是 5 → 第2条命中
+    assert parse_skc("5-A", config, normalized=True) == ("single", 5.0)
+    # "5-8" 最后一段是 8 → 第1条命中，不会回退到第1段
+    assert parse_skc("5-8", config, normalized=True) == ("single", 8.0)
+
+
+def test_single_rules_legacy_config_still_works():
+    """旧格式（单值字段）自动升级为一条规则，行为不变。"""
+    from app.services.activity import normalize_parse_config
+
+    legacy = normalize_parse_config({"set_keywords": [], "set_mappings": [], "single_mode": "after_marker", "single_delimiter": "-", "single_marker": "price"})
+    assert legacy["single_rules"] == [{"mode": "after_marker", "marker": "price"}]
+    assert parse_skc("MB131-price17.1", legacy, normalized=True) == ("single", 17.1)
+
+    # 旧格式缺字段时沿用历史默认值（last_segment + "-"）
+    bare = normalize_parse_config({"set_keywords": [], "set_mappings": [], "single_mode": "last_segment", "single_delimiter": "-"})
+    assert bare["single_rules"] == [{"mode": "last_segment", "delimiter": "-"}]
+    assert parse_skc("MB131-A-5", bare, normalized=True) == ("single", 5.0)
+
+
+def test_single_rules_validation_rejects_bad_input():
+    import pytest
+
+    from app.services.activity import normalize_parse_config
+
+    base = {"set_keywords": [], "set_mappings": []}
+    with pytest.raises(ValueError, match="至少需要配置1条"):
+        normalize_parse_config({**base, "single_rules": []})
+    with pytest.raises(ValueError, match="最多可设置20条"):
+        normalize_parse_config({**base, "single_rules": [{"mode": "last_segment", "delimiter": "-"}] * 21})
+    with pytest.raises(ValueError, match="第2条单品货值提取方式不正确"):
+        normalize_parse_config({**base, "single_rules": [{"mode": "last_segment", "delimiter": "-"}, {"mode": "乱填"}]})
+    with pytest.raises(ValueError, match="第1条单品分隔符不能为空"):
+        normalize_parse_config({**base, "single_rules": [{"mode": "last_segment", "delimiter": ""}]})
+    with pytest.raises(ValueError, match="第1条单品指定文字不能为空"):
+        normalize_parse_config({**base, "single_rules": [{"mode": "after_marker", "marker": ""}]})
+    with pytest.raises(ValueError, match="第2条单品货值提取规则与前面的规则重复"):
+        normalize_parse_config({**base, "single_rules": [{"mode": "last_segment", "delimiter": "-"}, {"mode": "last_segment", "delimiter": "-"}]})
