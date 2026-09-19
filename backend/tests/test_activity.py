@@ -605,3 +605,44 @@ def test_single_rules_validation_rejects_bad_input():
         normalize_parse_config({**base, "single_rules": [{"mode": "after_marker", "marker": ""}]})
     with pytest.raises(ValueError, match="第2条单品货值提取规则与前面的规则重复"):
         normalize_parse_config({**base, "single_rules": [{"mode": "last_segment", "delimiter": "-"}, {"mode": "last_segment", "delimiter": "-"}]})
+
+
+def test_set_keyword_with_disallowed_pieces_falls_back_to_single_rules():
+    """套装标识命中但件数不在档位时，应继续尝试单品规则。
+
+    真实案例：货号 "1pc-10" 被套装标识 "pc" 匹配成 1 件套，
+    1 件不在配置档位（4/5/6/8/10/12），此时应回落单品规则取末段 10，
+    而不是直接判定为无法识别。
+    """
+    from app.services.activity import normalize_parse_config
+
+    config = normalize_parse_config(
+        {
+            "set_keywords": ["piece", "pc"],
+            "set_mappings": [],
+            "single_rules": [
+                {"mode": "last_segment", "delimiter": "-"},
+                {"mode": "first_segment", "delimiter": "-"},
+                {"mode": "after_marker", "marker": "price"},
+            ],
+        },
+        allowed_pieces=[4, 5, 6, 8, 10, 12],
+    )
+
+    # 件数不合法的套装标识不再截胡，回落到单品规则
+    assert parse_skc("1pc-10", config, normalized=True) == ("single", 10.0)
+    assert parse_skc("1pc-8", config, normalized=True) == ("single", 8.0)
+
+    # 合法件数的套装仍然正常识别
+    assert parse_skc("y1-4piece", config, normalized=True) == ("set", 4.0)
+    assert parse_skc("y1-6pc", config, normalized=True) == ("set", 6.0)
+    assert parse_skc("y2-12pc", config, normalized=True) == ("set", 12.0)
+
+    # 件数不合法且单品规则也取不到值时，仍为无法识别
+    assert parse_skc("y1-3pc", config, normalized=True) is None
+    assert parse_skc("2pc", config, normalized=True) is None
+
+    # 识别依据要能看出是回落到第几条单品规则
+    detail = parse_skc_detail("1pc-10", config, normalized=True)
+    assert detail["kind"] == "single"
+    assert detail["method"] == "最后一个“-”后的数字（第1条规则）"

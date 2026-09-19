@@ -242,7 +242,9 @@ def parse_skc_detail(skc: object, parse_config: Optional[dict] = None, *, normal
             if match:
                 pieces = int(match.group(1))
                 if pieces not in allowed_pieces:
-                    return None
+                    # 标识命中但件数不在该品类配置的档位里 → 这不是合法套装，
+                    # 继续尝试后面的标识与单品规则（如 "1pc-10" 应识别为单品货值 10）
+                    continue
                 return {"kind": "set", "value": float(pieces), "method": method}
 
         # 多条规则按顺序依次尝试，先匹配先用（方案1）
