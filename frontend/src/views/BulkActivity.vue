@@ -108,7 +108,13 @@ const appliedSingleRule = computed(() => {
 })
 const canPreview = computed(() => !!regionCode.value && !!categoryCode.value && files.value.length === 1 && !!files.value[0]?.raw && ((useCustomSkuRules.value && skuRulesConfigured.value) || idProfitRulesValid.value))
 const previewItems = computed(() => skuPreview.value?.items || [])
-const previewTotal = computed(() => skuPreview.value?.total_items || 0)
+// 兼容旧后端：缺少 total_items 时回落到当前页条数，避免分页器异常
+const previewTotal = computed(() => skuPreview.value?.total_items ?? skuPreview.value?.items?.length ?? 0)
+// 兼容旧后端：缺少 uplift_limit 时不渲染该字段，而不是让整块模板抛异常
+const previewUpliftText = computed(() => {
+  const limit = skuPreview.value?.uplift_limit
+  return typeof limit === 'number' && Number.isFinite(limit) ? `¥${limit.toFixed(2)}` : '未提供'
+})
 const previewFilterOptions: ActivitySkuPreviewItem['result'][] = ['单品', '套装', '无法识别']
 const canSubmit = computed(() => !!regionCode.value && !!categoryCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || skuRulesConfigured.value) && (!useCustomIdProfitRules.value || idProfitRulesValid.value))
 const isActiveTask = computed(() => !!task.value && (task.value.status === 'queued' || task.value.status === 'running'))
@@ -275,7 +281,12 @@ async function previewSkuRules() {
     previewPage.value = 1
     await fetchPreview(1)
     previewDialogVisible.value = true
-    if (skuPreview.value) notifySuccess('SKC识别预览已更新')
+    // 只有真正拿到数据才提示成功，避免出现「提示已更新但表格为空」的误导
+    if (skuPreview.value?.items?.length) {
+      notifySuccess('SKC识别预览已更新')
+    } else {
+      notifyError('预览没有返回明细，请确认后台服务已更新到与前端一致的版本')
+    }
   } finally {
     previewing.value = false
   }
@@ -298,9 +309,17 @@ function previewFilterChanged() {
 }
 
 function previewPriceRange(item: ActivitySkuPreviewItem) {
-  if (item.final_price_low === null || item.final_price_high === null) return '-'
-  if (item.action === '不变') return `¥${item.final_price_low.toFixed(2)}`
-  return `¥${item.final_price_low.toFixed(2)} ~ ¥${item.final_price_high.toFixed(2)}`
+  const low = item.final_price_low
+  const high = item.final_price_high
+  // 兼容旧后端：字段缺失（undefined）时不要继续调 toFixed，否则整块表格渲染失败
+  if (typeof low !== 'number' || typeof high !== 'number') return '-'
+  if (item.action === '不变') return `¥${low.toFixed(2)}`
+  return `¥${low.toFixed(2)} ~ ¥${high.toFixed(2)}`
+}
+
+// 金额格式化：字段缺失/非数值一律显示 '-'，避免模板里直接 toFixed 抛异常
+function formatMoney(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? `¥${value.toFixed(2)}` : '-'
 }
 
 function previewActionType(action: ActivitySkuPreviewItem['action']) {
@@ -310,7 +329,7 @@ function previewActionType(action: ActivitySkuPreviewItem['action']) {
 }
 
 function previewValue(item: ActivitySkuPreviewItem) {
-  if (item.value === null) return '-'
+  if (item.value === null || item.value === undefined) return '-'
   return item.result === '套装' ? `${item.value}件` : `¥${item.value.toFixed(2)}`
 }
 
@@ -636,7 +655,7 @@ onBeforeUnmount(stopPolling)
         </div>
         <div class="activity-preview-toolbar">
           <div class="activity-preview-toolbar-info">
-            浮动上限 <strong>¥{{ skuPreview.uplift_limit.toFixed(2) }}</strong>
+            浮动上限 <strong>{{ previewUpliftText }}</strong>
             <span>实际写入价 = 基础活动价（含 ID 利润调整）加上不超过该上限的随机浮动，且不高于申报价；申报价低于基础价的行会被删除。</span>
           </div>
           <el-select
@@ -662,10 +681,10 @@ onBeforeUnmount(stopPolling)
               <template #default="scope">{{ previewValue(scope.row) }}</template>
             </el-table-column>
             <el-table-column label="申报价" width="100">
-              <template #default="scope">{{ scope.row.reference_price === null ? '-' : `¥${scope.row.reference_price.toFixed(2)}` }}</template>
+              <template #default="scope">{{ formatMoney(scope.row.reference_price) }}</template>
             </el-table-column>
             <el-table-column label="基础活动价" width="120">
-              <template #default="scope">{{ scope.row.base_price === null ? '-' : `¥${scope.row.base_price.toFixed(2)}` }}</template>
+              <template #default="scope">{{ formatMoney(scope.row.base_price) }}</template>
             </el-table-column>
             <el-table-column label="ID利润调整" width="130">
               <template #default="scope">
@@ -674,7 +693,7 @@ onBeforeUnmount(stopPolling)
               </template>
             </el-table-column>
             <el-table-column label="处理动作" width="110">
-              <template #default="scope"><el-tag :type="previewActionType(scope.row.action)" size="small" effect="plain">{{ scope.row.action }}</el-tag></template>
+              <template #default="scope"><el-tag v-if="scope.row.action" :type="previewActionType(scope.row.action)" size="small" effect="plain">{{ scope.row.action }}</el-tag><span v-else>-</span></template>
             </el-table-column>
             <el-table-column label="调整后活动价" width="180">
               <template #default="scope">{{ previewPriceRange(scope.row) }}</template>
@@ -683,7 +702,7 @@ onBeforeUnmount(stopPolling)
           </el-table>
         </div>
         <p class="activity-preview-note">
-          统计数量基于全表；明细共 {{ skuPreview.total_items }} 条，当前第 {{ skuPreview.page }} / {{ skuPreview.total_pages }} 页。
+          统计数量基于全表；明细共 {{ previewTotal }} 条，当前第 {{ skuPreview.page || 1 }} / {{ skuPreview.total_pages || 1 }} 页。
         </p>
       </div>
       <el-empty v-else description="暂无预览数据" />
