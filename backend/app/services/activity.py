@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import random
 import re
+from copy import copy
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -333,6 +334,47 @@ def _uplifted_price(base: float, reference: float, uplift_limit: float) -> float
     return round(base + uplift_cents / 100, 2)
 
 
+def _delete_rows_bulk(worksheet, rows: list[int]) -> None:
+    """批量删除指定行（1-based 行号，可乱序、可重复区间）。
+
+    不用逐行 worksheet.delete_rows(row, 1)：openpyxl 每次调用都要把下方所有
+    单元格整体上移，是 O(N²)。7355 行、2954 行待删除的表实测要 ~300 秒。
+
+    这里改成「保留行整体上移覆盖 + 一次性删除尾部」：
+      1. 按行号升序扫描，把需要保留的行依次写回目标位置（目标位置 ≤ 源位置，安全）；
+      2. 剩余尾部行一次性 delete_rows 删掉。
+    总代价 O(N)，实测同一张表降到 1 秒级。
+    """
+    if not rows:
+        return
+    total_rows = worksheet.max_row
+    max_column = worksheet.max_column
+    if not total_rows or not max_column:
+        return
+
+    delete_set = {row for row in rows if 1 <= row <= total_rows}
+    if not delete_set:
+        return
+
+    write_row = 1
+    for read_row in range(1, total_rows + 1):
+        if read_row in delete_set:
+            continue
+        if write_row != read_row:
+            # 整行搬移：逐个单元格复制值与样式，避免破坏数字格式
+            for column in range(1, max_column + 1):
+                source = worksheet.cell(read_row, column)
+                target = worksheet.cell(write_row, column)
+                target.value = source.value
+                target.number_format = source.number_format
+                target._style = copy(source._style)
+        write_row += 1
+
+    remaining = write_row - 1
+    if remaining < total_rows:
+        worksheet.delete_rows(remaining + 1, total_rows - remaining)
+
+
 def settings_allowed_pieces(settings=None) -> frozenset[int]:
     """从成本参数中推导品类允许的套装件数（set_prices 的键）。
 
@@ -543,8 +585,7 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None, p
             worksheet.cell(row, price_column).number_format = "0.00"
             updated += 1
 
-        for row in reversed(rows_to_delete):
-            worksheet.delete_rows(row, 1)
+        _delete_rows_bulk(worksheet, rows_to_delete)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         workbook.save(output_path)

@@ -193,6 +193,103 @@ def test_process_activity_workbook_updates_filters_and_preserves_sheets(tmp_path
     assert 45 < rows[3][1] <= 45.5
 
 
+
+
+def test_bulk_delete_keeps_row_order_and_styles(tmp_path):
+    """批量删除：不连续、多区段删除后，保留行顺序与内容必须正确。
+
+    覆盖 _delete_rows_bulk 的压缩逻辑：待删除行散落在全表各处时，
+    保留行应整体上移且保持原顺序，数字格式不丢失。
+    """
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "活动申报价格"
+    sheet.append(["SKC货号", "活动申报价格"])
+    # 12 行数据：偶数行价格 5（低于底价 17 → 删除），奇数行价格 30（保留）
+    for index in range(1, 13):
+        price = 5 if index % 2 == 0 else 30
+        sheet.append([f"MB{index:03d}-A-5", price])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    output = tmp_path / "bulk-delete.xlsx"
+    stats = process_activity_workbook(content.getvalue(), output)
+
+    assert stats["input_data_rows"] == 12
+    assert stats["removed_rows"] == 6
+    assert stats["remaining_data_rows"] == 6
+
+    result = load_workbook(output, data_only=True)
+    sheet2 = result["活动申报价格"]
+    kept = [(sheet2.cell(r, 1).value, sheet2.cell(r, 2).value) for r in range(2, sheet2.max_row + 1)]
+    result.close()
+
+    # 保留的是奇数行，顺序不变
+    assert [skc for skc, _ in kept] == [f"MB{i:03d}-A-5" for i in (1, 3, 5, 7, 9, 11)]
+    # 每行价格都被上浮到 (17, 18] 区间
+    for _skc, price in kept:
+        assert 17 < price <= 18, price
+    # 写入的价格单元格保留两位小数格式
+    result = load_workbook(output)
+    sheet3 = result["活动申报价格"]
+    assert sheet3.cell(2, 2).number_format == "0.00"
+    result.close()
+
+
+def test_bulk_delete_handles_contiguous_and_tail_rows(tmp_path):
+    """批量删除：连续区段与末尾区段都要正确处理。"""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "活动申报价格"
+    sheet.append(["SKC货号", "活动申报价格"])
+    # 前 3 行低价（删除）、中间 2 行正常、末尾 3 行低价（删除）
+    for index in range(1, 4):
+        sheet.append([f"LOW{index}-A-5", 5])
+    for index in range(4, 6):
+        sheet.append([f"OK{index}-A-5", 30])
+    for index in range(6, 9):
+        sheet.append([f"TAIL{index}-A-5", 5])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    output = tmp_path / "contiguous.xlsx"
+    stats = process_activity_workbook(content.getvalue(), output)
+
+    assert stats["removed_rows"] == 6
+    assert stats["remaining_data_rows"] == 2
+
+    result = load_workbook(output, data_only=True)
+    sheet2 = result["活动申报价格"]
+    kept = [sheet2.cell(r, 1).value for r in range(2, sheet2.max_row + 1)]
+    result.close()
+    assert kept == ["OK4-A-5", "OK5-A-5"]
+
+
+def test_bulk_delete_no_rows_is_noop(tmp_path):
+    """没有需要删除的行时不应改变内容。"""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "活动申报价格"
+    sheet.append(["SKC货号", "活动申报价格"])
+    sheet.append(["MB131-A-5", 30])
+    sheet.append(["MB131-B-5", 30])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    output = tmp_path / "no-delete.xlsx"
+    stats = process_activity_workbook(content.getvalue(), output)
+
+    assert stats["removed_rows"] == 0
+    assert stats["remaining_data_rows"] == 2
+    result = load_workbook(output, data_only=True)
+    sheet2 = result["活动申报价格"]
+    assert [sheet2.cell(r, 1).value for r in range(2, sheet2.max_row + 1)] == ["MB131-A-5", "MB131-B-5"]
+    result.close()
+
+
 def test_activity_uses_default_skc_rules_from_settings(tmp_path):
     workbook = Workbook()
     sheet = workbook.active
