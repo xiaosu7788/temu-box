@@ -16,6 +16,7 @@ services:
       retries: 12
 
   backend:
+    image: ${TEMUBOX_BACKEND_IMAGE:-ghcr.io/xiaosu7788/temu-box-backend:latest}
     build:
       context: .
       dockerfile: docker/backend.Dockerfile
@@ -52,6 +53,7 @@ services:
       retries: 12
 
   frontend:
+    image: ${TEMUBOX_FRONTEND_IMAGE:-ghcr.io/xiaosu7788/temu-box-frontend:latest}
     build:
       context: .
       dockerfile: docker/frontend.Dockerfile

@@ -67,6 +67,8 @@ chmod +x scripts/docker-deploy.sh
 5. 执行 Alembic 数据库迁移。
 6. 启动 PostgreSQL、FastAPI 和前端 Nginx。
 
+> 该脚本在服务器本地构建镜像。若已配置 GHCR 预构建镜像（见第 12 节），可把第 4 步替换为 `docker compose --env-file .env.docker pull backend frontend`，并在启动时去掉 `--build`。
+
 首次运行会在终端显示管理员用户名和随机密码，请立即记录。
 
 也可以手动配置：
@@ -127,7 +129,31 @@ cd /opt/temu-box
 ./scripts/backup.sh
 ```
 
-更新应用：
+### 方式 A：拉取预构建镜像（推荐）
+
+前后端镜像由 GitHub Actions 构建并推送到 GHCR，服务器只拉取，不在本地编译：
+
+```bash
+./scripts/docker-update-pull.sh
+```
+
+脚本依次执行：备份 → `git pull --ff-only origin main` → 拉取前后端镜像 → 启动（不带 `--build`）→ 状态与健康检查。
+
+手动等价命令：
+
+```bash
+git pull --ff-only origin main
+docker compose --env-file .env.docker pull backend frontend
+docker compose --env-file .env.docker --profile internal-db up -d
+docker compose --env-file .env.docker --profile internal-db ps
+curl -i http://127.0.0.1:8089/api/health
+```
+
+关键点：**方式 A 不能带 `--build`**，否则会退化成服务器本地构建，并覆盖刚拉取的镜像。
+
+### 方式 B：服务器本地构建
+
+不使用预构建镜像时使用（例如镜像尚未发布、服务器无法访问 GHCR）：
 
 ```bash
 git pull --ff-only origin main
@@ -137,6 +163,8 @@ curl -i http://127.0.0.1:8089/api/health
 ```
 
 `--build` 会在构建期间临时增加 CPU 和内存占用，完成后构建进程会退出。不要删除 `.env.docker`、`data/` 或数据库卷。
+
+两种方式都必须让前后端在同一次操作中一起更新：新旧版本混用会出现字段不一致，例如批量活动预览弹窗显示空白。
 
 ## 8. 日志与状态
 
@@ -204,7 +232,59 @@ docker system df
 docker compose down -v
 ```
 
-## 12. 故障排查
+## 12. 镜像预构建（GitHub Actions + GHCR）
+
+前后端镜像由 GitHub Actions 在推送 `main` 时构建并推送到 GitHub Container Registry，服务器只拉取，不在本地编译。
+
+- 工作流：`.github/workflows/docker-publish.yml`
+- 触发：推送到 `main` 且改动涉及 `backend/`、`frontend/`、`docker/`、`docker-compose.yml`；也可在仓库 Actions 页面手动触发
+- 镜像：
+  - `ghcr.io/xiaosu7788/temu-box-backend:latest`
+  - `ghcr.io/xiaosu7788/temu-box-frontend:latest`
+- 标签：`latest`（仅默认分支）和 `sha-<提交短哈希>`，回滚时使用 `sha-` 标签
+- 架构：`linux/arm64`，与 ARM64 服务器一致；换 x86 服务器需修改工作流中的 `platforms`
+
+### 一次性设置：把镜像包设为公开
+
+首次推送后，打开仓库页面 → 右侧 `Packages` → 选择 `temu-box-backend` → `Package settings` → `Change visibility` → `Public`；`temu-box-frontend` 同样操作。
+
+设为公开后服务器无需登录即可拉取。若保持私有，在服务器执行：
+
+```bash
+echo <GitHub PAT> | docker login ghcr.io -u xiaosu7788 --password-stdin
+```
+
+PAT 需要 `read:packages` 权限。
+
+### 指定镜像标签与回滚
+
+镜像名可在 `.env.docker` 中覆盖：
+
+```ini
+TEMUBOX_BACKEND_IMAGE=ghcr.io/xiaosu7788/temu-box-backend:sha-1a2b3c4
+TEMUBOX_FRONTEND_IMAGE=ghcr.io/xiaosu7788/temu-box-frontend:sha-1a2b3c4
+```
+
+回滚时把两个变量都改成目标 `sha-` 标签，再按第 7 节方式 A 更新。
+
+### 构建加速（可选）
+
+默认用 QEMU 在 x86 runner 上模拟构建 arm64，前端 `npm run build` 较慢。若仓库可用 GitHub 原生 ARM runner，把工作流中的 `runs-on: ubuntu-latest` 改为 `runs-on: ubuntu-24.04-arm`，并删除「准备 QEMU」步骤。
+
+### 相关排查命令
+
+```bash
+# 服务器实际使用的镜像与标签
+docker compose --env-file .env.docker images
+
+# 确认镜像架构（应为 arm64）
+docker image inspect ghcr.io/xiaosu7788/temu-box-backend:latest --format '{{.Architecture}}'
+
+# 手动拉取镜像
+docker compose --env-file .env.docker pull backend frontend
+```
+
+## 13. 故障排查
 
 ### 后端容器不健康
 
@@ -227,6 +307,11 @@ docker compose --env-file .env.docker ps
 ### 更新后页面仍是旧版本
 
 ```bash
+# 镜像预构建模式
+docker compose --env-file .env.docker pull frontend
+docker compose --env-file .env.docker up -d frontend
+
+# 服务器本地构建模式
 docker compose --env-file .env.docker up -d --build frontend
 docker compose --env-file .env.docker restart frontend
 ```

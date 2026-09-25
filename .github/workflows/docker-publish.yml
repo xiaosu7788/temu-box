@@ -1,0 +1,78 @@
+name: 构建并推送镜像到 GHCR
+
+# 推送 main 且改动涉及应用代码/镜像定义时自动构建；也可在 Actions 页面手动触发。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "docker/**"
+      - "docker-compose.yml"
+      - ".github/workflows/docker-publish.yml"
+  workflow_dispatch:
+
+# 同一分支只保留最新一次构建，避免重复排队。
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BASE: ${{ github.repository }}
+
+jobs:
+  publish:
+    name: 构建 ${{ matrix.service }} 镜像
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            dockerfile: docker/backend.Dockerfile
+          - service: frontend
+            dockerfile: docker/frontend.Dockerfile
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 QEMU（在 x86 runner 上构建 arm64）
+        uses: docker/setup-qemu-action@v3
+
+      - name: 准备 Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 生成镜像标签
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}-${{ matrix.service }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=temu-box-${{ matrix.service }}
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          # 服务器为 ARM64（aarch64）。如需 x86 服务器，改成 linux/amd64 或 linux/amd64,linux/arm64。
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max

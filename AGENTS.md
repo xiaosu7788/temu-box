@@ -10,7 +10,7 @@ Temu-Box 是用于 Temu 订单成本计算、库存管理和批量报名活动�
 - 前端：Vue 3 + TypeScript + Vite + Element Plus（`frontend/`）
 - 后端：FastAPI + SQLAlchemy 2 + Alembic + openpyxl（`backend/`）
 - 数据库：默认 SQLite（`data/temubox.db`），生产用 PostgreSQL（Docker Compose）
-- 部署：Docker Compose + Nginx，详见 `DEPLOYMENT.md`；一键脚本 `scripts/docker-deploy.sh`
+- 部署：Docker Compose + Nginx，详见 `DEPLOYMENT.md`；首次部署 `scripts/docker-deploy.sh`（服务器本地构建），日常更新 `scripts/docker-update-pull.sh`（拉取 GHCR 预构建镜像，由 `.github/workflows/docker-publish.yml` 构建）
 
 ## 目录与关键文件
 
@@ -33,8 +33,9 @@ temu-box/
 │       ├── regionState.ts   # 全局区域/品类选择状态
 │       ├── router.ts        # 路由（含 /admin 后台）
 │       └── views/           # 页面；components/ 通用组件
-├── scripts/                 # dev.ps1、dev-backend-local.ps1、dev-frontend-local.ps1、backup.sh、docker-deploy.sh
+├── scripts/                 # dev.ps1、dev-backend-local.ps1、dev-frontend-local.ps1、backup.sh、docker-deploy.sh、docker-update-pull.sh
 ├── docker/                  # 镜像与 nginx.conf
+├── .github/workflows/       # docker-publish.yml：构建前后端镜像并推送到 GHCR
 ├── data/                    # 运行时数据（不入库）：inventories/、tasks/、activities/、logs/、*.db、*.json
 ├── docker-compose.yml
 ├── DEPLOYMENT.md
