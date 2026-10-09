@@ -42,6 +42,13 @@ SESSION_COOKIE_NAME = "temubox_session"
 SESSION_MAX_AGE = max(3600, int(os.environ.get("SESSION_MAX_AGE", "604800")))
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() in {"1", "true", "yes"}
 
+# 一键热更新：真正的更新动作由 compose ops profile 里的运维边车执行
+# （docker/updater/server.py），后端只负责管理员鉴权 + 代理，不引入额外 HTTP 依赖。
+UPDATER_URL = os.environ.get("UPDATER_URL", "http://updater:8899").rstrip("/")
+UPDATER_TOKEN = os.environ.get("UPDATER_TOKEN", "").strip()
+UPDATER_STATUS_TIMEOUT = max(3, int(os.environ.get("UPDATER_STATUS_TIMEOUT", "60")))
+UPDATER_ACTION_TIMEOUT = max(3, int(os.environ.get("UPDATER_ACTION_TIMEOUT", "20")))
+
 
 def ensure_directories() -> None:
     for path in (DATA_DIR, INVENTORY_DIR, TASKS_DIR, LOGS_DIR, ACTIVITY_DIR):

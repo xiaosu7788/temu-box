@@ -14,6 +14,7 @@ import {
   Setting,
   SetUp,
   Tools,
+  Upload,
   UserFilled,
 } from '@element-plus/icons-vue'
 import type { User } from '../types'
@@ -30,6 +31,7 @@ const inventoryPage = computed(() => route.path === '/admin/inventory')
 
 const navItems = [
   { path: '/admin/monitoring', label: '系统监控', icon: Monitor },
+  { path: '/admin/update', label: '系统更新', icon: Upload },
   { path: '/admin/users', label: '用户管理', icon: UserFilled },
   { path: '/admin/regions', label: '区域设置', icon: Location },
   { path: '/admin/categories', label: '品类管理', icon: Goods },

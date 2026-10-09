@@ -373,3 +373,146 @@ export interface MonitoringSnapshot {
   }
   database: { status: string }
 }
+export interface UpdateCommit {
+  sha: string
+  short: string
+  subject: string
+  date: string
+}
+
+export interface UpdateRemote {
+  at: number
+  sha: string
+  subject: string
+  date?: string
+  error?: string | null
+}
+
+export interface UpdateIncomingCommit {
+  short: string
+  subject: string
+}
+
+export interface UpdateProjectState {
+  dir: string
+  branch: string
+  commit: UpdateCommit
+  dirty: boolean
+  remote: UpdateRemote
+  behind: number
+  fast_forward: boolean
+  update_available: boolean
+  incoming: UpdateIncomingCommit[]
+}
+
+export interface UpdateEnvInfo {
+  internal_db: boolean
+  web_port: string
+  state_dir: string
+  health_urls: string[]
+}
+
+export interface UpdateServiceState {
+  name: string
+  state: string
+  status: string
+  health: string
+  image: string
+  image_id: string
+  started_at: string
+}
+
+export interface UpdateImageState {
+  ref: string
+  present: boolean
+  id: string
+  short: string
+  created: string
+}
+
+export interface UpdateToolVersions {
+  docker: string
+  compose: string
+  git: string
+}
+
+export interface UpdateRollbackImage {
+  ref: string
+  previous: string
+  id: string
+  tagged: boolean
+}
+
+export interface UpdateRollbackPoint {
+  available: boolean
+  commit: string
+  short: string
+  at: string
+  images: Record<string, UpdateRollbackImage>
+}
+
+export interface UpdateJobStep {
+  label: string
+  state: 'done' | 'running' | 'pending' | 'failed'
+}
+
+export interface UpdateJob {
+  id: string
+  kind: 'update' | 'rollback'
+  title: string
+  status: 'running' | 'ok' | 'failed'
+  started_at: string
+  finished_at: string
+  message: string
+  detail: Record<string, string>
+  current: number
+  total: number
+  steps: UpdateJobStep[]
+  lines: string[]
+  line_count: number
+}
+
+export interface UpdateResult {
+  kind?: string
+  status?: string
+  message?: string
+  at?: string
+  before?: string
+  after?: string
+  images?: string
+  step?: string
+  target?: string
+}
+
+export interface UpdateSnapshot {
+  updater: { version: string; time: string; busy: boolean; ready: boolean }
+  notes: string[]
+  project: UpdateProjectState
+  env: UpdateEnvInfo
+  services: UpdateServiceState[]
+  images: Record<string, UpdateImageState>
+  tools: UpdateToolVersions
+  last_result: UpdateResult
+  rollback: UpdateRollbackPoint
+}
+
+export interface UpdateStatusResponse {
+  enabled: boolean
+  url: string
+  error: string
+  data: UpdateSnapshot | null
+  job: UpdateJob | null
+}
+
+export interface UpdateJobResponse {
+  enabled: boolean
+  job: UpdateJob | null
+  last_result: UpdateResult
+  busy: boolean
+}
+
+export interface UpdateStartResponse {
+  enabled: boolean
+  job: UpdateJob | null
+  action: string
+}

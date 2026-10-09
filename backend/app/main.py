@@ -46,7 +46,7 @@ from app.database import (
 )
 from app.schemas import ActivitySkuRulesPayload, AdminUserUpdateRequest, CategoryCreateRequest, CategoryUpdateRequest, HalfHeadcostCreateRequest, HalfHeadcostUpdateRequest, InventoryApplyRequest, InventoryCategoryCreateRequest, InventoryCategoryUpdateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest, SystemSettingsPayload
 from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
-from app.services import audit, system
+from app.services import audit, system, updater
 from app.services.categories import category_allowed_pieces, category_skc_rules, create_category, delete_category, get_category, list_categories, TEMPLATE_TYPES, update_category
 from app.services.cleanup import cleanup_scheduler, purge_all, run_once as run_cleanup_once
 from app.services.half_headcost import delete_entry, entry_exists, load_entries, merge_upload, save_entry
@@ -1175,3 +1175,43 @@ def admin_run_purge(request: Request, _admin: dict = Depends(admin_user)):
     result = purge_all()
     audit.record(_admin, "maintenance.purge", "system", "purge", f"清空全部历史数据：{result}", request)
     return result
+
+
+def _start_update_action(action: str, admin: dict, request: Request) -> dict:
+    label = "一键更新" if action == "update" else "回滚到上一版本"
+    try:
+        result = updater.start(action)
+    except updater.UpdaterError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    audit.record(admin, f"update.{action}", "system", "updater", f"{label}：已提交执行", request)
+    return result
+
+
+@app.get("/api/admin/update/status")
+def admin_update_status(_admin: dict = Depends(admin_user)):
+    """运维边车状态：当前版本、落后提交、镜像、回滚点。未启用时回 enabled=False。"""
+    try:
+        return updater.status()
+    except updater.UpdaterError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.get("/api/admin/update/job")
+def admin_update_job(since: int = Query(0, ge=0), _admin: dict = Depends(admin_user)):
+    """按 since 增量拉取当前任务的步骤与日志。"""
+    try:
+        return updater.job(since)
+    except updater.UpdaterError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.post("/api/admin/update", status_code=202)
+def admin_update_run(request: Request, admin: dict = Depends(admin_user)):
+    """一键更新：备份 → 拉代码 → 拉镜像 → 重启 → 健康检查，全部由边车串行执行。"""
+    return _start_update_action("update", admin, request)
+
+
+@app.post("/api/admin/update/rollback", status_code=202)
+def admin_update_rollback(request: Request, admin: dict = Depends(admin_user)):
+    """回滚到「上一次在本页执行更新之前」的代码 + 镜像，回滚点是一次性的。"""
+    return _start_update_action("rollback", admin, request)

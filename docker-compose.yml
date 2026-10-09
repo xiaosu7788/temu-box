@@ -42,6 +42,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-10}
       DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-30000}
+      # 一键热更新：后端以管理员身份代理调用 compose ops profile 里的运维边车
+      UPDATER_URL: ${UPDATER_URL:-http://updater:8899}
+      UPDATER_TOKEN: ${UPDATER_TOKEN:-}
     volumes:
       - ./data:/app/data
     extra_hosts:
@@ -64,5 +67,37 @@ services:
       backend:
         condition: service_healthy
 
+  # 运维边车：把「拉代码 → 拉镜像 → 重启 → 健康检查」交给后台页面执行。
+  # 只在显式启用 ops profile 时启动：docker compose --profile ops up -d updater
+  # 常规部署（docker-deploy.sh / docker-update-pull.sh）不带 profile，因此不会启动它；
+  # 它自己也不在热更新的维护范围内（更新时绝不重建自己）。
+  updater:
+    profiles: ["ops"]
+    image: temubox-updater:local
+    build:
+      context: .
+      dockerfile: docker/updater.Dockerfile
+    restart: unless-stopped
+    environment:
+      PROJECT_DIR: ${TEMUBOX_PROJECT_DIR:-/var/www/temu-box}
+      UPDATER_BRANCH: ${UPDATER_BRANCH:-main}
+      # 留空 = 不启用一键热更新：边车会拒绝启动，后台页面显示未配置
+      UPDATER_TOKEN: ${UPDATER_TOKEN:-}
+      UPDATER_STATE_DIR: /var/lib/temubox-updater
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 关键：项目目录挂到容器内的同一绝对路径，compose 里的相对路径才会解析到同一位置
+      - ${TEMUBOX_PROJECT_DIR:-/var/www/temu-box}:${TEMUBOX_PROJECT_DIR:-/var/www/temu-box}
+      # 回滚点与任务结果放在命名卷里，边车自身被重建也不会丢
+      - updater_state:/var/lib/temubox-updater
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8899/health', timeout=4)"]
+      interval: 30s
+      timeout: 6s
+      retries: 5
+      start_period: 5s
+
 volumes:
   postgres_data:
+  updater_state:

@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem, AppSettings, AuditLogPage, BulkActivityResult, CategoryPage, CategorySummary, CleanupResult, HalfHeadcostItem, InventoryCategory, InventoryDiffItem, InventoryPreview, InventoryStatus, MonitoringSnapshot, RegionProfile, RegionSummary, SkuResult, SystemSettings, SystemSettingsInfo, TaskItem, User } from './types'
+import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem, AppSettings, AuditLogPage, BulkActivityResult, CategoryPage, CategorySummary, CleanupResult, HalfHeadcostItem, InventoryCategory, InventoryDiffItem, InventoryPreview, InventoryStatus, MonitoringSnapshot, RegionProfile, RegionSummary, SkuResult, SystemSettings, SystemSettingsInfo, TaskItem, User, UpdateJobResponse, UpdateStartResponse, UpdateStatusResponse } from './types'
 
 const http = axios.create({
   baseURL: '/api',
@@ -460,5 +460,28 @@ export async function runAdminCleanup() {
 
 export async function runAdminPurge() {
   const { data } = await http.post<CleanupResult>('/admin/maintenance/purge')
+  return data
+}
+
+// 一键热更新：边车状态查询含 git fetch + docker inspect，可能超过默认 15s，单独放宽超时
+const UPDATE_STATUS_TIMEOUT = 60 * 1000
+
+export async function getAdminUpdateStatus() {
+  const { data } = await http.get<UpdateStatusResponse>('/admin/update/status', { timeout: UPDATE_STATUS_TIMEOUT })
+  return data
+}
+
+export async function getAdminUpdateJob(since: number) {
+  const { data } = await http.get<UpdateJobResponse>('/admin/update/job', { params: { since }, timeout: UPDATE_STATUS_TIMEOUT })
+  return data
+}
+
+export async function runAdminUpdate() {
+  const { data } = await http.post<UpdateStartResponse>('/admin/update')
+  return data
+}
+
+export async function rollbackAdminUpdate() {
+  const { data } = await http.post<UpdateStartResponse>('/admin/update/rollback')
   return data
 }

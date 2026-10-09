@@ -166,6 +166,32 @@ curl -i http://127.0.0.1:8089/api/health
 
 两种方式都必须让前后端在同一次操作中一起更新：新旧版本混用会出现字段不一致，例如批量活动预览弹窗显示空白。
 
+### 方式 C：后台一键热更新（可选）
+
+在服务器上启用一次运维边车后，管理员可以直接在后台「系统更新」页面完成更新，不需要再登录服务器敲命令。边车只提供「更新」「回滚」两个固定动作，不发布端口，也不会在更新过程中重建自己。
+
+```bash
+cd /opt/temu-box
+chmod +x scripts/enable-updater.sh
+./scripts/enable-updater.sh
+```
+
+脚本依次执行：生成 `UPDATER_TOKEN`（32 字节随机，已存在则沿用）→ 写入 `TEMUBOX_PROJECT_DIR`（项目绝对路径）与 `UPDATER_BRANCH`（默认当前分支）→ 构建边车镜像 → 启动边车 → 重启后端让它载入令牌 → 等待边车健康检查通过并验证后端到边车的连通性。脚本幂等，重复执行只补齐缺失配置。
+
+启用后登录后台，左侧「系统更新」：
+
+- **立即更新到最新版本**：网页版的方式 A —— 备份 → `git pull --ff-only` → 拉取前后端镜像 → 前后端一起重启 → 健康检查，页面实时显示步骤、日志和当前/目标版本；
+- **回滚到上次版本**：把前后端镜像切回上一批 `sha-` 标签并重启，不用手工改 `.env.docker`；
+- 页面上还可查看当前版本、远端最新提交、镜像列表与上次执行结果。
+
+注意事项：
+
+- 更新期间前后端一起重启，页面中断约 1~2 分钟，完成后请 `Ctrl+F5` 强刷；
+- 边车不发布端口，只由后端容器通过 `http://updater:8899` 访问，请求必须带 `UPDATER_TOKEN`；它只接受固定的更新/回滚动作、不接受任何参数，每次操作都会写入后台审计日志（动作 `update.update` / `update.rollback`）；
+- 从服务器执行方式 A/B 更新不会影响正在运行的边车；但改过令牌或换过项目目录后，需要重新执行一次 `./scripts/enable-updater.sh`；
+- 如果整个项目被 `docker compose down` 停掉，或只执行了不带 `--profile ops` 的 `up -d`，边车可能不再运行，重跑启用脚本即可恢复；
+- 不需要该功能时：把 `.env.docker` 中的 `UPDATER_TOKEN` 留空并重启后端，后台会提示未启用；再执行 `docker compose --env-file .env.docker --profile ops rm -sf updater` 移除边车容器。
+
 ## 8. 日志与状态
 
 ```bash
@@ -317,3 +343,31 @@ docker compose --env-file .env.docker restart frontend
 ```
 
 随后强制刷新浏览器页面。
+
+### 后台「系统更新」提示未启用
+
+`.env.docker` 里没有 `UPDATER_TOKEN`，或后端还没载入它。执行一次启用脚本即可：
+
+```bash
+./scripts/enable-updater.sh
+```
+
+### 后台「系统更新」提示运维边车不可用
+
+```bash
+docker compose --env-file .env.docker --profile ops ps updater
+docker compose --env-file .env.docker --profile ops logs updater --tail=100
+docker compose --env-file .env.docker exec -T backend python -c "import urllib.request; print(urllib.request.urlopen('http://updater:8899/health', timeout=5).read().decode())"
+```
+
+后端与边车读的是同一个 `.env.docker`，令牌必须一致。改过令牌或换过项目目录后重跑 `./scripts/enable-updater.sh`（脚本会重启后端）。
+
+### 一键更新卡住或失败
+
+同一时间只允许一个更新任务，页面上的步骤和日志会停在具体失败点，边车日志里有同样的输出：
+
+```bash
+docker compose --env-file .env.docker --profile ops logs updater --tail=200
+```
+
+常见原因：服务器无法访问 GHCR（需要 `docker login ghcr.io`，见第 12 节）、`git pull` 因服务器上的本地改动无法快进（边车里只做 `--ff-only`）、磁盘空间不足。失败后可以直接在后台点「回滚到上次版本」，或登录服务器按第 7 节方式 A 重试。
