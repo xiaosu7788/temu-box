@@ -36,6 +36,11 @@ MAX_PREVIEW_PAGE_SIZE = 500
 PREVIEW_RESULT_FILTERS = ("单品", "套装", "无法识别")
 MAX_ID_PROFIT_RULES = 1000
 
+MAX_UNRECOGNIZED_SKCS = 200
+MAX_UNRECOGNIZED_ROWS_PER_SKC = 20
+MAX_DROP_SKC_LIST = 500
+MAX_DROP_SKC_LENGTH = 200
+
 
 def _text(value: object) -> str:
     return "" if value is None else str(value).strip()
@@ -93,6 +98,36 @@ def normalize_id_profit_rules(value: object) -> list[dict]:
         if profit < -100000 or profit > 100000:
             raise ValueError("ID利润调整值必须在-100000到100000之间")
         normalized.append({"id_type": id_type, "id": identifier, "profit": round(profit, 2)})
+    return normalized
+
+
+def normalize_drop_skc_list(value: object) -> list[str]:
+    """归一化「删除无法识别的 SKC」选择列表。
+
+    未提供（None）时返回空列表，表示不删除任何行，与历史行为一致；
+    去空、按原文去重并保持顺序；上限用于挡住异常请求。
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("要删除的SKC列表格式不正确")
+    if len(value) > MAX_DROP_SKC_LIST:
+        raise ValueError(f"一次最多只能删除{MAX_DROP_SKC_LIST}个无法识别的SKC")
+
+    normalized = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("要删除的SKC必须是文本")
+        text = _text(item)
+        if not text:
+            continue
+        if len(text) > MAX_DROP_SKC_LENGTH:
+            raise ValueError(f"SKC不能超过{MAX_DROP_SKC_LENGTH}个字符")
+        if text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
     return normalized
 
 
@@ -429,6 +464,7 @@ def preview_activity_workbook(
         uplift_limit = float(activity_settings.get("uplift_limit", 1))
         all_items = []
         total = single_rows = set_rows = unrecognized_rows = id_rule_matches = 0
+        unrecognized_buckets: Dict[str, dict] = {}
         # read_only 模式下 ws.cell(row, col) 每次调用都重扫 XML 流（O(N²)），
         # 是预览慢的根因；iter_rows 顺序流式读取，一次扫完。
         for row_index, row_cells in enumerate(
@@ -487,9 +523,18 @@ def preview_activity_workbook(
                 }
             else:
                 unrecognized_rows += 1
+                skc_text = _text(skc)
+                bucket = unrecognized_buckets.get(skc_text)
+                if bucket is None:
+                    bucket = {"skc": skc_text, "count": 0, "rows": []}
+                    unrecognized_buckets[skc_text] = bucket
+                bucket["count"] += 1
+                # 示例行号只留前若干条，避免极端表格把接口响应撑爆
+                if len(bucket["rows"]) < MAX_UNRECOGNIZED_ROWS_PER_SKC:
+                    bucket["rows"].append(row_index)
                 item = {
                     "row": row_index,
-                    "skc": _text(skc),
+                    "skc": skc_text,
                     "result": "无法识别",
                     "value": None,
                     "base_price": None,
@@ -500,6 +545,17 @@ def preview_activity_workbook(
                     "method": "未匹配规则或套装件数未配置",
                 }
             all_items.append(item)
+
+        # 无法识别的 SKC 聚合（始终基于全表，不受 result_filter 与分页影响）。
+        # 行数降序 + SKC 升序保证顺序稳定；列表长度与每个 SKC 的示例行号都有上限，
+        # 被截断时由前端用 drop_all_unrecognized 兜底「删除全部」。
+        unrecognized_ordered = sorted(unrecognized_buckets.values(), key=lambda bucket: (-bucket["count"], bucket["skc"]))
+        unrecognized_skc_total = len(unrecognized_ordered)
+        unrecognized_skcs_truncated = unrecognized_skc_total > MAX_UNRECOGNIZED_SKCS
+        unrecognized_skcs = [
+            {**bucket, "rows_truncated": bucket["count"] > len(bucket["rows"])}
+            for bucket in unrecognized_ordered[:MAX_UNRECOGNIZED_SKCS]
+        ]
         # 明细过滤（只影响明细，不影响上面的全量统计）
         filtered = all_items if not result_filter else [i for i in all_items if i["result"] == result_filter]
         safe_size = max(1, min(int(page_size or MAX_PREVIEW_ROWS), MAX_PREVIEW_PAGE_SIZE))
@@ -514,6 +570,9 @@ def preview_activity_workbook(
             "single_rows": single_rows,
             "set_rows": set_rows,
             "unrecognized_rows": unrecognized_rows,
+            "unrecognized_skc_total": unrecognized_skc_total,
+            "unrecognized_skcs_truncated": unrecognized_skcs_truncated,
+            "unrecognized_skcs": unrecognized_skcs,
             "id_profit_rule_matches": id_rule_matches,
             "uplift_limit": round(uplift_limit, 2),
             "page": safe_page,
@@ -527,7 +586,15 @@ def preview_activity_workbook(
         workbook.close()
 
 
-def process_activity_workbook(source: bytes, output_path: Path, settings=None, parse_config: Optional[dict] = None, id_profit_rules: Optional[list[dict]] = None) -> dict:
+def process_activity_workbook(
+    source: bytes,
+    output_path: Path,
+    settings=None,
+    parse_config: Optional[dict] = None,
+    id_profit_rules: Optional[list[dict]] = None,
+    drop_unrecognized_skcs: Optional[list[str]] = None,
+    drop_all_unrecognized: bool = False,
+) -> dict:
     if not source:
         raise ValueError("上传的报名表为空")
 
@@ -545,6 +612,11 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None, p
         skc_column = columns["skc"]
         uplift_limit = float(activity_settings.get("uplift_limit", 1))
         rows_to_delete = []
+        # 用户勾选要删除的 SKC，按原文精确匹配：识别结果是 SKC 文本的纯函数，
+        # 同一文本结果必然相同，因此不会误删能识别出价格的行
+        drop_skc_set = set(normalize_drop_skc_list(drop_unrecognized_skcs))
+        drop_everything = bool(drop_all_unrecognized)
+        dropped_unrecognized = 0
         updated = 0
         unchanged = 0
         skipped = 0
@@ -554,12 +626,22 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None, p
 
         for row in range(header_row + 1, worksheet.max_row + 1):
             skc = worksheet.cell(row, skc_column).value
-            if not _text(skc):
+            skc_text = _text(skc)
+            if not skc_text:
                 skipped += 1
                 continue
             parsed = parse_skc(skc, normalized_parse_config, normalized=True)
             reference = _reference_price(worksheet.cell(row, price_column).value)
-            if parsed is None or reference is None:
+            if parsed is None:
+                # 识别失败的 SKC：只有用户明确选择（勾选该 SKC、或勾选删除全部）才删行；
+                # 否则保持历史行为——原样保留并计入 skipped
+                if drop_everything or skc_text in drop_skc_set:
+                    rows_to_delete.append(row)
+                    dropped_unrecognized += 1
+                else:
+                    skipped += 1
+                continue
+            if reference is None:
                 skipped += 1
                 continue
 
@@ -603,6 +685,9 @@ def process_activity_workbook(source: bytes, output_path: Path, settings=None, p
             "custom_skc_rules": custom_parse_config,
             "id_profit_rule_matches": id_rule_matches,
             "custom_id_profit_rules": id_profit_rules is not None,
+            "dropped_unrecognized_rows": dropped_unrecognized,
+            "drop_all_unrecognized": drop_everything,
+            "drop_unrecognized_skcs": sorted(drop_skc_set),
         }
     finally:
         workbook.close()

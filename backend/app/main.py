@@ -50,7 +50,7 @@ from app.services import audit, system
 from app.services.categories import category_allowed_pieces, category_skc_rules, create_category, delete_category, get_category, list_categories, TEMPLATE_TYPES, update_category
 from app.services.cleanup import cleanup_scheduler, purge_all, run_once as run_cleanup_once
 from app.services.half_headcost import delete_entry, entry_exists, load_entries, merge_upload, save_entry
-from app.services.activity import MAX_PREVIEW_PAGE_SIZE, MAX_PREVIEW_ROWS, PREVIEW_RESULT_FILTERS, normalize_id_profit_rules, normalize_parse_config, preview_activity_workbook
+from app.services.activity import MAX_PREVIEW_PAGE_SIZE, MAX_PREVIEW_ROWS, PREVIEW_RESULT_FILTERS, normalize_drop_skc_list, normalize_id_profit_rules, normalize_parse_config, preview_activity_workbook
 from app.services.activity_tasks import activity_task_manager
 from app.services.monitoring import snapshot as monitoring_snapshot
 from app.services.regions import create_region, delete_region, get_region_profile, list_regions, region_snapshot, update_region
@@ -401,6 +401,22 @@ def parse_activity_id_profit_rules(value: Optional[str]) -> Optional[list[dict]]
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def parse_activity_drop_skc_list(value: Optional[str]) -> list[str]:
+    """解析前端勾选的「要删除的无法识别 SKC」列表；未提供时返回空列表（不删行）。"""
+    if value is None:
+        return []
+    if len(value) > 100_000:
+        raise HTTPException(status_code=400, detail="要删除的SKC列表内容过大")
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="要删除的SKC列表不是有效的JSON") from exc
+    try:
+        return normalize_drop_skc_list(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/activities/preview")
 async def preview_bulk_activity(
     file: UploadFile = File(...),
@@ -451,6 +467,8 @@ async def process_bulk_activity(
     id_profit_rules: Optional[str] = Form(None),
     region_code: Optional[str] = Form(None),
     category_code: Optional[str] = Form(None),
+    drop_unrecognized_skcs: Optional[str] = Form(None),
+    drop_all_unrecognized: bool = Form(False),
     user: dict = Depends(current_user),
 ):
     validate_excel(file)
@@ -466,6 +484,7 @@ async def process_bulk_activity(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     parse_config = parse_activity_rules(skc_rules, category_allowed_pieces(category))
     parsed_id_profit_rules = parse_activity_id_profit_rules(id_profit_rules)
+    drop_skcs = parse_activity_drop_skc_list(drop_unrecognized_skcs)
     try:
         snapshot = await run_in_threadpool(region_snapshot, region_code, category_code)
     except ValueError as exc:
@@ -473,10 +492,27 @@ async def process_bulk_activity(
     if activity_task_manager.queue_full():
         raise HTTPException(status_code=429, detail="后台任务队列已满，请稍后再试")
     try:
-        job = await run_in_threadpool(activity_task_manager.create, upload_name, user["id"], content, snapshot, uplift_limit, parse_config, parsed_id_profit_rules)
+        job = await run_in_threadpool(
+            activity_task_manager.create,
+            upload_name,
+            user["id"],
+            content,
+            snapshot,
+            uplift_limit,
+            parse_config,
+            parsed_id_profit_rules,
+            drop_skcs,
+            drop_all_unrecognized,
+        )
     except QueueFullError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
-    audit.record(user, "activity.create", "activity_job", job["id"], f"提交批量报名活动：{upload_name}（区域 {snapshot['region']['code']} / 品类 {snapshot['category']['code']}）", request)
+    if drop_all_unrecognized:
+        drop_note = "，删除全部无法识别的SKC所在行"
+    elif drop_skcs:
+        drop_note = f"，删除{len(drop_skcs)}个无法识别的SKC所在行"
+    else:
+        drop_note = ""
+    audit.record(user, "activity.create", "activity_job", job["id"], f"提交批量报名活动：{upload_name}（区域 {snapshot['region']['code']} / 品类 {snapshot['category']['code']}）{drop_note}", request)
     return {
         **job,
         "download_url": f"/api/activities/{job['id']}/download",

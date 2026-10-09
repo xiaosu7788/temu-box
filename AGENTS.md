@@ -95,6 +95,16 @@ npx vue-tsc -b --force
   reference - base)]` 的随机值（两位小数）；申报价 ≤ 底价时该行不变或整行删除。
 - **预览必须与实际写入一致**：`preview_activity_workbook` 与 `process_activity_workbook` 共用同一套规则与
   价格逻辑；预览返回 `final_price_low/high` 区间与 `action`（上浮/不变/将被删除/无法识别）。
+- **识别失败的 SKC 由用户决定是否删除**（默认不删，保持历史行为）：预览返回 `unrecognized_skc_total` /
+  `unrecognized_skcs_truncated` / `unrecognized_skcs`（每项 `skc`/`count`/`rows`/`rows_truncated`，`rows` 是
+  示例行号，供前端提示用户），该聚合基于全表，不受 `result_filter` 与分页影响；提交任务时前端传
+  `drop_unrecognized_skcs`（JSON 数组）或 `drop_all_unrecognized=true`，随任务写入 `task_overrides`，
+  服务重启后按原选择执行。
+- 删除只作用于 `parse_skc` 返回 None 的行，且按 SKC 原文精确匹配（识别结果是 SKC 文本的纯函数，不会误删能
+  识别的行）；申报价无法解析但 SKC 能识别的行仍走 `skipped_rows`，不受勾选影响。删除数量见
+  `dropped_unrecognized_rows`，生效的勾选见 `drop_unrecognized_skcs`。
+- 防护上限：`MAX_UNRECOGNIZED_SKCS`(200)、`MAX_UNRECOGNIZED_ROWS_PER_SKC`(20)、`MAX_DROP_SKC_LIST`(500)、
+  `MAX_DROP_SKC_LENGTH`(200)；列表被截断时前端提示改用「删除全部无法识别的 SKC 所在行」。
 
 ### 其他领域
 

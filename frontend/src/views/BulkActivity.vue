@@ -37,6 +37,9 @@ const previewPage = ref(1)
 const previewPageSize = ref(100)
 const previewFilter = ref<ActivitySkuPreviewItem['result'] | ''>('')
 const previewing = ref(false)
+// 用户勾选要删除的「识别不到 SKC」：默认一个都不删，行原样保留
+const dropUnrecognizedSkcs = ref<string[]>([])
+const dropAllUnrecognized = ref(false)
 const previewLoading = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | undefined
 const idRuleTypes: ActivityIdType[] = ['SPU', 'SKC', 'SKU']
@@ -116,6 +119,23 @@ const previewUpliftText = computed(() => {
   return typeof limit === 'number' && Number.isFinite(limit) ? `¥${limit.toFixed(2)}` : '未提供'
 })
 const previewFilterOptions: ActivitySkuPreviewItem['result'][] = ['单品', '套装', '无法识别']
+
+// 识别不到的 SKC 明细（后端按全表聚合，与 result_filter、分页无关）
+const unrecognizedSkcs = computed(() => skuPreview.value?.unrecognized_skcs || [])
+const unrecognizedSkcTotal = computed(() => skuPreview.value?.unrecognized_skc_total ?? unrecognizedSkcs.value.length)
+const unrecognizedSkcsTruncated = computed(() => skuPreview.value?.unrecognized_skcs_truncated ?? unrecognizedSkcTotal.value > unrecognizedSkcs.value.length)
+const unrecognizedRowCount = computed(() => skuPreview.value?.unrecognized_rows || 0)
+const dropRowCount = computed(() => {
+  if (dropAllUnrecognized.value) return unrecognizedRowCount.value
+  const counts = new Map(unrecognizedSkcs.value.map((item) => [item.skc, item.count]))
+  return dropUnrecognizedSkcs.value.reduce((sum, skc) => sum + (counts.get(skc) || 0), 0)
+})
+const dropPickText = computed(() => (dropAllUnrecognized.value ? `全部 ${unrecognizedRowCount.value} 行` : `已选 ${dropUnrecognizedSkcs.value.length} 个 SKC / ${dropRowCount.value} 行`))
+const dropSummary = computed(() => {
+  if (dropAllUnrecognized.value) return `删除全部 ${unrecognizedRowCount.value} 行无法识别数据`
+  if (!dropUnrecognizedSkcs.value.length) return ''
+  return `删除 ${dropUnrecognizedSkcs.value.length} 个 SKC 共 ${dropRowCount.value} 行无法识别数据`
+})
 const canSubmit = computed(() => !!regionCode.value && !!categoryCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || skuRulesConfigured.value) && (!useCustomIdProfitRules.value || idProfitRulesValid.value))
 const isActiveTask = computed(() => !!task.value && (task.value.status === 'queued' || task.value.status === 'running'))
 const hasTaskStats = computed(() => task.value?.stats?.processed_rows !== undefined)
@@ -128,6 +148,7 @@ function fileChanged(_file: UploadFile, uploadFiles: UploadFiles) {
   files.value = uploadFiles.slice(-1)
   skuPreview.value = null
   previewDialogVisible.value = false
+  resetUnrecognizedSelection()
 }
 
 function resetSkuRules() {
@@ -266,6 +287,9 @@ async function fetchPreview(page = previewPage.value) {
     if (requestId !== previewRequestId) return  // 已有更新的请求，丢弃过期响应
     skuPreview.value = payload
     previewPage.value = payload.page
+    // 重新预览后丢弃已经不在列表里的勾选（换文件、改识别规则、切区域品类都会走这里）
+    const available = new Set((payload.unrecognized_skcs || []).map((item) => item.skc))
+    dropUnrecognizedSkcs.value = dropUnrecognizedSkcs.value.filter((skc) => available.has(skc))
   } catch (error) {
     if (requestId === previewRequestId) notifyError(error)
   } finally {
@@ -306,6 +330,26 @@ function previewPageSizeChanged(size: number) {
 function previewFilterChanged() {
   previewPage.value = 1
   void fetchPreview(1)
+}
+
+function selectAllUnrecognizedSkcs() {
+  dropUnrecognizedSkcs.value = unrecognizedSkcs.value.map((item) => item.skc)
+}
+
+function clearUnrecognizedSkcs() {
+  dropUnrecognizedSkcs.value = []
+}
+
+function resetUnrecognizedSelection() {
+  dropUnrecognizedSkcs.value = []
+  dropAllUnrecognized.value = false
+}
+
+// 兼容旧后端：缺少 rows 时只显示行数，避免整块面板渲染失败
+function unrecognizedRowsText(item: { count: number; rows?: number[]; rows_truncated?: boolean }) {
+  const rows = item.rows || []
+  if (!rows.length) return `${item.count} 行`
+  return `${item.count} 行 · 行号 ${rows.join('、')}${item.rows_truncated ? ' 等' : ''}`
 }
 
 function previewPriceRange(item: ActivitySkuPreviewItem) {
@@ -385,6 +429,7 @@ async function submit() {
   const file = files.value[0]?.raw
   if (!file) return
   loading.value = true
+  const summary = dropSummary.value
   try {
     mergeTask(await processBulkActivity(
       file,
@@ -393,6 +438,11 @@ async function submit() {
       useCustomSkuRules.value ? appliedSkuRules.value : undefined,
       useCustomIdProfitRules.value ? idProfitRules.value : undefined,
       categoryCode.value,
+      {
+        // 勾选「删除全部」时按全量删除，否则只删勾选到的 SKC；未勾选 = 行原样保留
+        skcs: dropAllUnrecognized.value ? undefined : [...dropUnrecognizedSkcs.value],
+        all: dropAllUnrecognized.value,
+      },
     ))
     files.value = []
     useCustomUplift.value = false
@@ -400,8 +450,9 @@ async function submit() {
     useCustomSkuRules.value = false
     resetSkuRules()
     resetIdProfitRules()
+    resetUnrecognizedSelection()
     startPolling()
-    notifySuccess('任务已提交，后台正在处理')
+    notifySuccess(summary ? `任务已提交，后台正在处理（${summary}）` : '任务已提交，后台正在处理')
   } catch (error) {
     notifyError(error)
   } finally {
@@ -416,6 +467,7 @@ function reset() {
   useCustomSkuRules.value = false
   resetSkuRules()
   resetIdProfitRules()
+  resetUnrecognizedSelection()
 }
 
 async function loadRegionDefaults(code: string, category?: string) {
@@ -670,6 +722,31 @@ onBeforeUnmount(stopPolling)
             <el-option v-for="option in previewFilterOptions" :key="option" :label="`只看${option}`" :value="option" />
           </el-select>
         </div>
+        <div v-if="unrecognizedRowCount > 0" class="activity-unrecognized">
+          <div class="activity-unrecognized-head">
+            <p class="activity-unrecognized-title">
+              识别不到 <strong>{{ unrecognizedSkcTotal }}</strong> 个 SKC，共 <strong>{{ unrecognizedRowCount }}</strong> 行。
+              <span>不勾选时这些行原样保留；勾选后提交任务会删除该 SKC 的全部行。</span>
+            </p>
+            <div class="activity-unrecognized-tools">
+              <el-button size="small" text :disabled="dropAllUnrecognized || !unrecognizedSkcs.length" @click="selectAllUnrecognizedSkcs">全选</el-button>
+              <el-button size="small" text :disabled="dropAllUnrecognized || !dropUnrecognizedSkcs.length" @click="clearUnrecognizedSkcs">清空</el-button>
+              <span class="activity-unrecognized-picked">{{ dropPickText }}</span>
+            </div>
+          </div>
+          <el-checkbox-group v-model="dropUnrecognizedSkcs" :disabled="dropAllUnrecognized" class="activity-unrecognized-list">
+            <el-checkbox v-for="item in unrecognizedSkcs" :key="item.skc" :value="item.skc" class="activity-unrecognized-item">
+              <span class="mono activity-unrecognized-skc">{{ item.skc }}</span>
+              <span class="activity-unrecognized-meta">{{ unrecognizedRowsText(item) }}</span>
+            </el-checkbox>
+          </el-checkbox-group>
+          <div class="activity-unrecognized-foot">
+            <el-checkbox v-model="dropAllUnrecognized">删除全部无法识别的 SKC 所在行</el-checkbox>
+            <span v-if="unrecognizedSkcsTruncated" class="activity-unrecognized-warn">
+              列表最多显示 {{ unrecognizedSkcs.length }} 个（共 {{ unrecognizedSkcTotal }} 个），其余请用上面的「删除全部」。
+            </span>
+          </div>
+        </div>
         <div class="activity-preview-table-wrap">
           <el-table :data="previewItems" height="100%" stripe>
             <el-table-column prop="row" label="行号" width="72" />
@@ -752,6 +829,7 @@ onBeforeUnmount(stopPolling)
       <div><span>保留行数</span><strong>{{ task.stats.unchanged_rows }}</strong></div>
       <div><span>删除行数</span><strong>{{ task.stats.removed_rows }}</strong></div>
       <div><span>命中 ID 条件</span><strong>{{ task.stats.id_profit_rule_matches || 0 }}</strong></div>
+      <div v-if="task.stats.dropped_unrecognized_rows"><span>删除无法识别行</span><strong>{{ task.stats.dropped_unrecognized_rows }}</strong></div>
     </div>
 
     <div class="log-view" aria-live="polite">

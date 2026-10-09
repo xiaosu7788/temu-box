@@ -11,7 +11,7 @@ from typing import Optional
 from app.config import ACTIVITY_DIR
 from app.database import create_activity_job, delete_activity_job, get_activity_job, list_activity_jobs, list_activity_jobs_by_status, list_all_activity_jobs, update_activity_job
 from app.services import system
-from app.services.activity import normalize_id_profit_rules, normalize_parse_config, process_activity_workbook, settings_allowed_pieces
+from app.services.activity import normalize_drop_skc_list, normalize_id_profit_rules, normalize_parse_config, process_activity_workbook, settings_allowed_pieces
 from app.services.regions import region_snapshot
 from app.services.taskpool import QueueFullError, TaskPool
 
@@ -61,7 +61,7 @@ class ActivityTaskManager:
         if recovered:
             logger.info("Recovered %d interrupted activity job(s) after restart", recovered)
 
-    def create(self, filename: str, owner_id: int, content: bytes, snapshot: dict | None = None, uplift_limit: float | None = None, parse_config: dict | None = None, id_profit_rules: list[dict] | None = None) -> dict:
+    def create(self, filename: str, owner_id: int, content: bytes, snapshot: dict | None = None, uplift_limit: float | None = None, parse_config: dict | None = None, id_profit_rules: list[dict] | None = None, drop_unrecognized_skcs: list[str] | None = None, drop_all_unrecognized: bool = False) -> dict:
         if self._pool.full():
             raise QueueFullError(f"任务队列已满（上限 {self._pool.stats()['queue_limit']} 个），请稍后再试")
         job_id = uuid.uuid4().hex
@@ -71,11 +71,15 @@ class ActivityTaskManager:
         allowed_pieces = settings_allowed_pieces(snapshot or {})
         normalized_parse_config = normalize_parse_config(parse_config, allowed_pieces=allowed_pieces) if parse_config is not None else None
         normalized_id_profit_rules = normalize_id_profit_rules(id_profit_rules) if id_profit_rules is not None else None
+        # 用户的删除选择随任务一起落盘，服务重启后按原选择执行
+        normalized_drop_skcs = normalize_drop_skc_list(drop_unrecognized_skcs)
         task_snapshot = deepcopy(snapshot or {})
         task_snapshot["task_overrides"] = {
             "uplift_limit": uplift_limit,
             "skc_rules": normalized_parse_config,
             "id_profit_rules": normalized_id_profit_rules,
+            "drop_unrecognized_skcs": normalized_drop_skcs,
+            "drop_all_unrecognized": bool(drop_all_unrecognized),
         }
         job = create_activity_job(job_id, filename, owner_id, task_snapshot)
         with self._lock:
@@ -102,10 +106,20 @@ class ActivityTaskManager:
             uplift_limit = overrides.get("uplift_limit")
             parse_config = overrides.get("skc_rules")
             id_profit_rules = overrides.get("id_profit_rules")
+            drop_unrecognized_skcs = overrides.get("drop_unrecognized_skcs") or []
+            drop_all_unrecognized = bool(overrides.get("drop_all_unrecognized"))
             if uplift_limit is not None:
                 settings = deepcopy(settings)
                 settings["activity"]["uplift_limit"] = uplift_limit
-            stats = process_activity_workbook(input_path.read_bytes(), output_path, settings, parse_config, id_profit_rules)
+            stats = process_activity_workbook(
+                input_path.read_bytes(),
+                output_path,
+                settings,
+                parse_config,
+                id_profit_rules,
+                drop_unrecognized_skcs,
+                drop_all_unrecognized,
+            )
             self._update(job_id, status="completed", progress=100, message="处理完成", output_path=str(output_path), stats=stats)
         except Exception as exc:
             logger.exception("Activity task failed: %s", job_id)

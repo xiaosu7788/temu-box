@@ -94,6 +94,9 @@ export interface BulkActivityStats {
   custom_skc_rules?: boolean
   id_profit_rule_matches?: number
   custom_id_profit_rules?: boolean
+  dropped_unrecognized_rows?: number
+  drop_all_unrecognized?: boolean
+  drop_unrecognized_skcs?: string[]
 }
 
 export type ActivitySingleParseMode = 'first_segment' | 'last_segment' | 'after_marker'
@@ -149,6 +152,13 @@ export interface ActivitySkuPreviewItem {
   method: string
 }
 
+export interface ActivityUnrecognizedSkc {
+  skc: string
+  count: number
+  rows: number[]
+  rows_truncated: boolean
+}
+
 export interface ActivitySkuPreview {
   sheet: string
   header_row: number
@@ -156,6 +166,9 @@ export interface ActivitySkuPreview {
   single_rows: number
   set_rows: number
   unrecognized_rows: number
+  unrecognized_skc_total?: number
+  unrecognized_skcs?: ActivityUnrecognizedSkc[]
+  unrecognized_skcs_truncated?: boolean
   id_profit_rule_matches: number
   uplift_limit: number
   page: number

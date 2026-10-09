@@ -322,9 +322,24 @@ a:focus-visible {
 .activity-preview-toolbar-info strong { color: var(--text-strong); }
 .activity-preview-filter { flex: 0 0 160px; }
 .activity-preview-note { margin: 10px 0 0; }
+
+/* 识别不到的 SKC：勾选后删除该 SKC 的全部行 */
+.activity-unrecognized { margin: 0 0 12px; border: 1px solid var(--border); border-left: 3px solid var(--danger); }
+.activity-unrecognized-head { padding: 10px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--border); }
+.activity-unrecognized-title { margin: 0; color: var(--text-strong); font-size: 13px; line-height: 1.6; }
+.activity-unrecognized-title span { color: var(--muted); font-size: 12px; }
+.activity-unrecognized-title strong { color: var(--danger); }
+.activity-unrecognized-tools { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.activity-unrecognized-list { max-height: 168px; overflow-y: auto; padding: 8px 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 2px 16px; }
+.activity-unrecognized-item { min-width: 0; }
+.activity-unrecognized-item .el-checkbox__label { min-width: 0; display: inline-flex; align-items: baseline; gap: 8px; }
+.activity-unrecognized-skc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-unrecognized-meta { color: var(--muted); font-size: 12px; }
+.activity-unrecognized-foot { padding: 8px 14px; display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--border); font-size: 12px; }
+.activity-unrecognized-warn { color: var(--danger); }
 .activity-result-panel .section-heading { align-items: center; }
 .activity-result-panel .section-heading p { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.activity-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.activity-metrics { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .activity-summary { margin: 18px 0 0; color: var(--muted); font-size: 13px; }
 .activity-tasks-panel { min-height: 240px; }
 .activity-task-list { display: grid; gap: 12px; }

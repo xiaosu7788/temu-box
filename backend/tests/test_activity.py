@@ -6,7 +6,7 @@ from openpyxl import Workbook, load_workbook
 
 from app.database import create_user
 from app.main import app
-from app.services.activity import activity_base_price, match_id_profit_rule, normalize_id_profit_rules, parse_skc, parse_skc_detail, preview_activity_workbook, process_activity_workbook
+from app.services.activity import MAX_DROP_SKC_LENGTH, MAX_DROP_SKC_LIST, MAX_UNRECOGNIZED_ROWS_PER_SKC, MAX_UNRECOGNIZED_SKCS, activity_base_price, match_id_profit_rule, normalize_drop_skc_list, normalize_id_profit_rules, parse_skc, parse_skc_detail, preview_activity_workbook, process_activity_workbook
 from app.services.auth import hash_password
 
 
@@ -743,3 +743,209 @@ def test_set_keyword_with_disallowed_pieces_falls_back_to_single_rules():
     detail = parse_skc_detail("1pc-10", config, normalized=True)
     assert detail["kind"] == "single"
     assert detail["method"] == "最后一个“-”后的数字（第1条规则）"
+
+
+def make_unrecognized_activity_workbook() -> bytes:
+    """构造含「识别失败」SKC 的报名表。
+
+    行号：2 = 可识别且价格不变；3/4 = 同一个识别失败的 SKC；5 = 另一个识别失败的 SKC；
+    6 = 可识别但申报价低于底价（本来就该删，与用户勾选无关）。
+    """
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "活动申报价格"
+    sheet.append(["SKC货号", "活动申报价格"])
+    sheet.append(["MB131-A-5", 17])
+    sheet.append(["UNKNOWN-X", 20])
+    sheet.append(["UNKNOWN-X", 25])
+    sheet.append(["BAD_SKC", 20])
+    sheet.append(["MB131-B-5", 5])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+    return content.getvalue()
+
+
+def read_result_skcs(path) -> list:
+    workbook = load_workbook(path, data_only=True)
+    sheet = workbook["活动申报价格"]
+    values = [sheet.cell(row, 1).value for row in range(2, sheet.max_row + 1)]
+    workbook.close()
+    return values
+
+
+def test_preview_lists_unrecognized_skcs_with_counts_and_rows():
+    preview = preview_activity_workbook(make_unrecognized_activity_workbook())
+
+    assert preview["total_rows"] == 5
+    assert preview["unrecognized_rows"] == 3
+    assert preview["unrecognized_skc_total"] == 2
+    assert preview["unrecognized_skcs_truncated"] is False
+    # 行数降序 + SKC 升序；rows 是示例行号，供前端提示用户
+    assert preview["unrecognized_skcs"] == [
+        {"skc": "UNKNOWN-X", "count": 2, "rows": [3, 4], "rows_truncated": False},
+        {"skc": "BAD_SKC", "count": 1, "rows": [5], "rows_truncated": False},
+    ]
+
+
+def test_preview_unrecognized_summary_is_not_affected_by_result_filter():
+    preview = preview_activity_workbook(make_unrecognized_activity_workbook(), result_filter="单品")
+
+    assert [item["result"] for item in preview["items"]] == ["单品", "单品"]
+    assert preview["unrecognized_rows"] == 3
+    assert preview["unrecognized_skc_total"] == 2
+    assert [item["skc"] for item in preview["unrecognized_skcs"]] == ["UNKNOWN-X", "BAD_SKC"]
+
+
+def test_preview_caps_unrecognized_skc_list_and_sample_rows():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "活动申报价格"
+    sheet.append(["SKC货号", "活动申报价格"])
+    for _ in range(MAX_UNRECOGNIZED_ROWS_PER_SKC + 1):
+        sheet.append(["REPEAT-UNKNOWN", 20])
+    for index in range(MAX_UNRECOGNIZED_SKCS):
+        sheet.append([f"UNKNOWN-{index:04d}Z", 20])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+
+    preview = preview_activity_workbook(content.getvalue(), page_size=1)
+
+    assert preview["unrecognized_skc_total"] == MAX_UNRECOGNIZED_SKCS + 1
+    assert preview["unrecognized_skcs_truncated"] is True
+    assert len(preview["unrecognized_skcs"]) == MAX_UNRECOGNIZED_SKCS
+    head = preview["unrecognized_skcs"][0]
+    assert head["skc"] == "REPEAT-UNKNOWN"
+    assert head["count"] == MAX_UNRECOGNIZED_ROWS_PER_SKC + 1
+    assert len(head["rows"]) == MAX_UNRECOGNIZED_ROWS_PER_SKC
+    assert head["rows_truncated"] is True
+    # 列表上限 200 条（含行数最多的 head），因此截断丢掉的是排序末位的那一个；
+    # 名称结尾不能是「-数字」，否则会被当成单品货值解析成功（本测试要的是识别失败）
+    assert [item["skc"] for item in preview["unrecognized_skcs"][1:]] == [
+        f"UNKNOWN-{index:04d}Z" for index in range(MAX_UNRECOGNIZED_SKCS - 1)
+    ]
+
+
+def test_processing_keeps_unrecognized_rows_when_user_selects_nothing(tmp_path):
+    output = tmp_path / "keep-unrecognized.xlsx"
+
+    stats = process_activity_workbook(make_unrecognized_activity_workbook(), output)
+
+    assert stats["dropped_unrecognized_rows"] == 0
+    assert stats["drop_all_unrecognized"] is False
+    assert stats["drop_unrecognized_skcs"] == []
+    assert stats["skipped_rows"] == 3
+    assert stats["removed_rows"] == 1
+    assert read_result_skcs(output) == ["MB131-A-5", "UNKNOWN-X", "UNKNOWN-X", "BAD_SKC"]
+
+
+def test_processing_drops_every_row_of_selected_unrecognized_skc(tmp_path):
+    output = tmp_path / "drop-selected.xlsx"
+
+    stats = process_activity_workbook(
+        make_unrecognized_activity_workbook(),
+        output,
+        drop_unrecognized_skcs=["UNKNOWN-X"],
+    )
+
+    assert stats["dropped_unrecognized_rows"] == 2
+    assert stats["drop_unrecognized_skcs"] == ["UNKNOWN-X"]
+    assert stats["drop_all_unrecognized"] is False
+    assert stats["skipped_rows"] == 1
+    assert stats["removed_rows"] == 3
+    assert read_result_skcs(output) == ["MB131-A-5", "BAD_SKC"]
+
+
+def test_processing_drops_all_unrecognized_rows_when_user_asks(tmp_path):
+    output = tmp_path / "drop-all.xlsx"
+
+    stats = process_activity_workbook(
+        make_unrecognized_activity_workbook(),
+        output,
+        drop_all_unrecognized=True,
+    )
+
+    assert stats["dropped_unrecognized_rows"] == 3
+    assert stats["drop_all_unrecognized"] is True
+    assert stats["skipped_rows"] == 0
+    assert stats["removed_rows"] == 4
+    assert stats["remaining_data_rows"] == 1
+    assert read_result_skcs(output) == ["MB131-A-5"]
+
+
+def test_processing_selection_never_deletes_recognizable_rows(tmp_path):
+    output = tmp_path / "safety.xlsx"
+
+    stats = process_activity_workbook(
+        make_unrecognized_activity_workbook(),
+        output,
+        drop_unrecognized_skcs=["MB131-A-5", "MB131-B-5", "NOT-IN-TABLE"],
+    )
+
+    # 能识别出价格的 SKC 即使出现在选择里也不会被删；只有识别失败的行才受勾选影响
+    assert stats["dropped_unrecognized_rows"] == 0
+    assert stats["removed_rows"] == 1
+    assert read_result_skcs(output) == ["MB131-A-5", "UNKNOWN-X", "UNKNOWN-X", "BAD_SKC"]
+
+
+def test_normalize_drop_skc_list_rules():
+    import pytest
+
+    assert normalize_drop_skc_list(None) == []
+    assert normalize_drop_skc_list([]) == []
+    # 先 strip 去空再去重，保持首次出现顺序
+    assert normalize_drop_skc_list([" A ", "A", "", "   ", "B", "A"]) == ["A", "B"]
+
+    for bad in (
+        "UNKNOWN-X",
+        {"skc": "UNKNOWN-X"},
+        ["UNKNOWN-X", 1],
+        [f"SKC-{index}" for index in range(MAX_DROP_SKC_LIST + 1)],
+        ["X" * (MAX_DROP_SKC_LENGTH + 1)],
+    ):
+        with pytest.raises(ValueError):
+            normalize_drop_skc_list(bad)
+
+
+def test_bulk_activity_endpoint_applies_user_drop_selection():
+    import time
+
+    create_user("activity_drop_user", hash_password("droppass123"), status="approved")
+    content = make_unrecognized_activity_workbook()
+    files = {
+        "file": ("activity.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    }
+
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "activity_drop_user", "password": "droppass123"})
+        assert login.status_code == 200
+
+        broken = client.post("/api/activities/bulk", data={"drop_unrecognized_skcs": "{oops"}, files=files)
+        assert broken.status_code == 400
+
+        response = client.post(
+            "/api/activities/bulk",
+            data={"drop_unrecognized_skcs": json.dumps(["UNKNOWN-X"])},
+            files=files,
+        )
+        assert response.status_code == 202
+        job_id = response.json()["id"]
+
+        detail = {}
+        for _ in range(400):
+            detail = client.get(f"/api/activities/{job_id}").json()
+            if detail["status"] in {"completed", "failed"}:
+                break
+            time.sleep(0.05)
+
+        assert detail.get("status") == "completed", detail
+        assert detail["stats"]["dropped_unrecognized_rows"] == 2
+        assert detail["stats"]["drop_unrecognized_skcs"] == ["UNKNOWN-X"]
+
+        download = client.get(f"/api/activities/{job_id}/download")
+        assert download.status_code == 200
+        workbook = load_workbook(BytesIO(download.content), data_only=True)
+        sheet = workbook["活动申报价格"]
+        assert [sheet.cell(row, 1).value for row in range(2, sheet.max_row + 1)] == ["MB131-A-5", "BAD_SKC"]
+        workbook.close()
