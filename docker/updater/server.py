@@ -34,6 +34,7 @@ HOST = os.environ.get("UPDATER_HOST", "0.0.0.0")
 PORT = int(os.environ.get("UPDATER_PORT", "8899"))
 
 ENV_FILE = ".env.docker"
+VERSION_FILE = "VERSION"
 PROJECT_SERVICES = ("backend", "frontend")
 PREVIOUS_TAG = "previous"
 REMOTE_CACHE_SECONDS = 30
@@ -450,6 +451,24 @@ def remote_state(busy: bool) -> dict:
         _remote_cache.update(result)
     return result
 
+def project_version() -> str:
+    """项目根目录 VERSION 文件里的版本号（版本号唯一来源）。"""
+    try:
+        text = (PROJECT_DIR / VERSION_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return text.splitlines()[0].strip() if text else ""
+
+
+def remote_version(sha: str) -> str:
+    """远端提交里的 VERSION 内容；读不到时返回空串。"""
+    if not sha:
+        return ""
+    code, out = git("show", f"{sha}:{VERSION_FILE}", timeout=30)
+    if code != 0 or not out.strip():
+        return ""
+    return out.strip().splitlines()[0].strip()
+
 
 def parse_compose_ps(out: str) -> list[dict]:
     """兼容两种输出：新版 Compose 是 JSON 数组，旧版是一行一个 JSON 对象。"""
@@ -591,6 +610,8 @@ def status_snapshot() -> dict:
     previous_images = {f"{name}_previous": image_state(previous_ref(ref)) for name, ref in images.items()}
     return {
         "updater": {"version": VERSION, "time": now_iso(), "busy": busy, "ready": not notes},
+        "version": project_version(),
+        "remote_version": remote_version(remote_sha),
         "notes": notes,
         "project": {
             "dir": str(PROJECT_DIR),

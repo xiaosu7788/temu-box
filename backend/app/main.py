@@ -57,6 +57,7 @@ from app.services.regions import create_region, delete_region, get_region_profil
 from app.services.inventory import all_pending_uploads, apply_pending_upload, discard_pending_upload, filter_catalog_items, inventory_categories, inventory_path_for, invalidate_cache, inventory_status, load_price_catalog, pending_upload, resolve_profile, stage_pending_upload
 from app.services.taskpool import QueueFullError
 from app.services.tasks import task_manager
+from app.version import info as version_info, version as app_version
 
 
 ensure_directories()
@@ -67,7 +68,7 @@ logging.basicConfig(
 
 app = FastAPI(
     title="Temu-Box API",
-    version="2.0.0",
+    version=app_version(),
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
 )
@@ -1161,6 +1162,11 @@ def admin_audit_logs(
 @app.get("/api/admin/monitoring")
 def admin_monitoring(_admin: dict = Depends(admin_user)):
     return monitoring_snapshot()
+
+@app.get("/api/version")
+def read_version(_admin: dict = Depends(admin_user)):
+    """当前版本号与更新日志。版本号唯一来源是仓库根目录的 VERSION 文件。"""
+    return version_info()
 
 
 @app.post("/api/admin/maintenance/cleanup")

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
@@ -18,6 +18,8 @@ import {
   UserFilled,
 } from '@element-plus/icons-vue'
 import type { User } from '../types'
+import { getVersion } from '../api'
+import VersionDialog from './VersionDialog.vue'
 
 const props = defineProps<{ user: User; online?: boolean }>()
 const emit = defineEmits<{ 'sign-out': [] }>()
@@ -26,8 +28,19 @@ const route = useRoute()
 const router = useRouter()
 const mobileMenu = ref(false)
 
+const showVersion = ref(false)
+const version = ref('')
+
 const pageTitle = computed(() => String(route.meta.title || '后台管理'))
 const inventoryPage = computed(() => route.path === '/admin/inventory')
+
+onMounted(async () => {
+  try {
+    version.value = (await getVersion()).version
+  } catch {
+    version.value = ''
+  }
+})
 
 const navItems = [
   { path: '/admin/monitoring', label: '系统监控', icon: Monitor },
@@ -104,6 +117,7 @@ function backToWorkspace() {
             <h1>{{ pageTitle }}</h1>
             <p>Temu-Box 管理控制台</p>
           </div>
+          <button v-if="version" class="version-chip" type="button" @click="showVersion = true">v{{ version }}</button>
           <el-tag class="role-tag" type="warning">管理员</el-tag>
         </template>
       </header>
@@ -112,5 +126,6 @@ function backToWorkspace() {
       </main>
     </div>
     <button v-if="mobileMenu" class="sidebar-backdrop" type="button" @click="mobileMenu = false" />
+    <VersionDialog v-model="showVersion" />
   </div>
 </template>

@@ -267,7 +267,7 @@ docker compose down -v
 - 镜像：
   - `ghcr.io/xiaosu7788/temu-box-backend:latest`
   - `ghcr.io/xiaosu7788/temu-box-frontend:latest`
-- 标签：`latest`（仅默认分支）和 `sha-<提交短哈希>`，回滚时使用 `sha-` 标签
+- 标签：`latest`（仅默认分支）、`v<版本号>`（取自 `VERSION` 文件）和 `sha-<提交短哈希>`，回滚时使用 `sha-` 标签
 - 架构：`linux/arm64`，与 ARM64 服务器一致；换 x86 服务器需修改工作流中的 `platforms`
 
 ### 一次性设置：把镜像包设为公开
@@ -292,6 +292,26 @@ TEMUBOX_FRONTEND_IMAGE=ghcr.io/xiaosu7788/temu-box-frontend:sha-1a2b3c4
 ```
 
 回滚时把两个变量都改成目标 `sha-` 标签，再按第 7 节方式 A 更新。
+
+### 版本号与发版流程
+
+版本号唯一来源是仓库根目录的 `VERSION` 文件，`CHANGELOG.md` 记录每个版本改了什么（分「新增 / 优化 / 修复」）：
+
+```bash
+# 1. 改版本号（语义化版本：不兼容改 major，新增功能改 minor，修 bug 改 patch）
+echo 0.6.1 > VERSION
+
+# 2. 在 CHANGELOG.md 顶部加一节
+#    ## 0.6.1 - 2026-10-20
+#    ### 修复
+#    - 说明改了什么
+
+# 3. 提交推送，CI 会构建 v0.6.1 与 latest 两个标签的镜像
+git add VERSION CHANGELOG.md && git commit -m "release: 0.6.1" && git push origin main
+```
+
+之后在后台「系统更新」一键更新即可。版本号在后台顶栏的版本胶囊、「版本更新」弹窗和 `GET /api/version` 都能看到；
+需要固定到某个版本时，在 `.env.docker` 里写 `TEMUBOX_BACKEND_IMAGE=ghcr.io/xiaosu7788/temu-box-backend:v0.6.1`（前端同理）。
 
 ### 构建加速（可选）
 

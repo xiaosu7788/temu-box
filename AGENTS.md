@@ -39,6 +39,8 @@ temu-box/
 ├── data/                    # 运行时数据（不入库）：inventories/、tasks/、activities/、logs/、*.db、*.json
 ├── docker-compose.yml
 ├── DEPLOYMENT.md
+├── VERSION                  # 版本号（唯一来源，发版时改这里）
+├── CHANGELOG.md             # 更新日志：每个版本一节，分「新增 / 优化 / 修复」
 └── .env / .env.docker       # 敏感配置，禁止入库/读取后外泄
 ```
 
@@ -127,3 +129,9 @@ npx vue-tsc -b --force
 - 提交前跑后端 `pytest`；涉及前端必跑 `npm run build`。推送网络不稳定时允许带重试，推送后可用 GitHub API
   核对远程 HEAD。
 - 不要提交运行时文件：`.env`、`data/*`、`dist/`、`node_modules/`、`.venv/`。
+
+### 版本号与更新日志
+- `VERSION`（语义化版本，如 `0.6.0`）是版本号唯一来源；`CHANGELOG.md` 记录每个版本改了什么，分「新增 / 优化 / 修复」。
+- 发版：改 `VERSION` + 在 `CHANGELOG.md` 顶部加一节 → 提交推送；CI 会额外构建 `v<版本号>` 标签的镜像。
+- 后端 `GET /api/version`（管理员）返回版本号、提交号与解析后的日志；运维边车的 `/status` 返回当前版本与远端版本。
+- 日志解析逻辑在 `backend/app/version.py` 与 `docker/updater/server.py` 各有一份（边车是独立镜像），改动要同步。

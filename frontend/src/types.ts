@@ -486,6 +486,8 @@ export interface UpdateResult {
 
 export interface UpdateSnapshot {
   updater: { version: string; time: string; busy: boolean; ready: boolean }
+  version?: string
+  remote_version?: string
   notes: string[]
   project: UpdateProjectState
   env: UpdateEnvInfo
@@ -515,4 +517,22 @@ export interface UpdateStartResponse {
   enabled: boolean
   job: UpdateJob | null
   action: string
+}
+
+export interface VersionGroup {
+  title: string
+  items: string[]
+}
+
+export interface VersionEntry {
+  version: string
+  date: string
+  groups: VersionGroup[]
+}
+
+export interface VersionInfo {
+  version: string
+  commit: string
+  commit_date: string
+  changelog: VersionEntry[]
 }

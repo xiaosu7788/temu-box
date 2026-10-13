@@ -208,3 +208,15 @@ def test_sidecar_enforces_token_and_rejects_request_parameters(tmp_path):
             process.wait(timeout=15)
         except subprocess.TimeoutExpired:
             process.kill()
+
+
+def test_project_version_reads_version_file(sidecar, tmp_path, monkeypatch):
+    (tmp_path / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+    monkeypatch.setattr(sidecar, "PROJECT_DIR", tmp_path)
+    assert sidecar.project_version() == "1.2.3"
+
+    # 没有 VERSION 文件、没有远端提交、或提交里读不到时，都回空串而不是报错
+    (tmp_path / "VERSION").unlink()
+    assert sidecar.project_version() == ""
+    assert sidecar.remote_version("") == ""
+    assert sidecar.remote_version("0" * 40) == ""

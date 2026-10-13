@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem, AppSettings, AuditLogPage, BulkActivityResult, CategoryPage, CategorySummary, CleanupResult, HalfHeadcostItem, InventoryCategory, InventoryDiffItem, InventoryPreview, InventoryStatus, MonitoringSnapshot, RegionProfile, RegionSummary, SkuResult, SystemSettings, SystemSettingsInfo, TaskItem, User, UpdateJobResponse, UpdateStartResponse, UpdateStatusResponse } from './types'
+import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem, AppSettings, AuditLogPage, BulkActivityResult, CategoryPage, CategorySummary, CleanupResult, HalfHeadcostItem, InventoryCategory, InventoryDiffItem, InventoryPreview, InventoryStatus, MonitoringSnapshot, RegionProfile, RegionSummary, SkuResult, SystemSettings, SystemSettingsInfo, TaskItem, User, UpdateJobResponse, UpdateStartResponse, UpdateStatusResponse, VersionInfo } from './types'
 
 const http = axios.create({
   baseURL: '/api',
@@ -483,5 +483,11 @@ export async function runAdminUpdate() {
 
 export async function rollbackAdminUpdate() {
   const { data } = await http.post<UpdateStartResponse>('/admin/update/rollback')
+  return data
+}
+
+// 当前版本号与更新日志（管理员接口）
+export async function getVersion() {
+  const { data } = await http.get<VersionInfo>('/version')
   return data
 }

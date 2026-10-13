@@ -4,11 +4,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+# 版本号由 VERSION 文件提供，提交号由 CI 通过 --build-arg 传入（本地构建留空）
+ARG GIT_SHA=""
+ENV TEMUBOX_GIT_SHA=${GIT_SHA}
+
 WORKDIR /app
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install -r /app/backend/requirements.txt
 
 COPY backend /app/backend
+COPY VERSION /app/VERSION
+COPY CHANGELOG.md /app/CHANGELOG.md
 RUN mkdir -p /app/data/inventories /app/data/tasks /app/data/activities /app/data/logs
 
 WORKDIR /app/backend

@@ -9,6 +9,8 @@ on:
       - "frontend/**"
       - "docker/**"
       - "docker-compose.yml"
+      - "VERSION"
+      - "CHANGELOG.md"
       - ".github/workflows/docker-publish.yml"
   workflow_dispatch:
 
@@ -40,6 +42,10 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      - name: 读取版本号
+        id: version
+        run: echo "value=$(head -n1 VERSION | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
       - name: 准备 QEMU（在 x86 runner 上构建 arm64）
         uses: docker/setup-qemu-action@v3
 
@@ -60,6 +66,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}-${{ matrix.service }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=v${{ steps.version.outputs.value }}
             type=sha,format=short,prefix=sha-
           labels: |
             org.opencontainers.image.title=temu-box-${{ matrix.service }}
@@ -76,3 +83,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,scope=${{ matrix.service }},mode=max
+          # 后端镜像把提交号写进 TEMUBOX_GIT_SHA，用于 /api/version
+          build-args: |
+            GIT_SHA=${{ github.sha }}

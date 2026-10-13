@@ -4,6 +4,7 @@ import { CircleCheckFilled, CircleCloseFilled, Download, InfoFilled, Loading, Re
 import { errorMessage, getAdminUpdateJob, getAdminUpdateStatus, rollbackAdminUpdate, runAdminUpdate } from '../api'
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '../feedback'
 import type { UpdateJob, UpdateJobStep, UpdateSnapshot } from '../types'
+import VersionDialog from '../components/VersionDialog.vue'
 
 const REFRESH_SECONDS = 30
 const POLL_MS = 2000
@@ -42,6 +43,7 @@ const detailEntries = computed(() => Object.entries(job.value?.detail || {}))
 type PanelKind = 'disabled' | 'offline' | 'running' | 'failed' | 'available' | 'uptodate'
 
 const showDetails = ref(false)
+const showVersionDialog = ref(false)
 
 const panelKind = computed<PanelKind>(() => {
   if (!enabled.value) return 'disabled'
@@ -52,14 +54,20 @@ const panelKind = computed<PanelKind>(() => {
   return 'uptodate'
 })
 
-const versionText = computed(
-  () => shortSha(data.value?.project.commit.short || data.value?.project.commit.sha) || '读取中',
-)
+const versionText = computed(() => {
+  const value = data.value?.version
+  if (value) return `v${value}`
+  return shortSha(data.value?.project.commit.short || data.value?.project.commit.sha) || '读取中'
+})
 
 const versionSub = computed(() => {
-  if (panelKind.value === 'available') return `最新版本: ${shortSha(data.value?.project.remote.sha) || '读取中'}`
+  const sha = shortSha(data.value?.project.commit.short || data.value?.project.commit.sha)
+  if (panelKind.value === 'available') {
+    const remote = data.value?.remote_version
+    return `最新版本: ${remote ? `v${remote}` : shortSha(data.value?.project.remote.sha) || '读取中'}`
+  }
   if (panelKind.value === 'disabled' || panelKind.value === 'offline') return '未连接到运维边车'
-  return '已是最新版本'
+  return sha ? `已是最新版本 · ${sha}` : '已是最新版本'
 })
 
 const lastUpdateOk = computed(
@@ -419,6 +427,11 @@ onBeforeUnmount(() => {
             {{ showDetails ? '收起更新日志' : '查看更新日志' }}
             <el-icon><TopRight /></el-icon>
           </button>
+
+          <button class="panel-link" type="button" @click="showVersionDialog = true">
+            版本更新
+            <el-icon><TopRight /></el-icon>
+          </button>
         </div>
       </div>
 
@@ -593,6 +606,8 @@ onBeforeUnmount(() => {
         </ul>
       </el-card>
     </div>
+
+      <VersionDialog v-model="showVersionDialog" />
     </section>
   </div>
 </template>

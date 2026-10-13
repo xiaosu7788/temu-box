@@ -19,6 +19,7 @@ Temu-Box 是用于 Temu 订单成本计算、库存管理和批量报名活动�
 - 批量报名活动、默认及自定义 SKC 识别规则
 - 用户任务记录和管理员任务管理
 - 后台一键热更新（可选）：在网页后台直接「拉代码 → 拉镜像 → 重启 → 健康检查」，见 [DEPLOYMENT.md](DEPLOYMENT.md) 第 7 节方式 C
+- 版本号与更新日志：`VERSION` 记录版本号、`CHANGELOG.md` 记录每个版本改了什么，后台「版本更新」弹窗可查看
 
 ## 项目结构
 
@@ -30,6 +31,8 @@ temu-box/
 ├── scripts/                 开发和部署脚本
 ├── data/                    Excel、任务文件及生成结果
 ├── docker-compose.yml       生产编排配置
+├── VERSION                  版本号（唯一来源）
+├── CHANGELOG.md             更新日志（每个版本一节）
 ├── .env.docker.example      生产环境变量模板
 └── DEPLOYMENT.md            完整部署手册
 ```
