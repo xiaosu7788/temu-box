@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Refresh, RefreshRight, Upload } from '@element-plus/icons-vue'
+import { CircleCheckFilled, CircleCloseFilled, Download, InfoFilled, Loading, Refresh, RefreshRight, TopRight } from '@element-plus/icons-vue'
 import { errorMessage, getAdminUpdateJob, getAdminUpdateStatus, rollbackAdminUpdate, runAdminUpdate } from '../api'
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '../feedback'
 import type { UpdateJob, UpdateJobStep, UpdateSnapshot } from '../types'
@@ -37,6 +37,115 @@ const updateAvailable = computed(() => Boolean(data.value?.project.update_availa
 const rollbackAvailable = computed(() => Boolean(data.value?.rollback.available))
 const images = computed(() => Object.entries(data.value?.images || {}))
 const detailEntries = computed(() => Object.entries(job.value?.detail || {}))
+
+// 面板状态机：一个状态框 + 一个主按钮，对应参考图的「当前版本」卡片
+type PanelKind = 'disabled' | 'offline' | 'running' | 'failed' | 'available' | 'uptodate'
+
+const showDetails = ref(false)
+
+const panelKind = computed<PanelKind>(() => {
+  if (!enabled.value) return 'disabled'
+  if (sidecarError.value) return 'offline'
+  if (running.value) return 'running'
+  if (job.value?.status === 'failed') return 'failed'
+  if (updateAvailable.value) return 'available'
+  return 'uptodate'
+})
+
+const versionText = computed(
+  () => shortSha(data.value?.project.commit.short || data.value?.project.commit.sha) || '读取中',
+)
+
+const versionSub = computed(() => {
+  if (panelKind.value === 'available') return `最新版本: ${shortSha(data.value?.project.remote.sha) || '读取中'}`
+  if (panelKind.value === 'disabled' || panelKind.value === 'offline') return '未连接到运维边车'
+  return '已是最新版本'
+})
+
+const lastUpdateOk = computed(
+  () => data.value?.last_result.kind === 'update' && data.value?.last_result.status === 'ok',
+)
+
+const panelTitle = computed(() => {
+  switch (panelKind.value) {
+    case 'disabled':
+      return '一键热更新未启用'
+    case 'offline':
+      return '运维边车不可用'
+    case 'running':
+      return job.value?.title || '正在执行更新'
+    case 'failed':
+      return '上次更新失败'
+    case 'available':
+      return '有新版本可用！'
+    default:
+      return lastUpdateOk.value ? '更新完成' : '已是最新版本'
+  }
+})
+
+const panelDesc = computed(() => {
+  switch (panelKind.value) {
+    case 'disabled':
+      return sidecarError.value || '请在服务器 .env.docker 中设置 UPDATER_TOKEN，并执行 ./scripts/enable-updater.sh 启动运维边车'
+    case 'offline':
+      return sidecarError.value
+    case 'running': {
+      const step = job.value?.steps?.[(job.value?.current || 1) - 1]?.label
+      return step ? `正在执行：${step}（约 1-2 分钟）` : '正在执行，请勿关闭页面（约 1-2 分钟）'
+    }
+    case 'failed':
+      return job.value?.message || '展开下方更新日志查看失败原因'
+    case 'available':
+      return data.value?.project.remote.subject || '远端有新的提交，可一键更新'
+    default:
+      return lastUpdateOk.value
+        ? `${data.value?.last_result.after || versionText.value} 已生效，请按 Ctrl+F5 强制刷新页面`
+        : `当前运行 ${versionText.value}，无需更新`
+  }
+})
+
+const panelIcon = computed(() => {
+  switch (panelKind.value) {
+    case 'disabled':
+      return InfoFilled
+    case 'offline':
+    case 'failed':
+      return CircleCloseFilled
+    case 'running':
+      return Loading
+    case 'available':
+      return Download
+    default:
+      return CircleCheckFilled
+  }
+})
+
+const panelActionLabel = computed(() => {
+  if (panelKind.value === 'running') return '正在执行…'
+  if (panelKind.value === 'failed') return '重新尝试更新'
+  if (panelKind.value === 'uptodate') return '重新检查'
+  return '立即更新'
+})
+
+const panelActionIcon = computed(() => {
+  if (panelKind.value === 'uptodate') return Refresh
+  if (panelKind.value === 'failed') return RefreshRight
+  return Download
+})
+
+const panelActionDisabled = computed(() => {
+  if (panelKind.value === 'disabled' || panelKind.value === 'offline' || panelKind.value === 'running') return true
+  if (panelKind.value === 'uptodate') return false
+  return !enabled.value || !ready.value
+})
+
+async function panelAction() {
+  if (panelKind.value === 'uptodate') {
+    await loadStatus(true)
+    return
+  }
+  await startUpdate()
+}
 
 async function loadStatus(manual = false) {
   if (running.value && !manual) return
@@ -138,6 +247,7 @@ async function start(action: 'update' | 'rollback') {
       logLines.value = []
       startPolling()
     }
+    showDetails.value = true
     notifySuccess(action === 'update' ? '更新任务已开始，正在后台执行' : '回滚任务已开始，正在后台执行')
   } catch (error) {
     notifyError(error)
@@ -257,29 +367,8 @@ onBeforeUnmount(() => {
           <el-checkbox v-model="autoRefresh" label="自动刷新" />
           <span v-if="autoRefresh && !running" class="countdown-hint">{{ countdown }}s 后刷新</span>
           <span v-if="lastUpdated" class="last-updated">更新于 {{ lastUpdated }}</span>
-          <el-button :icon="Refresh" :loading="loading" @click="loadStatus(true)">刷新</el-button>
         </div>
       </div>
-
-      <el-alert
-        v-if="!enabled"
-        class="update-alert"
-        type="info"
-        show-icon
-        :closable="false"
-        title="一键热更新尚未启用"
-        :description="sidecarError || '请在服务器 .env.docker 中设置 UPDATER_TOKEN，并执行 ./scripts/enable-updater.sh 启动运维边车。'"
-      />
-
-      <el-alert
-        v-else-if="sidecarError"
-        class="update-alert"
-        type="error"
-        show-icon
-        :closable="false"
-        title="运维边车不可用"
-        :description="sidecarError"
-      />
 
       <el-alert v-if="notes.length" class="update-alert" type="warning" show-icon :closable="false" title="更新前的检查项">
         <ul class="note-list">
@@ -287,8 +376,54 @@ onBeforeUnmount(() => {
         </ul>
       </el-alert>
 
-      <div v-loading="loading" class="update-grid">
-        <el-card shadow="never" class="update-card">
+      <div class="update-stage">
+        <div v-loading="loading" class="update-panel">
+          <div class="panel-head">
+            <span class="panel-title">当前版本</span>
+            <button class="panel-refresh" type="button" title="刷新状态" @click="loadStatus(true)">
+              <el-icon :class="{ spinning: loading }"><Refresh /></el-icon>
+            </button>
+          </div>
+
+          <div class="version-block">
+            <div class="version-line">
+              <span class="version-text">{{ versionText }}</span>
+              <el-icon v-if="panelKind === 'uptodate'" class="version-badge"><CircleCheckFilled /></el-icon>
+            </div>
+            <div class="version-sub">{{ versionSub }}</div>
+          </div>
+
+          <div class="state-box" :class="`state-${panelKind}`">
+            <el-icon class="state-icon" :class="{ spinning: panelKind === 'running' }">
+              <component :is="panelIcon" />
+            </el-icon>
+            <div class="state-text">
+              <div class="state-title">{{ panelTitle }}</div>
+              <div v-if="panelDesc" class="state-desc">{{ panelDesc }}</div>
+            </div>
+          </div>
+
+          <el-button
+            class="panel-action"
+            type="primary"
+            size="large"
+            :icon="panelActionIcon"
+            :loading="running || starting"
+            :disabled="panelActionDisabled"
+            @click="panelAction"
+          >
+            {{ panelActionLabel }}
+          </el-button>
+
+          <button class="panel-link" type="button" @click="showDetails = !showDetails">
+            {{ showDetails ? '收起更新日志' : '查看更新日志' }}
+            <el-icon><TopRight /></el-icon>
+          </button>
+        </div>
+      </div>
+
+      <div v-if="showDetails" class="update-details">
+        <el-card v-if="data" shadow="never" class="update-card">
           <template #header>
             <div class="card-header">
               <span class="card-title">版本信息</span>
@@ -315,7 +450,6 @@ onBeforeUnmount(() => {
             <el-descriptions-item label="数据库">{{ data.env.internal_db ? '内置数据库（db 一并维护）' : '外部数据库（只维护前后端）' }}</el-descriptions-item>
             <el-descriptions-item label="访问端口">{{ data.env.web_port }}</el-descriptions-item>
           </el-descriptions>
-          <el-empty v-else description="暂无状态数据" :image-size="60" />
           <div v-if="data?.project.incoming.length" class="incoming">
             <div class="incoming-title">待更新的提交</div>
             <ul class="incoming-list">
@@ -325,43 +459,6 @@ onBeforeUnmount(() => {
             </ul>
           </div>
         </el-card>
-
-        <el-card shadow="never" class="update-card">
-          <template #header>
-            <div class="card-header">
-              <span class="card-title">操作</span>
-            </div>
-          </template>
-          <el-button
-            type="primary"
-            size="large"
-            class="action-button"
-            :icon="Upload"
-            :loading="starting"
-            :disabled="!enabled || running || !ready"
-            @click="startUpdate"
-          >
-            一键更新到最新版本
-          </el-button>
-          <el-button
-            size="large"
-            class="action-button"
-            :icon="RefreshRight"
-            :loading="starting"
-            :disabled="!enabled || running || !rollbackAvailable"
-            @click="startRollback"
-          >
-            回滚上一次更新
-          </el-button>
-          <ul class="metric-list">
-            <li>流程：备份数据 → 拉取代码 → 拉取镜像 → 重启服务 → 健康检查，由运维边车串行执行</li>
-            <li>更新会同时重建后端与前端，避免新旧接口字段不一致</li>
-            <li>更新期间网站中断约 1-2 分钟，完成后请按 Ctrl+F5 强制刷新页面</li>
-            <li>回滚点：{{ rollbackAvailable ? `${data?.rollback.short}（${timeText(data?.rollback.at)}）` : '暂无，在本页执行过一次更新后才会生成' }}</li>
-            <li>回滚只能用一次，成功后回滚点会被清除</li>
-          </ul>
-        </el-card>
-      </div>
 
       <el-card v-if="job" shadow="never" class="update-card job-card">
         <template #header>
@@ -470,6 +567,32 @@ onBeforeUnmount(() => {
           <el-descriptions-item v-if="data.last_result.images" label="镜像">{{ data.last_result.images }}</el-descriptions-item>
         </el-descriptions>
       </el-card>
+
+      <el-card shadow="never" class="update-card">
+        <template #header>
+          <div class="card-header">
+            <span class="card-title">回滚</span>
+            <span class="last-updated">回滚点只能用一次</span>
+          </div>
+        </template>
+        <el-button
+          size="large"
+          class="action-button"
+          :icon="RefreshRight"
+          :loading="starting"
+          :disabled="!enabled || running || !rollbackAvailable"
+          @click="startRollback"
+        >
+          回滚上一次更新
+        </el-button>
+        <ul class="metric-list">
+          <li>流程：备份数据 → 拉取代码 → 拉取镜像 → 重启服务 → 健康检查，由运维边车串行执行</li>
+          <li>更新会同时重建后端与前端，避免新旧接口字段不一致</li>
+          <li>更新期间网站中断约 1-2 分钟，完成后请按 Ctrl+F5 强制刷新页面</li>
+          <li>回滚点：{{ rollbackAvailable ? `${data?.rollback.short}（${timeText(data?.rollback.at)}）` : '暂无，在本页执行过一次更新后才会生成' }}</li>
+        </ul>
+      </el-card>
+    </div>
     </section>
   </div>
 </template>
@@ -485,18 +608,6 @@ onBeforeUnmount(() => {
   line-height: 1.7;
 }
 
-.update-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
-  gap: 16px;
-  margin-top: 16px;
-}
-
-@media (max-width: 1100px) {
-  .update-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
 
 .update-card {
   margin-top: 16px;
@@ -612,4 +723,203 @@ onBeforeUnmount(() => {
 .log-line.bad {
   color: #ff8080;
 }
+.update-stage {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.update-panel {
+  width: 100%;
+  max-width: 420px;
+  padding: 18px 22px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 6px 20px rgba(24, 33, 47, .06);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panel-title {
+  color: var(--text-regular);
+  font-size: 14px;
+}
+
+.panel-refresh {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.panel-refresh:hover {
+  color: var(--primary);
+  background: #f1f5fb;
+}
+
+.version-block {
+  padding: 16px 0 14px;
+  text-align: center;
+}
+
+.version-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.version-text {
+  color: var(--text-strong);
+  font-size: 30px;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.version-badge {
+  color: var(--success);
+  font-size: 20px;
+}
+
+.version-sub {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.state-box {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.state-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  font-size: 18px;
+}
+
+.state-text {
+  min-width: 0;
+}
+
+.state-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.state-desc {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.state-available {
+  border-color: #f3d19e;
+  background: #fdf6ec;
+}
+
+.state-available .state-icon,
+.state-available .state-title {
+  color: #b88230;
+}
+
+.state-uptodate {
+  border-color: #bfe0d2;
+  background: #eef7f2;
+}
+
+.state-uptodate .state-icon,
+.state-uptodate .state-title {
+  color: var(--success);
+}
+
+.state-running {
+  border-color: #bfd3f5;
+  background: #eef4ff;
+}
+
+.state-running .state-icon,
+.state-running .state-title {
+  color: var(--primary);
+}
+
+.state-failed {
+  border-color: #f3c3bf;
+  background: #fdeceb;
+}
+
+.state-failed .state-icon,
+.state-failed .state-title {
+  color: var(--danger);
+}
+
+.state-disabled,
+.state-offline {
+  border-color: var(--border);
+  background: var(--surface-subtle);
+}
+
+.state-disabled .state-icon,
+.state-disabled .state-title,
+.state-offline .state-icon,
+.state-offline .state-title {
+  color: var(--text-muted);
+}
+
+.panel-action {
+  width: 100%;
+  margin-top: 14px;
+  height: 44px;
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+.panel-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px;
+  border: 0;
+  color: var(--text-muted);
+  background: transparent;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.panel-link:hover {
+  color: var(--primary);
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.update-details {
+  margin-top: 20px;
+}
+
+
 </style>
