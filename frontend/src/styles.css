@@ -104,8 +104,7 @@ a:focus-visible {
 .menu-button { display: none; }
 .topbar-title { flex: 0 0 auto; }
 .role-tag { margin-left: auto; }
-.version-chip { padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); background: var(--surface-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; cursor: pointer; }
-.version-chip:hover { border-color: var(--primary); color: var(--primary); }
+.version-chip { padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); background: var(--surface-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
 .topbar .region-picker--compact { width: auto; min-height: 40px; margin: 0 0 0 22px; padding: 0; justify-content: flex-start; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
 .topbar .region-picker--compact > span { font-size: 12px; }
 .topbar .region-picker--compact .el-select { width: 170px; }

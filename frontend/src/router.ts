@@ -14,7 +14,6 @@ const AdminTasks = () => import('./views/AdminTasks.vue')
 const AdminSystemSettings = () => import('./views/AdminSystemSettings.vue')
 const AdminAuditLogs = () => import('./views/AdminAuditLogs.vue')
 const AdminMonitoring = () => import('./views/AdminMonitoring.vue')
-const AdminUpdate = () => import('./views/AdminUpdate.vue')
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -37,6 +36,5 @@ export const router = createRouter({
     { path: '/admin/system', component: AdminSystemSettings, meta: { title: '系统设置' } },
     { path: '/admin/audit-logs', component: AdminAuditLogs, meta: { title: '审计日志' } },
     { path: '/admin/monitoring', component: AdminMonitoring, meta: { title: '系统监控' } },
-    { path: '/admin/update', component: AdminUpdate, meta: { title: '系统更新' } },
   ],
 })

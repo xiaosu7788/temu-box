@@ -44,7 +44,6 @@ onMounted(async () => {
 
 const navItems = [
   { path: '/admin/monitoring', label: '系统监控', icon: Monitor },
-  { path: '/admin/update', label: '系统更新', icon: Upload },
   { path: '/admin/users', label: '用户管理', icon: UserFilled },
   { path: '/admin/regions', label: '区域设置', icon: Location },
   { path: '/admin/categories', label: '品类管理', icon: Goods },
@@ -117,7 +116,8 @@ function backToWorkspace() {
             <h1>{{ pageTitle }}</h1>
             <p>Temu-Box 管理控制台</p>
           </div>
-          <button v-if="version" class="version-chip" type="button" @click="showVersion = true">v{{ version }}</button>
+          <span v-if="version" class="version-chip">v{{ version }}</span>
+          <el-button size="small" :icon="Upload" @click="showVersion = true">版本更新</el-button>
           <el-tag class="role-tag" type="warning">管理员</el-tag>
         </template>
       </header>
