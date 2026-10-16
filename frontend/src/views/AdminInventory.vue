@@ -31,7 +31,7 @@ const deleting = ref<string | null>(null)
 const editing = ref<string | null>(null)
 const itemDialogVisible = ref(false)
 const itemSaving = ref(false)
-const itemForm = ref({ sku: '', price: null as number | null, set_type: '单品' })
+const itemForm = ref({ sku: '', price: null as number | null, set_type: '单品', manual_combo: false })
 const itemFormMode = ref<'create' | 'edit'>('create')
 
 const inventoryCategories = ref<InventoryCategory[]>([{ key: 'A', label: 'A类目' }])
@@ -154,14 +154,14 @@ function refreshActiveTab() {
 
 function openCreateDialog() {
   itemFormMode.value = 'create'
-  itemForm.value = { sku: '', price: null, set_type: '单品' }
+  itemForm.value = { sku: '', price: null, set_type: '单品', manual_combo: false }
   itemDialogVisible.value = true
 }
 
 function openEditDialog(item: SkuResult) {
   itemFormMode.value = 'edit'
   editing.value = item.sku
-  itemForm.value = { sku: item.sku, price: item.price ?? null, set_type: item.set_type || '单品' }
+  itemForm.value = { sku: item.sku, price: item.price ?? null, set_type: item.set_type || '单品', manual_combo: Boolean(item.manual_combo) }
   itemDialogVisible.value = true
 }
 
@@ -171,6 +171,7 @@ async function saveItem() {
     price: itemForm.value.price,
     set_type: itemForm.value.set_type.trim() || '单品',
     inventory_category: inventoryCategory.value,
+    manual_combo: itemForm.value.manual_combo,
   }
   if (!payload.sku) {
     notifyError('请输入 SKU')
@@ -508,6 +509,12 @@ onMounted(() => {
           <el-table-column prop="sku" label="SKU" min-width="180" />
           <el-table-column label="价格" width="120"><template #default="scope">{{ scope.row.price?.toFixed(2) || '-' }}</template></el-table-column>
           <el-table-column prop="set_type" label="类型" width="120" />
+          <el-table-column label="标记" width="110">
+            <template #default="scope">
+              <el-tag v-if="scope.row.manual_combo" type="warning" size="small">手动组合</el-tag>
+              <span v-else class="muted">-</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="source_sheet" label="来源工作表" min-width="150" />
           <el-table-column prop="source_row" label="行号" width="80" />
           <el-table-column prop="source_column" label="价格列" width="90" />
@@ -527,6 +534,9 @@ onMounted(() => {
         <el-form-item label="SKU" required><el-input v-model="itemForm.sku" maxlength="255" placeholder="请输入 SKU" /></el-form-item>
         <el-form-item label="价格"><el-input-number v-model="itemForm.price" :min="0" :precision="2" :step="0.01" controls-position="right" placeholder="可留空" /></el-form-item>
         <el-form-item label="类型" required><el-input v-model="itemForm.set_type" maxlength="64" placeholder="例如：单品、6件套" /></el-form-item>
+        <el-form-item label="手动组合">
+          <el-checkbox v-model="itemForm.manual_combo">勾选后该 SKU 按库存货值计价（订单成本不再加头程），导出时货值列显示 /</el-checkbox>
+        </el-form-item>
       </el-form>
       <template #footer><el-button @click="itemDialogVisible = false">取消</el-button><el-button type="primary" :loading="itemSaving" @click="saveItem">保存</el-button></template>
     </el-dialog>

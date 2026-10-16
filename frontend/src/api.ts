@@ -202,12 +202,12 @@ export async function getAdminInventoryItems(filters: InventoryItemFilters = {},
   return data
 }
 
-export async function createInventoryItem(payload: { sku: string; price: number | null; set_type: string; inventory_category?: string }) {
+export async function createInventoryItem(payload: { sku: string; price: number | null; set_type: string; inventory_category?: string; manual_combo?: boolean }) {
   const { data } = await http.post<{ item: SkuResult }>('/admin/inventory/items', payload)
   return data.item
 }
 
-export async function updateInventoryItem(oldSku: string, payload: { sku: string; price: number | null; set_type: string; inventory_category?: string }) {
+export async function updateInventoryItem(oldSku: string, payload: { sku: string; price: number | null; set_type: string; inventory_category?: string; manual_combo?: boolean }) {
   const { data } = await http.put<{ item: SkuResult }>(`/admin/inventory/items/${encodeURIComponent(oldSku)}`, payload)
   return data.item
 }

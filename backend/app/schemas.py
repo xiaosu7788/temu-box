@@ -15,6 +15,7 @@ class InventoryItemCreateRequest(BaseModel):
     price: Optional[float] = Field(default=None, ge=0, le=1000000)
     set_type: str = Field(default="单品", min_length=1, max_length=64)
     inventory_category: Optional[str] = Field(default=None, max_length=16)
+    manual_combo: bool = False
 
 
 class InventoryItemUpdateRequest(BaseModel):
@@ -22,6 +23,7 @@ class InventoryItemUpdateRequest(BaseModel):
     price: Optional[float] = Field(default=None, ge=0, le=1000000)
     set_type: str = Field(default="单品", min_length=1, max_length=64)
     inventory_category: Optional[str] = Field(default=None, max_length=16)
+    manual_combo: Optional[bool] = None
 class InventoryApplyRequest(BaseModel):
     keep_skus: List[str] = Field(default_factory=list)
     skip_skus: List[str] = Field(default_factory=list)

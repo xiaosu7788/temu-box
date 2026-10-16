@@ -244,6 +244,12 @@ onMounted(async () => {
               <el-table-column prop="sku" label="SKU" min-width="180" />
               <el-table-column label="价格" width="120"><template #default="scope">{{ scope.row.price?.toFixed(2) || '-' }}</template></el-table-column>
               <el-table-column prop="set_type" label="类型" width="120" />
+              <el-table-column label="标记" width="110">
+                <template #default="scope">
+                  <el-tag v-if="scope.row.manual_combo" type="warning" size="small">手动组合</el-tag>
+                  <span v-else class="muted">-</span>
+                </template>
+              </el-table-column>
               <el-table-column prop="source_sheet" label="来源工作表" min-width="150" />
               <el-table-column prop="source_row" label="行号" width="80" />
               <el-table-column prop="source_column" label="价格列" width="90" />

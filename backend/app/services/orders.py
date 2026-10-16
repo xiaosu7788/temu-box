@@ -28,10 +28,11 @@ TAIL_FEE = 0
 SHIPPING_SUBSIDY = 0
 
 
-def calc_order_cost(sku_items, half_headcost_skus=None, settings=None):
+def calc_order_cost(sku_items, half_headcost_skus=None, settings=None, manual_combo_skus=None):
     if not sku_items:
         return None
     half_headcost_skus = half_headcost_skus or {}
+    manual_combo_skus = manual_combo_skus or set()
     settings = settings or {}
     order_settings = settings.get("order", {})
     headcost_map = {**HEADCOST_MAP, **order_settings.get("headcost", {})}
@@ -44,12 +45,16 @@ def calc_order_cost(sku_items, half_headcost_skus=None, settings=None):
     for price, set_type, quantity, sku in sku_items:
         if price is None:
             return None
+        total_qty += quantity
+        if sku in manual_combo_skus:
+            # 手动组合：库存货值已包含全部费用，直接按 件数 × 货值 计入，不再加头程
+            total += quantity * price
+            continue
         # 无套装型/自定义套装型品类只配置部分档位：未配置的档位统一按单品头程计算
         headcost = float(headcost_map.get(set_type, headcost_map.get("单品", 5)))
         if sku in half_headcost_skus:
             headcost /= 2
         total += quantity * (price + headcost)
-        total_qty += quantity
     total += operation_fee
     if total_qty > 1:
         total += (total_qty - 1) * extra_item_fee
@@ -129,6 +134,8 @@ def generate_summary(
     settings=None,
 ):
     half_headcost_skus = half_headcost_skus or {}
+    # 手动组合的 SKU：成本直接用库存登记的货值（不加头程），导出时货值列显示 /
+    manual_combo_skus = {sku for sku, item in (catalog or {}).items() if item.get("manual_combo")}
     if isinstance(sales_source, (bytes, bytearray)):
         wb = load_workbook(io.BytesIO(sales_source), data_only=True, keep_links=False)
     else:
@@ -178,9 +185,15 @@ def generate_summary(
                 total_qty += quantity
                 cost_items.append((price, set_type, quantity, sku))
 
-            price_display = prices[0] if len(prices) == 1 else "/".join(
-                f"{price:.2f}" if price is not None else "" for price in prices
-            )
+            # 手动组合的 SKU 货值列显示 /，其余照常显示价格（单个 SKU 仍保持数值）
+            manual_flags = [sku in manual_combo_skus for sku in skus]
+            if len(skus) == 1:
+                price_display = "/" if manual_flags[0] else prices[0]
+            else:
+                price_display = "/".join(
+                    "/" if flag else (f"{price:.2f}" if price is not None else "")
+                    for flag, price in zip(manual_flags, prices)
+                )
             unique_types = list(dict.fromkeys(types))
             for set_type in unique_types:
                 type_stats[set_type] = type_stats.get(set_type, 0) + 1
@@ -189,7 +202,7 @@ def generate_summary(
                 "/".join(skus),
                 price_display,
                 total_qty,
-                calc_order_cost(cost_items, half_headcost_skus, settings),
+                calc_order_cost(cost_items, half_headcost_skus, settings, manual_combo_skus),
                 amount,
                 "/".join(unique_types),
             ))

@@ -63,6 +63,8 @@ class InventoryItem(Base):
     source_column: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     inventory_version_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     category: Mapped[str] = mapped_column(String(16), primary_key=True, default="A", server_default="A", index=True)
+    # 手动组合：订单成本直接用库存货值（不加头程），导出时货值列显示 /
+    manual_combo: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
@@ -486,11 +488,11 @@ def get_inventory_catalog(category: Optional[str] = "A") -> dict:
     with db_session() as session:
         excluded = set(session.scalars(select(InventoryExclusion.sku)).all())
         rows = session.scalars(select(InventoryItem).where(InventoryItem.category == key)).all()
-        return {row.sku: {key2: getattr(row, key2) for key2 in ("sku", "price", "set_type", "source_sheet", "source_row", "source_column")} for row in rows if row.sku not in excluded}
+        return {row.sku: {key2: getattr(row, key2) for key2 in ("sku", "price", "set_type", "source_sheet", "source_row", "source_column", "manual_combo")} for row in rows if row.sku not in excluded}
 
 
 def _inventory_item_values(row: InventoryItem) -> dict:
-    return {key: getattr(row, key) for key in ("sku", "price", "set_type", "source_sheet", "source_row", "source_column")}
+    return {key: getattr(row, key) for key in ("sku", "price", "set_type", "source_sheet", "source_row", "source_column", "manual_combo")}
 
 
 def _update_current_inventory_count(session, category: Optional[str] = None) -> None:
@@ -506,20 +508,20 @@ def _update_current_inventory_count(session, category: Optional[str] = None) -> 
         version.sku_count = count_statement.count()
 
 
-def create_inventory_item(sku: str, price: Optional[float], set_type: str, category: Optional[str] = "A") -> dict:
+def create_inventory_item(sku: str, price: Optional[float], set_type: str, category: Optional[str] = "A", manual_combo: bool = False) -> dict:
     key = _category_key(category)
     with db_session() as session:
         if session.get(InventoryItem, (sku, key)):
             raise ValueError("库存 SKU 已存在")
         session.query(InventoryExclusion).filter(InventoryExclusion.sku == sku).delete()
-        row = InventoryItem(sku=sku, price=price, set_type=set_type, source_sheet="手动维护", category=key)
+        row = InventoryItem(sku=sku, price=price, set_type=set_type, source_sheet="手动维护", category=key, manual_combo=bool(manual_combo))
         session.add(row)
         _update_current_inventory_count(session, key)
         session.flush()
         return _inventory_item_values(row)
 
 
-def update_inventory_item(old_sku: str, sku: str, price: Optional[float], set_type: str, category: Optional[str] = "A") -> Optional[dict]:
+def update_inventory_item(old_sku: str, sku: str, price: Optional[float], set_type: str, category: Optional[str] = "A", manual_combo: Optional[bool] = None) -> Optional[dict]:
     key = _category_key(category)
     with db_session() as session:
         row = session.get(InventoryItem, (old_sku, key))
@@ -527,16 +529,19 @@ def update_inventory_item(old_sku: str, sku: str, price: Optional[float], set_ty
             return None
         if sku != old_sku and session.get(InventoryItem, (sku, key)):
             raise ValueError("库存 SKU 已存在")
+        previous_combo = bool(row.manual_combo)
         if sku != old_sku:
             session.delete(row)
             session.flush()
-            row = InventoryItem(sku=sku, category=key)
+            row = InventoryItem(sku=sku, category=key, manual_combo=previous_combo)
             session.add(row)
         row.price = price
         row.set_type = set_type
         row.source_sheet = "手动维护"
         row.source_row = None
         row.source_column = None
+        if manual_combo is not None:
+            row.manual_combo = bool(manual_combo)
         row.category = key
         row.inventory_version_id = None
         session.query(InventoryExclusion).filter(InventoryExclusion.sku.in_([old_sku, sku])).delete(synchronize_session=False)
@@ -573,9 +578,12 @@ def save_inventory_catalog(signature: dict, catalog: dict, category: Optional[st
         session.add(version)
         session.flush()
         # 删除该类目旧明细（排除名单中的 SKU 保留在别的类目不受影响——排除表是全局按 SKU）
+        # 手动组合是管理员手工维护的标记，重新上传 Excel 时按 SKU 保留
+        kept_flags = {row.sku: row.manual_combo for row in session.query(InventoryItem.sku, InventoryItem.manual_combo).filter(InventoryItem.category == key).all()}
         session.query(InventoryItem).filter(InventoryItem.category == key).delete(synchronize_session=False)
         for sku, item in catalog.items():
-            session.add(InventoryItem(inventory_version_id=version.id, sku=sku, category=key, **{k: item.get(k) for k in ("price", "set_type", "source_sheet", "source_row", "source_column")}))
+            flag = item.get("manual_combo")
+            session.add(InventoryItem(inventory_version_id=version.id, sku=sku, category=key, manual_combo=bool(kept_flags.get(sku)) if flag is None else bool(flag), **{k: item.get(k) for k in ("price", "set_type", "source_sheet", "source_row", "source_column")}))
 
 
 def get_inventory_category_defs() -> dict:

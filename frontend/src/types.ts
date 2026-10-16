@@ -73,6 +73,7 @@ export interface SkuResult {
   source_sheet?: string
   source_row?: number
   source_column?: number
+  manual_combo?: boolean
 }
 
 export interface HalfHeadcostItem {

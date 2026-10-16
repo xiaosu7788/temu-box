@@ -605,10 +605,10 @@ def admin_create_inventory_item(payload: InventoryItemCreateRequest, request: Re
     if not normalized:
         raise HTTPException(status_code=400, detail="SKU 不能为空")
     try:
-        item = create_inventory_item(normalized, payload.price, payload.set_type.strip() or "单品", payload.inventory_category or "A")
+        item = create_inventory_item(normalized, payload.price, payload.set_type.strip() or "单品", payload.inventory_category or "A", payload.manual_combo)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    audit.record(_admin, "inventory.item_create", "inventory_item", normalized, f"新增库存明细：{normalized}", request)
+    audit.record(_admin, "inventory.item_create", "inventory_item", normalized, f"新增库存明细：{normalized}{'（手动组合）' if payload.manual_combo else ''}", request)
     return {"message": "库存明细已添加", "item": item, **inventory_status(payload.inventory_category or "A")}
 
 
@@ -619,12 +619,12 @@ def admin_update_inventory_item(sku: str, payload: InventoryItemUpdateRequest, r
     if not old_sku or not normalized:
         raise HTTPException(status_code=400, detail="SKU 不能为空")
     try:
-        item = update_inventory_item(old_sku, normalized, payload.price, payload.set_type.strip() or "单品", payload.inventory_category or "A")
+        item = update_inventory_item(old_sku, normalized, payload.price, payload.set_type.strip() or "单品", payload.inventory_category or "A", payload.manual_combo)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not item:
         raise HTTPException(status_code=404, detail="库存 SKU 不存在")
-    audit.record(_admin, "inventory.item_update", "inventory_item", normalized, f"更新库存明细：{old_sku} → {normalized}", request)
+    audit.record(_admin, "inventory.item_update", "inventory_item", normalized, f"更新库存明细：{old_sku} → {normalized}{'（手动组合）' if payload.manual_combo else ''}", request)
     return {"message": "库存明细已更新", "item": item, **inventory_status(payload.inventory_category or "A")}
 
 

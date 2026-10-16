@@ -249,12 +249,19 @@ def test_admin_can_create_and_update_inventory_item_but_user_cannot():
         assert client.post("/api/admin/inventory/items", json={"sku": "MB131-DENIED", "price": 1, "set_type": "单品"}).status_code == 403
         client.post("/api/auth/logout")
         assert client.post("/api/auth/login", json={"username": "inventory_admin", "password": "inventoryadmin123"}).status_code == 200
-        created = client.post("/api/admin/inventory/items", json={"sku": "mb131-api", "price": 19.5, "set_type": "单品"})
+        created = client.post("/api/admin/inventory/items", json={"sku": "mb131-api", "price": 19.5, "set_type": "单品", "manual_combo": True})
         assert created.status_code == 201
         assert created.json()["item"]["sku"] == "MB131-API"
+        assert created.json()["item"]["manual_combo"] is True
         updated = client.put("/api/admin/inventory/items/MB131-API", json={"sku": "MB131-API", "price": 20, "set_type": "4件套"})
         assert updated.status_code == 200
         assert updated.json()["item"]["set_type"] == "4件套"
+        # 不带 manual_combo 表示不修改，原标记保留
+        assert updated.json()["item"]["manual_combo"] is True
+        cleared = client.put("/api/admin/inventory/items/MB131-API", json={"sku": "MB131-API", "price": 20, "set_type": "4件套", "manual_combo": False})
+        assert cleared.json()["item"]["manual_combo"] is False
+        listed = client.get("/api/admin/inventory/items", params={"query": "MB131-API"}).json()
+        assert listed["items"][0]["manual_combo"] is False
 
 
 def test_inventory_items_support_multi_condition_filters(monkeypatch):
