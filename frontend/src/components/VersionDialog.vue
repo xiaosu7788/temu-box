@@ -27,6 +27,13 @@ let pollActive = false
 const currentVersion = computed(() => info.value?.version || '')
 const remoteVersion = computed(() => snapshot.value?.remote_version || '')
 const updaterEnabled = computed(() => Boolean(snapshot.value))
+// 边车是服务器上单独构建的镜像，一键更新不会重建它；老边车没有 version 字段
+const staleSidecar = computed(() => updaterEnabled.value && !snapshot.value?.version)
+const remoteHint = computed(() => {
+  if (!updaterEnabled.value) return '未启用更新检查'
+  if (staleSidecar.value) return '边车版本过旧：请在服务器执行 ./scripts/enable-updater.sh 重建'
+  return '暂时读不到远端版本'
+})
 const entries = computed<VersionEntry[]>(() => info.value?.changelog || [])
 const running = computed(() => job.value?.status === 'running' || Boolean(snapshot.value?.updater.busy))
 const ready = computed(() => Boolean(snapshot.value?.updater.ready))
@@ -263,7 +270,7 @@ onBeforeUnmount(stopPolling)
             </button>
           </div>
           <strong v-if="remoteVersion" class="box-value" :class="{ newer: updateAvailable }">v{{ remoteVersion }}</strong>
-          <span v-else class="box-muted">{{ updaterEnabled ? '暂时读不到远端版本' : '未启用更新检查' }}</span>
+          <span v-else class="box-muted">{{ remoteHint }}</span>
         </div>
       </div>
 

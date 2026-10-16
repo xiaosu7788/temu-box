@@ -189,6 +189,7 @@ chmod +x scripts/enable-updater.sh
 - 更新期间前后端一起重启，页面中断约 1~2 分钟，完成后请 `Ctrl+F5` 强刷；
 - 边车不发布端口，只由后端容器通过 `http://updater:8899` 访问，请求必须带 `UPDATER_TOKEN`；它只接受固定的更新/回滚动作、不接受任何参数，每次操作都会写入后台审计日志（动作 `update.update` / `update.rollback`）；
 - 从服务器执行方式 A/B 更新不会影响正在运行的边车；但改过令牌或换过项目目录后，需要重新执行一次 `./scripts/enable-updater.sh`；
+- **边车代码（`docker/updater/`）有改动时，必须在服务器重跑一次 `./scripts/enable-updater.sh`**：一键更新只重建前后端，边车按设计不重建自己，否则边车新加的字段不会生效（现象：弹窗里「最新版本」读不到）；
 - 如果整个项目被 `docker compose down` 停掉，或只执行了不带 `--profile ops` 的 `up -d`，边车可能不再运行，重跑启用脚本即可恢复；
 - 不需要该功能时：把 `.env.docker` 中的 `UPDATER_TOKEN` 留空并重启后端，后台会提示未启用；再执行 `docker compose --env-file .env.docker --profile ops rm -sf updater` 移除边车容器。
 

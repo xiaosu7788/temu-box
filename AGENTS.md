@@ -135,3 +135,4 @@ npx vue-tsc -b --force
 - 发版：改 `VERSION` + 在 `CHANGELOG.md` 顶部加一节 → 提交推送；CI 会额外构建 `v<版本号>` 标签的镜像。
 - 后端 `GET /api/version`（管理员）返回版本号、提交号与解析后的日志；运维边车的 `/status` 返回当前版本与远端版本。
 - 日志解析逻辑在 `backend/app/version.py` 与 `docker/updater/server.py` 各有一份（边车是独立镜像），改动要同步。
+- **改动 `docker/updater/**`（边车代码）后，必须在服务器重跑 `./scripts/enable-updater.sh` 才生效**：一键更新只重建前后端，边车按设计不重建自己（保证更新失败时还能回滚）。
