@@ -42,22 +42,25 @@ def calc_order_cost(sku_items, half_headcost_skus=None, settings=None, manual_co
     shipping_subsidy = float(order_settings.get("shipping_subsidy", SHIPPING_SUBSIDY))
     total = 0.0
     total_qty = 0
+    fee_qty = 0  # 参与订单级费用（操作费/多件费）的件数，手动组合不计
     for price, set_type, quantity, sku in sku_items:
         if price is None:
             return None
         total_qty += quantity
         if sku in manual_combo_skus:
-            # 手动组合：库存货值已包含全部费用，直接按 件数 × 货值 计入，不再加头程
+            # 手动组合：库存货值已包含全部费用，按 件数 × 货值 计入，不加头程、也不参与操作费/多件费
             total += quantity * price
             continue
+        fee_qty += quantity
         # 无套装型/自定义套装型品类只配置部分档位：未配置的档位统一按单品头程计算
         headcost = float(headcost_map.get(set_type, headcost_map.get("单品", 5)))
         if sku in half_headcost_skus:
             headcost /= 2
         total += quantity * (price + headcost)
-    total += operation_fee
-    if total_qty > 1:
-        total += (total_qty - 1) * extra_item_fee
+    if fee_qty:
+        total += operation_fee
+        if fee_qty > 1:
+            total += (fee_qty - 1) * extra_item_fee
     total += tail_fee - shipping_subsidy
     return round(total, 2)
 

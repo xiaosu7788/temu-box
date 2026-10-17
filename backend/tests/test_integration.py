@@ -62,5 +62,5 @@ def test_summary_marks_manual_combo_value_as_slash(tmp_path):
     workbook = load_workbook(output_path, data_only=True)
     row = [workbook.active.cell(2, column).value for column in range(1, 8)]
     workbook.close()
-    # 货值列显示 /，成本 = 件数 × 库存货值 + 操作费（不加头程）
-    assert row == ["PO-TEST-002", "MB131-666", "/", 1, 62.94, 88.5, "12件套"]
+    # 货值列显示 /，成本就是库存货值（不加头程、也不加操作费）
+    assert row == ["PO-TEST-002", "MB131-666", "/", 1, 55.94, 88.5, "12件套"]

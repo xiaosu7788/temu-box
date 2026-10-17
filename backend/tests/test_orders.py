@@ -31,14 +31,15 @@ def test_order_cost_adds_tail_fee_and_subtracts_shipping_subsidy():
     assert calc_order_cost([(10, "单品", 2, "MB131-TAIL")], settings=settings) == 41.5
 
 
-def test_manual_combo_uses_inventory_price_without_headcost():
-    # 手动组合：成本 = 件数 × 库存货值，不加头程（库存货值已含全部费用）
+def test_manual_combo_cost_has_no_headcost_and_no_order_fees():
     items = [(55.94, "12件套", 1, "MB131-666")]
-    assert calc_order_cost(items, None, None, {"MB131-666"}) == 62.94
-    # 同样数据未标手动组合时按 12件套 头程 15 计算
+    # 手动组合：货值已含全部费用 → 成本就是库存货值
+    assert calc_order_cost(items, None, None, {"MB131-666"}) == 55.94
+    # 多件：件数 × 货值，不加多件费
+    assert calc_order_cost([(55.94, "12件套", 2, "MB131-666")], None, None, {"MB131-666"}) == 111.88
+    # 未标手动组合时：货值 + 12件套头程 15 + 操作费 7
     assert calc_order_cost(items, None, None) == 77.94
-    # 多件：件数 × 货值，再加多件费
-    assert calc_order_cost([(55.94, "12件套", 2, "MB131-666")], None, None, {"MB131-666"}) == 120.88
-    # 手动组合也照样计入件数（影响多件费）
-    # 手动组合也照样计入件数（影响多件费）：15 + 55.94 + 7 + 2 = 79.94
-    assert calc_order_cost([(10, "单品", 1, "A"), (55.94, "12件套", 1, "MB131-666")], None, None, {"MB131-666"}) == 79.94
+    # 混合单：只有非手动组合部分承担操作费（15 + 55.94 + 7）
+    assert calc_order_cost([(10, "单品", 1, "A"), (55.94, "12件套", 1, "MB131-666")], None, None, {"MB131-666"}) == 77.94
+    # 混合单多件：多件费只按非手动组合件数算（15 + 55.94×2 + 7）
+    assert calc_order_cost([(10, "单品", 1, "A"), (55.94, "12件套", 2, "MB131-666")], None, None, {"MB131-666"}) == 133.88
