@@ -214,10 +214,11 @@ export interface User {
   id: number
   username: string
   display_name: string
+  note?: string
   role: 'admin' | 'user'
   status: 'pending' | 'approved' | 'rejected'
-  created_at?: string
-  approved_at?: string
+  created_at?: string | null
+  approved_at?: string | null
 }
 
 export interface AppSettings {

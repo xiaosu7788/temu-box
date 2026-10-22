@@ -91,5 +91,5 @@ def login_user(username: str, password: str) -> dict:
     if user["status"] == "pending":
         raise HTTPException(status_code=403, detail="账号正在等待管理员审核")
     if user["status"] != "approved":
-        raise HTTPException(status_code=403, detail="账号未通过审核")
+        raise HTTPException(status_code=403, detail="账号已禁用" if user["status"] == "rejected" else "账号暂不可用")
     return user

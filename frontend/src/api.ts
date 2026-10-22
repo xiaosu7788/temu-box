@@ -348,16 +348,25 @@ export async function getAdminUsers() {
   return data.items
 }
 
-export async function updateUserStatus(id: number, status: 'approve' | 'reject') {
+export type AdminUserStatusAction = 'approve' | 'enable' | 'disable'
+
+export async function updateUserStatus(id: number, status: AdminUserStatusAction) {
   const { data } = await http.post<User>(`/admin/users/${id}/${status}`)
   return data
 }
 
-export async function updateAdminUser(id: number, username: string, password?: string) {
-  const { data } = await http.patch<User>(`/admin/users/${id}`, {
-    username,
-    password: password || undefined,
-  })
+export async function updateAdminUser(id: number, payload: { username?: string; display_name?: string; note?: string; password?: string }) {
+  const { data } = await http.patch<User>(`/admin/users/${id}`, payload)
+  return data
+}
+
+export async function bulkUpdateAdminUsers(payload: { user_ids: number[]; display_name?: string; note?: string; status?: 'approved' | 'rejected' }) {
+  const { data } = await http.patch<{ items: User[]; updated: number }>('/admin/users/bulk', payload)
+  return data
+}
+
+export async function bulkDeleteAdminUsers(userIds: number[]) {
+  const { data } = await http.post<{ deleted_ids: number[]; deleted: number }>('/admin/users/bulk-delete', { user_ids: userIds })
   return data
 }
 

@@ -37,6 +37,8 @@ from app.database import (
     list_users,
     update_user_credentials,
     update_user_status,
+    bulk_delete_users,
+    bulk_update_users,
     count_half_entries,
     create_inventory_category_def,
     list_inventory_category_defs,
@@ -44,7 +46,7 @@ from app.database import (
     delete_inventory_category_def,
     save_activity_skc_rules,
 )
-from app.schemas import ActivitySkuRulesPayload, AdminUserUpdateRequest, CategoryCreateRequest, CategoryUpdateRequest, HalfHeadcostCreateRequest, HalfHeadcostUpdateRequest, InventoryApplyRequest, InventoryCategoryCreateRequest, InventoryCategoryUpdateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest, SystemSettingsPayload
+from app.schemas import ActivitySkuRulesPayload, AdminUserBulkDeleteRequest, AdminUserBulkUpdateRequest, AdminUserUpdateRequest, CategoryCreateRequest, CategoryUpdateRequest, HalfHeadcostCreateRequest, HalfHeadcostUpdateRequest, InventoryApplyRequest, InventoryCategoryCreateRequest, InventoryCategoryUpdateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest, SystemSettingsPayload
 from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
 from app.services import audit, system, updater
 from app.services.categories import category_allowed_pieces, category_skc_rules, create_category, delete_category, get_category, list_categories, TEMPLATE_TYPES, update_category
@@ -919,6 +921,7 @@ def admin_users(_admin: dict = Depends(admin_user)):
 
 
 @app.post("/api/admin/users/{user_id}/approve")
+@app.post("/api/admin/users/{user_id}/enable", include_in_schema=False)
 def approve_user(user_id: int, request: Request, _admin: dict = Depends(admin_user)):
     target = get_user(user_id)
     if not target or target["role"] == "admin":
@@ -926,20 +929,49 @@ def approve_user(user_id: int, request: Request, _admin: dict = Depends(admin_us
     user = update_user_status(user_id, "approved")
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
-    audit.record(_admin, "user.approve", "user", user["username"], "审核通过用户", request)
+    audit.record(_admin, "user.enable", "user", user["username"], "启用用户账号", request)
     return public_user(user)
 
 
-@app.post("/api/admin/users/{user_id}/reject")
-def reject_user(user_id: int, request: Request, _admin: dict = Depends(admin_user)):
+@app.post("/api/admin/users/{user_id}/disable")
+@app.post("/api/admin/users/{user_id}/reject", include_in_schema=False)
+def disable_user(user_id: int, request: Request, _admin: dict = Depends(admin_user)):
     target = get_user(user_id)
     if not target or target["role"] == "admin":
         raise HTTPException(status_code=404, detail="普通用户不存在")
     user = update_user_status(user_id, "rejected")
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
-    audit.record(_admin, "user.reject", "user", user["username"], "驳回用户", request)
+    audit.record(_admin, "user.disable", "user", user["username"], "禁用用户账号", request)
     return public_user(user)
+
+
+@app.patch("/api/admin/users/bulk")
+def admin_bulk_update_users(payload: AdminUserBulkUpdateRequest, request: Request, _admin: dict = Depends(admin_user)):
+    fields = payload.model_fields_set
+    if not fields.intersection({"display_name", "note", "status"}):
+        raise HTTPException(status_code=400, detail="请至少选择一个要批量修改的字段")
+    try:
+        items = bulk_update_users(
+            payload.user_ids,
+            display_name=(payload.display_name or "").strip() if "display_name" in fields else None,
+            note=(payload.note or "").strip() if "note" in fields else None,
+            status=payload.status if "status" in fields else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record(_admin, "user.bulk_update", "user", "bulk", f"批量更新 {len(items)} 个用户", request)
+    return {"items": items, "updated": len(items)}
+
+
+@app.post("/api/admin/users/bulk-delete")
+def admin_bulk_delete_users(payload: AdminUserBulkDeleteRequest, request: Request, _admin: dict = Depends(admin_user)):
+    try:
+        items = bulk_delete_users(payload.user_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record(_admin, "user.bulk_delete", "user", "bulk", f"批量删除 {len(items)} 个用户", request)
+    return {"deleted_ids": [item["id"] for item in items], "deleted": len(items)}
 
 
 @app.patch("/api/admin/users/{user_id}")
@@ -947,22 +979,30 @@ def admin_update_user(user_id: int, payload: AdminUserUpdateRequest, request: Re
     target = get_user(user_id)
     if not target or target["role"] == "admin":
         raise HTTPException(status_code=404, detail="普通用户不存在")
-    try:
-        username = validate_username(payload.username)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    existing = get_user_by_username(username)
-    if existing and existing["id"] != user_id:
-        raise HTTPException(status_code=409, detail="用户名已存在")
+    fields = payload.model_fields_set
+    username = target["username"]
+    if payload.username is not None:
+        try:
+            username = validate_username(payload.username)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        existing = get_user_by_username(username)
+        if existing and existing["id"] != user_id:
+            raise HTTPException(status_code=409, detail="用户名已存在")
     user = update_user_credentials(
         user_id,
-        username,
-        hash_password(payload.password) if payload.password else None,
+        username=username if payload.username is not None else None,
+        password_hash=hash_password(payload.password) if payload.password else None,
+        display_name=(payload.display_name or "").strip() if "display_name" in fields else None,
+        note=(payload.note or "").strip() if "note" in fields else None,
     )
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
-    audit.record(_admin, "user.update", "user", user["username"], "修改用户账号" + ("及密码" if payload.password else ""), request)
-    return public_user(user)
+    changed = [name for name in ("username", "display_name", "note") if name in fields]
+    if payload.password:
+        changed.append("password")
+    audit.record(_admin, "user.update", "user", user["username"], f"修改用户账号（{', '.join(changed) or '无字段变化'}）", request)
+    return user
 
 
 @app.delete("/api/admin/users/{user_id}")

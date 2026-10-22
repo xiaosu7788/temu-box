@@ -185,6 +185,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(120), default="")
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
     role: Mapped[str] = mapped_column(String(20), default="user")
     status: Mapped[str] = mapped_column(String(20), default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -363,6 +364,18 @@ def _ensure_category_schema() -> None:
                 connection.execute(text(f"ALTER TABLE activity_jobs ADD COLUMN category_name VARCHAR(80) NOT NULL DEFAULT '{safe_name}'"))
 
 
+
+def _ensure_user_schema() -> None:
+    """为本地 create_all 环境中的旧 SQLite users 表补备注列；生产由 Alembic 迁移负责。"""
+    with engine.begin() as connection:
+        inspector = sa_inspect(connection)
+        if not inspector.has_table("users"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("users")}
+        if "note" not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN note TEXT NOT NULL DEFAULT ''"))
+
+
 def init_database() -> None:
     """Schema ownership:
     - Production (Docker) sets TEMUBOX_AUTO_CREATE_TABLES=0: Alembic owns the
@@ -374,6 +387,7 @@ def init_database() -> None:
     if os.environ.get("TEMUBOX_AUTO_CREATE_TABLES", "1") != "0":
         Base.metadata.create_all(engine)
         _ensure_category_schema()
+        _ensure_user_schema()
     with SessionLocal.begin() as session:
         if session.scalar(select(InventoryItem.sku).limit(1)) is None:
             cache = _json(PRICE_CACHE_PATH, {})
@@ -987,10 +1001,28 @@ def get_user(user_id: int) -> Optional[dict]:
         return user_dict(row) if row else None
 
 
+def _user_timestamp(value: Optional[datetime]) -> Optional[str]:
+    if value is None:
+        return None
+    # SQLite strips timezone info on read; persisted application timestamps are UTC.
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
 def user_dict(row: Optional[User]) -> Optional[dict]:
     if not row:
         return None
-    return {"id": row.id, "username": row.username, "display_name": row.display_name, "role": row.role, "status": row.status, "created_at": row.created_at.isoformat() if row.created_at else None, "approved_at": row.approved_at.isoformat() if row.approved_at else None}
+    return {
+        "id": row.id,
+        "username": row.username,
+        "display_name": row.display_name,
+        "note": row.note or "",
+        "role": row.role,
+        "status": row.status,
+        "created_at": _user_timestamp(row.created_at),
+        "approved_at": _user_timestamp(row.approved_at),
+    }
 
 
 def create_user(username: str, password_hash: str, display_name: str = "", role: str = "user", status: str = "pending") -> dict:
@@ -1011,14 +1043,25 @@ def update_user_status(user_id: int, status: str) -> Optional[dict]:
         return user_dict(row)
 
 
-def update_user_credentials(user_id: int, username: str, password_hash: Optional[str] = None) -> Optional[dict]:
+def update_user_credentials(
+    user_id: int,
+    username: Optional[str] = None,
+    password_hash: Optional[str] = None,
+    display_name: Optional[str] = None,
+    note: Optional[str] = None,
+) -> Optional[dict]:
     with db_session() as session:
         row = session.get(User, user_id)
         if not row:
             return None
-        row.username = username
+        if username is not None:
+            row.username = username
         if password_hash:
             row.password_hash = password_hash
+        if display_name is not None:
+            row.display_name = display_name
+        if note is not None:
+            row.note = note
         return user_dict(row)
 
 
@@ -1034,6 +1077,42 @@ def delete_user(user_id: int) -> bool:
 def list_users() -> list[dict]:
     with db_session() as session:
         return [user_dict(row) for row in session.scalars(select(User).order_by(User.id.desc())).all()]
+
+def bulk_update_users(user_ids: list[int], *, display_name: Optional[str] = None, note: Optional[str] = None, status: Optional[str] = None) -> list[dict]:
+    """原子批量更新普通用户资料/状态，禁止混入管理员账号。"""
+    ids = list(dict.fromkeys(user_ids))
+    if status is not None and status not in {"approved", "rejected"}:
+        raise ValueError("批量状态只能设为启用或禁用")
+    with db_session() as session:
+        rows = session.scalars(select(User).where(User.id.in_(ids))).all() if ids else []
+        if len(rows) != len(ids):
+            raise ValueError("所选用户中包含不存在的账号")
+        if any(row.role == "admin" for row in rows):
+            raise ValueError("批量操作不能包含管理员账号")
+        for row in rows:
+            if display_name is not None:
+                row.display_name = display_name
+            if note is not None:
+                row.note = note
+            if status is not None:
+                row.status = status
+                row.approved_at = datetime.now(timezone.utc) if status == "approved" else None
+        return [user_dict(row) for row in rows]
+
+
+def bulk_delete_users(user_ids: list[int]) -> list[dict]:
+    """原子批量删除普通用户，禁止混入管理员账号。"""
+    ids = list(dict.fromkeys(user_ids))
+    with db_session() as session:
+        rows = session.scalars(select(User).where(User.id.in_(ids))).all() if ids else []
+        if len(rows) != len(ids):
+            raise ValueError("所选用户中包含不存在的账号")
+        if any(row.role == "admin" for row in rows):
+            raise ValueError("批量删除不能包含管理员账号")
+        removed = [user_dict(row) for row in rows]
+        for row in rows:
+            session.delete(row)
+        return removed
 
 
 def ensure_admin_user(username: str, password_hash: str) -> Optional[dict]:

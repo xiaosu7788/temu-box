@@ -95,8 +95,22 @@ class LoginRequest(BaseModel):
 
 
 class AdminUserUpdateRequest(BaseModel):
-    username: str = Field(min_length=3, max_length=80)
+    username: Optional[str] = Field(default=None, min_length=3, max_length=80)
     password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+    display_name: Optional[str] = Field(default=None, max_length=120)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class AdminUserBulkUpdateRequest(BaseModel):
+    user_ids: List[int] = Field(min_length=1, max_length=500)
+    display_name: Optional[str] = Field(default=None, max_length=120)
+    note: Optional[str] = Field(default=None, max_length=500)
+    status: Optional[str] = Field(default=None, max_length=20)
+
+
+class AdminUserBulkDeleteRequest(BaseModel):
+    user_ids: List[int] = Field(min_length=1, max_length=500)
+
 
 
 class ActivitySetMappingPayload(BaseModel):
