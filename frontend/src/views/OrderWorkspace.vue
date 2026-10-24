@@ -1,17 +1,20 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { Download, RefreshRight, UploadFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowUp, CopyDocument, Download, RefreshRight } from '@element-plus/icons-vue'
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
 import { createTask, downloadUrl, getTask } from '../api'
-import { notifyError } from '../feedback'
+import { notifyError, notifySuccess } from '../feedback'
 import type { TaskItem } from '../types'
 import CostRules from '../components/CostRules.vue'
+import FileUploadCard from '../components/FileUploadCard.vue'
+import CopyableText from '../components/CopyableText.vue'
 import { selectedCategoryCode as categoryCode, selectedRegionCode as regionCode } from '../regionState'
 
 const salesFiles = ref<UploadUserFile[]>([])
 const deliveryFiles = ref<UploadUserFile[]>([])
 const task = ref<TaskItem | null>(null)
 const submitting = ref(false)
+const showLogs = ref(true)
 let pollTimer: number | undefined
 
 const canSubmit = computed(() => salesFiles.value.length === 1 && deliveryFiles.value.length === 1)
@@ -27,6 +30,13 @@ function deliveryChanged(_file: UploadFile, files: UploadFiles) {
 
 function rawFile(files: UploadUserFile[]): File | null {
   return files[0]?.raw || null
+}
+
+async function copyAllLogs() {
+  if (!task.value?.logs?.length) return
+  const text = task.value.logs.join('\n')
+  await navigator.clipboard.writeText(text)
+  notifySuccess('已复制全部任务日志')
 }
 
 async function submit() {
@@ -88,34 +98,22 @@ onBeforeUnmount(() => pollTimer && window.clearInterval(pollTimer))
     </div>
 
     <div class="upload-grid">
-      <div class="upload-panel">
-        <div class="upload-title"><span>01</span>销售订单</div>
-        <el-upload
-          v-model:file-list="salesFiles"
-          drag
-          :auto-upload="false"
-          :limit="1"
-          accept=".xlsx,.xlsm"
-          @change="salesChanged"
-        >
-          <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-          <div class="el-upload__text">选择销售订单表</div>
-        </el-upload>
-      </div>
-      <div class="upload-panel">
-        <div class="upload-title"><span>02</span>派送订单</div>
-        <el-upload
-          v-model:file-list="deliveryFiles"
-          drag
-          :auto-upload="false"
-          :limit="1"
-          accept=".xlsx,.xlsm"
-          @change="deliveryChanged"
-        >
-          <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-          <div class="el-upload__text">选择派送订单表</div>
-        </el-upload>
-      </div>
+      <FileUploadCard
+        v-model="salesFiles"
+        step="01"
+        title="销售订单"
+        subtitle="由 Temu 平台导出的销售订单表"
+        :disabled="submitting || !!isActive"
+        @change="salesChanged"
+      />
+      <FileUploadCard
+        v-model="deliveryFiles"
+        step="02"
+        title="派送订单"
+        subtitle="由物流或 Temu 平台导出的派送订单表"
+        :disabled="submitting || !!isActive"
+        @change="deliveryChanged"
+      />
     </div>
 
     <div class="action-row">
@@ -129,7 +127,11 @@ onBeforeUnmount(() => pollTimer && window.clearInterval(pollTimer))
     <div class="section-heading">
       <div>
         <h2>任务进度</h2>
-        <p><el-tag size="small" effect="plain">{{ task.region_name }}</el-tag> <el-tag v-if="task.category_name" size="small" effect="plain" type="info">{{ task.category_name }}</el-tag> <span class="mono">{{ task.id }}</span></p>
+        <p>
+          <el-tag size="small" effect="plain">{{ task.region_name }}</el-tag>
+          <el-tag v-if="task.category_name" size="small" effect="plain" type="info">{{ task.category_name }}</el-tag>
+          <CopyableText :text="task.id" tooltip="点击复制任务ID" />
+        </p>
       </div>
       <el-tag :type="task.status === 'completed' ? 'success' : task.status === 'failed' ? 'danger' : 'primary'">
         {{ task.message }}
@@ -144,8 +146,24 @@ onBeforeUnmount(() => pollTimer && window.clearInterval(pollTimer))
       <div><span>缺价格 SKU</span><strong>{{ task.stats.missing_skus?.length || 0 }}</strong></div>
     </div>
 
-    <div class="log-view" aria-live="polite">
-      <div v-for="line in task.logs" :key="line">{{ line }}</div>
+    <div class="modern-log-window">
+      <div class="modern-log-header">
+        <div class="modern-log-dots">
+          <span class="dot-red" />
+          <span class="dot-yellow" />
+          <span class="dot-green" />
+          <span class="modern-log-title">任务执行日志</span>
+        </div>
+        <div class="modern-log-tools">
+          <el-button text size="small" :icon="CopyDocument" @click="copyAllLogs">复制日志</el-button>
+          <el-button text size="small" :icon="showLogs ? ArrowUp : ArrowDown" @click="showLogs = !showLogs">
+            {{ showLogs ? '收起' : '展开' }}
+          </el-button>
+        </div>
+      </div>
+      <div v-show="showLogs" class="modern-log-content" aria-live="polite">
+        <div v-for="line in task.logs" :key="line" class="log-row">{{ line }}</div>
+      </div>
     </div>
 
     <div v-if="task.download_ready" class="action-row left">

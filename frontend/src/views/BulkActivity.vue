@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Delete, Download, Plus, RefreshRight, UploadFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowUp, CopyDocument, Delete, Download, Plus, RefreshRight, Search, UploadFilled } from '@element-plus/icons-vue'
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
 import { activityDownloadUrl, getActivityTask, getActivityTasks, getSettings, previewActivitySkuRules, processBulkActivity } from '../api'
 import { notifyError, notifySuccess } from '../feedback'
 import type { ActivityIdProfitRule, ActivityIdType, ActivitySetMapping, ActivitySingleRule, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem } from '../types'
 import CostRules from '../components/CostRules.vue'
+import FileUploadCard from '../components/FileUploadCard.vue'
+import CopyableText from '../components/CopyableText.vue'
 import { selectedCategoryCode as categoryCode, selectedRegionCode as regionCode } from '../regionState'
 
 const files = ref<UploadUserFile[]>([])
@@ -122,6 +124,12 @@ const previewFilterOptions: ActivitySkuPreviewItem['result'][] = ['单品', '套
 
 // 识别不到的 SKC 明细（后端按全表聚合，与 result_filter、分页无关）
 const unrecognizedSkcs = computed(() => skuPreview.value?.unrecognized_skcs || [])
+const unrecognizedSearch = ref('')
+const filteredUnrecognizedSkcs = computed(() => {
+  const query = unrecognizedSearch.value.trim().toUpperCase()
+  if (!query) return unrecognizedSkcs.value
+  return unrecognizedSkcs.value.filter((item) => item.skc.toUpperCase().includes(query))
+})
 const unrecognizedSkcTotal = computed(() => skuPreview.value?.unrecognized_skc_total ?? unrecognizedSkcs.value.length)
 const unrecognizedSkcsTruncated = computed(() => skuPreview.value?.unrecognized_skcs_truncated ?? unrecognizedSkcTotal.value > unrecognizedSkcs.value.length)
 const unrecognizedRowCount = computed(() => skuPreview.value?.unrecognized_rows || 0)
@@ -139,10 +147,17 @@ const dropSummary = computed(() => {
 const canSubmit = computed(() => !!regionCode.value && !!categoryCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || skuRulesConfigured.value) && (!useCustomIdProfitRules.value || idProfitRulesValid.value))
 const isActiveTask = computed(() => !!task.value && (task.value.status === 'queued' || task.value.status === 'running'))
 const hasTaskStats = computed(() => task.value?.stats?.processed_rows !== undefined)
+const showLogs = ref(true)
 const logLines = computed(() => {
   if (!task.value) return []
   return task.value.logs.length ? task.value.logs : [task.value.message]
 })
+
+async function copyAllLogs() {
+  if (!logLines.value.length) return
+  await navigator.clipboard.writeText(logLines.value.join('\n'))
+  notifySuccess('已复制任务日志')
+}
 
 function fileChanged(_file: UploadFile, uploadFiles: UploadFiles) {
   files.value = uploadFiles.slice(-1)
@@ -514,17 +529,13 @@ onBeforeUnmount(stopPolling)
       <el-button :icon="RefreshRight" :disabled="loading" @click="reset">重置</el-button>
     </div>
 
-    <el-upload
-      v-model:file-list="files"
-      drag
-      :auto-upload="false"
-      :limit="1"
-      accept=".xlsx,.xlsm"
+    <FileUploadCard
+      v-model="files"
+      title="报名商品信息表"
+      subtitle="由 Temu 平台导出的报名商品列表"
+      :disabled="loading || isActiveTask"
       @change="fileChanged"
-    >
-      <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-      <div class="el-upload__text">选择报名商品信息表</div>
-    </el-upload>
+    />
 
     <div class="activity-settings-row">
       <div class="activity-custom-settings">
@@ -729,14 +740,22 @@ onBeforeUnmount(stopPolling)
               <span>不勾选时这些行原样保留；勾选后提交任务会删除该 SKC 的全部行。</span>
             </p>
             <div class="activity-unrecognized-tools">
+              <el-input
+                v-model="unrecognizedSearch"
+                size="small"
+                placeholder="按货号搜索..."
+                clearable
+                :prefix-icon="Search"
+                style="width: 150px; margin-right: 6px;"
+              />
               <el-button size="small" text :disabled="dropAllUnrecognized || !unrecognizedSkcs.length" @click="selectAllUnrecognizedSkcs">全选</el-button>
               <el-button size="small" text :disabled="dropAllUnrecognized || !dropUnrecognizedSkcs.length" @click="clearUnrecognizedSkcs">清空</el-button>
               <span class="activity-unrecognized-picked">{{ dropPickText }}</span>
             </div>
           </div>
           <el-checkbox-group v-model="dropUnrecognizedSkcs" :disabled="dropAllUnrecognized" class="activity-unrecognized-list">
-            <el-checkbox v-for="item in unrecognizedSkcs" :key="item.skc" :value="item.skc" class="activity-unrecognized-item">
-              <span class="mono activity-unrecognized-skc">{{ item.skc }}</span>
+            <el-checkbox v-for="item in filteredUnrecognizedSkcs" :key="item.skc" :value="item.skc" class="activity-unrecognized-item">
+              <CopyableText :text="item.skc" class="activity-unrecognized-skc" />
               <span class="activity-unrecognized-meta">{{ unrecognizedRowsText(item) }}</span>
             </el-checkbox>
           </el-checkbox-group>
@@ -750,30 +769,49 @@ onBeforeUnmount(stopPolling)
         <div class="activity-preview-table-wrap">
           <el-table :data="previewItems" height="100%" stripe>
             <el-table-column prop="row" label="行号" width="72" />
-            <el-table-column prop="skc" label="SKC货号" min-width="210" show-overflow-tooltip />
+            <el-table-column label="SKC货号" min-width="220">
+              <template #default="scope">
+                <CopyableText :text="scope.row.skc" />
+              </template>
+            </el-table-column>
             <el-table-column label="识别结果" width="100">
               <template #default="scope"><el-tag :type="previewTagType(scope.row.result)" size="small">{{ scope.row.result }}</el-tag></template>
             </el-table-column>
-            <el-table-column label="货值/件数" width="110">
-              <template #default="scope">{{ previewValue(scope.row) }}</template>
+            <el-table-column label="货值/件数" width="110" align="right" header-align="right">
+              <template #default="scope"><span class="tabular-num">{{ previewValue(scope.row) }}</span></template>
             </el-table-column>
-            <el-table-column label="申报价" width="100">
-              <template #default="scope">{{ formatMoney(scope.row.reference_price) }}</template>
+            <el-table-column label="申报价" width="110" align="right" header-align="right">
+              <template #default="scope">
+                <span class="tabular-num" :class="{ 'price-strikethrough': scope.row.action === '将被删除' }">
+                  {{ formatMoney(scope.row.reference_price) }}
+                </span>
+              </template>
             </el-table-column>
-            <el-table-column label="基础活动价" width="120">
-              <template #default="scope">{{ formatMoney(scope.row.base_price) }}</template>
+            <el-table-column label="基础活动价" width="120" align="right" header-align="right">
+              <template #default="scope"><span class="tabular-num">{{ formatMoney(scope.row.base_price) }}</span></template>
             </el-table-column>
             <el-table-column label="ID利润调整" width="130">
               <template #default="scope">
-                <span v-if="scope.row.matched_id_type">{{ scope.row.matched_id_type }} {{ scope.row.profit_adjustment >= 0 ? '+' : '' }}{{ scope.row.profit_adjustment.toFixed(2) }}</span>
+                <span v-if="scope.row.matched_id_type" class="tabular-num">{{ scope.row.matched_id_type }} {{ scope.row.profit_adjustment >= 0 ? '+' : '' }}{{ scope.row.profit_adjustment.toFixed(2) }}</span>
                 <span v-else>-</span>
               </template>
             </el-table-column>
             <el-table-column label="处理动作" width="110">
               <template #default="scope"><el-tag v-if="scope.row.action" :type="previewActionType(scope.row.action)" size="small" effect="plain">{{ scope.row.action }}</el-tag><span v-else>-</span></template>
             </el-table-column>
-            <el-table-column label="调整后活动价" width="180">
-              <template #default="scope">{{ previewPriceRange(scope.row) }}</template>
+            <el-table-column label="调整后活动价" min-width="190" align="right" header-align="right">
+              <template #default="scope">
+                <div v-if="scope.row.action === '将被删除'" style="color: var(--danger, #d92d20); font-size: 12px;">
+                  低价删除
+                </div>
+                <div v-else-if="scope.row.action === '上浮'" style="display: inline-flex; align-items: center; gap: 6px;">
+                  <span class="price-final-highlight">{{ previewPriceRange(scope.row) }}</span>
+                  <span class="price-tag-uplift">上浮</span>
+                </div>
+                <div v-else>
+                  <span class="tabular-num">{{ previewPriceRange(scope.row) }}</span>
+                </div>
+              </template>
             </el-table-column>
             <el-table-column prop="method" label="识别依据" min-width="200" show-overflow-tooltip />
           </el-table>
@@ -814,7 +852,7 @@ onBeforeUnmount(stopPolling)
           <el-tag size="small" effect="plain">{{ task.region_name }}</el-tag>
           <el-tag v-if="task.category_name" size="small" effect="plain" type="info">{{ task.category_name }}</el-tag>
           <span class="mono">{{ task.filename }}</span>
-          <span class="mono">{{ task.id }}</span>
+          <CopyableText :text="task.id" tooltip="点击复制任务ID" />
         </p>
       </div>
       <el-tag :type="task.status === 'completed' ? 'success' : task.status === 'failed' ? 'danger' : 'primary'">
@@ -832,8 +870,24 @@ onBeforeUnmount(stopPolling)
       <div v-if="task.stats.dropped_unrecognized_rows"><span>删除无法识别行</span><strong>{{ task.stats.dropped_unrecognized_rows }}</strong></div>
     </div>
 
-    <div class="log-view" aria-live="polite">
-      <div v-for="(line, index) in logLines" :key="index">{{ line }}</div>
+    <div class="modern-log-window">
+      <div class="modern-log-header">
+        <div class="modern-log-dots">
+          <span class="dot-red" />
+          <span class="dot-yellow" />
+          <span class="dot-green" />
+          <span class="modern-log-title">任务执行日志</span>
+        </div>
+        <div class="modern-log-tools">
+          <el-button text size="small" :icon="CopyDocument" @click="copyAllLogs">复制日志</el-button>
+          <el-button text size="small" :icon="showLogs ? ArrowUp : ArrowDown" @click="showLogs = !showLogs">
+            {{ showLogs ? '收起' : '展开' }}
+          </el-button>
+        </div>
+      </div>
+      <div v-show="showLogs" class="modern-log-content" aria-live="polite">
+        <div v-for="(line, index) in logLines" :key="index" class="log-row">{{ line }}</div>
+      </div>
     </div>
 
     <div v-if="task.download_ready" class="action-row left">

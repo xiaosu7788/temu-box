@@ -4,6 +4,7 @@ import { Delete, Download, Refresh } from '@element-plus/icons-vue'
 import { activityDownloadUrl, deleteActivityTask, deleteTask, downloadUrl, getMyActivityTasks, getTasks } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { ActivityTaskItem, TaskItem } from '../types'
+import CopyableText from '../components/CopyableText.vue'
 
 const tasks = ref<TaskItem[]>([])
 const activityTasks = ref<ActivityTaskItem[]>([])
@@ -110,10 +111,15 @@ onMounted(load)
       <el-table-column label="任务类型" width="125">
         <template #default="scope"><el-tag :type="scope.row.kind === 'order' ? 'primary' : 'warning'" effect="plain">{{ scope.row.taskType }}</el-tag></template>
       </el-table-column>
-      <el-table-column label="任务内容" min-width="250">
-        <template #default="scope"><div>{{ scope.row.title }}</div><div class="mono table-muted">{{ scope.row.id }}</div></template>
+      <el-table-column label="任务内容" min-width="260">
+        <template #default="scope">
+          <div style="font-weight: 500;">{{ scope.row.title }}</div>
+          <div style="margin-top: 3px;">
+            <CopyableText :text="scope.row.id" tooltip="点击复制任务ID" />
+          </div>
+        </template>
       </el-table-column>
-<el-table-column prop="regionName" label="区域" width="110" />
+      <el-table-column prop="regionName" label="区域" width="110" />
       <el-table-column label="状态" width="100"><template #default="scope"><el-tag :type="statusType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag></template></el-table-column>
       <el-table-column label="进度" width="160"><template #default="scope"><el-progress :percentage="scope.row.progress" :stroke-width="8" /></template></el-table-column>
       <el-table-column prop="summary" label="处理情况" min-width="190" />
@@ -130,6 +136,8 @@ onMounted(load)
         </template>
       </el-table-column>
     </el-table>
-    <el-empty v-if="!loading && !historyItems.length" description="暂无任务" />
+    <el-empty v-if="!loading && !historyItems.length" description="暂无任务记录">
+      <el-button type="primary" @click="$router.push('/orders')">前往创建订单计算</el-button>
+    </el-empty>
   </section>
 </template>

@@ -17,6 +17,7 @@ import AuthView from './views/AuthView.vue'
 import RegionPicker from './components/RegionPicker.vue'
 import CategoryPicker from './components/CategoryPicker.vue'
 import AdminLayout from './components/AdminLayout.vue'
+import FloatingTaskCenter from './components/FloatingTaskCenter.vue'
 import { selectedCategoryCode, selectedRegionCode } from './regionState'
 
 const route = useRoute()
@@ -135,4 +136,5 @@ onMounted(bootstrap)
     </div>
     <button v-if="mobileMenu" class="sidebar-backdrop" type="button" @click="mobileMenu = false" />
   </div>
+  <FloatingTaskCenter v-if="user" />
 </template>

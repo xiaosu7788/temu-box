@@ -98,40 +98,47 @@ a:focus-visible {
 .admin-back { width: 100%; margin-bottom: 8px; border-top: 1px solid #303a48; border-radius: 0; }
 
 .workspace { min-height: 100vh; margin-left: var(--sidebar-width); }
-.topbar { position: sticky; top: 0; z-index: 20; height: 76px; padding: 0 34px; display: flex; align-items: center; gap: 12px; background: white; border-bottom: 1px solid var(--border); }
-.topbar h1 { margin: 0; font-size: 20px; line-height: 1.25; letter-spacing: 0; }
-.topbar p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.topbar { position: sticky; top: 0; z-index: 20; height: 70px; padding: 0 34px; display: flex; align-items: center; gap: 14px; background: white; border-bottom: 1px solid var(--border); box-shadow: 0 1px 2px rgba(16, 24, 40, .03); }
+.topbar h1 { margin: 0; font-size: 19px; line-height: 1.25; letter-spacing: 0; }
+.topbar p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
 .menu-button { display: none; }
 .topbar-title { flex: 0 0 auto; }
 .role-tag { margin-left: auto; }
 .version-chip { padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); background: var(--surface-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
-.topbar .region-picker--compact { width: auto; min-height: 40px; margin: 0 0 0 22px; padding: 0; justify-content: flex-start; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+.topbar .region-picker--compact { width: auto; min-height: 40px; margin: 0 0 0 18px; padding: 0; justify-content: flex-start; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
 .topbar .region-picker--compact > span { font-size: 12px; }
 .topbar .region-picker--compact .el-select { width: 170px; }
-.topbar--inventory { height: 112px; align-items: stretch; }
+/* 顶栏统一高度：与普通页面保持一致，消除路由切换时的页面跳跃 */
+.topbar--inventory { height: 70px; align-items: center; }
 .topbar--inventory .role-tag { margin-left: 12px; }
-.inventory-topbar-target { position: absolute; inset: 0 34px; min-width: 0; display: block; }
-/* 顶栏内容：flex 两栏（左信息 / 右操作），替代原先绝对定位 + 写死 300px 让位的做法 */
-.inventory-topbar { position: relative; width: 100%; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-.inventory-topbar-copy { min-width: 0; flex: 1 1 0; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
-.inventory-title-line { min-width: 0; display: flex; align-items: center; gap: 10px; }
-.inventory-title-line h1 { margin: 0; min-width: 0; color: var(--text-strong); font-size: 20px; line-height: 1.25; letter-spacing: 0; }
+.inventory-topbar-target { position: absolute; inset: 0 34px; min-width: 0; display: flex; align-items: center; }
+/* 顶栏内容：单行 flex 两栏（左标题与副标题 / 右操作按钮） */
+.inventory-topbar { position: relative; width: 100%; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.inventory-topbar-copy { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 14px; }
+.inventory-title-line { min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+.inventory-title-line h1 { margin: 0; min-width: 0; color: var(--text-strong); font-size: 19px; line-height: 1.25; letter-spacing: 0; }
 .inventory-title-subtitle { margin-left: 0; font-size: 12px; font-weight: 400; color: var(--muted); }
-.inventory-topbar-summary { min-width: 0; display: flex; align-items: center; gap: 14px; overflow: hidden; color: var(--muted); font-size: 12px; white-space: nowrap; }
-.inventory-topbar-summary span { min-width: 0; display: inline-flex; align-items: baseline; flex: 0 0 auto; gap: 5px; }
-.inventory-topbar-summary strong { color: var(--text-strong); font-size: 14px; }
-/* 操作区不参与收缩，且默认不换行：顶栏高度有限，按钮换行会顶出可视区 */
+.inventory-topbar-summary { display: none; }
+/* 操作区不参与收缩，且单行水平靠右 */
 .inventory-topbar-actions { min-width: 0; flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: nowrap; }
 .inventory-topbar-actions .el-button { white-space: nowrap; }
 .inventory-topbar-actions .el-upload { display: inline-flex; }
-/* 库存类目下拉：必须给足宽度，否则选中项文本（类目名）会被裁掉只剩箭头 */
+/* 库存类目下拉 */
 .inventory-topbar-actions .inventory-category-select { width: 150px; flex: 0 0 150px; }
-.page-content--inventory { height: calc(100vh - 112px); padding-top: 20px; padding-bottom: 24px; }
-.page-content--admin-inventory { height: calc(100vh - 112px); padding-top: 20px; padding-bottom: 24px; }.page-content { width: 100%; max-width: none; padding: 28px 34px 48px; }
-.page-content--fixed { height: calc(100vh - 76px); overflow: hidden; }
+.page-content--inventory { height: calc(100vh - 70px); padding-top: 20px; padding-bottom: 24px; }
+.page-content--admin-inventory { height: calc(100vh - 70px); padding-top: 20px; padding-bottom: 24px; }
+.page-content { width: 100%; max-width: none; padding: 24px 34px 48px; }
+.page-content--fixed { height: calc(100vh - 70px); overflow: hidden; }
 
-.section-band { width: 100%; margin-bottom: 20px; padding: 24px; overflow-x: auto; background: white; border: 1px solid var(--border); border-radius: 7px; box-shadow: 0 1px 2px rgba(16, 24, 40, .04); }
+.section-band { width: 100%; margin-bottom: 20px; padding: 24px; overflow-x: auto; background: white; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 1px 3px rgba(16, 24, 40, .04), 0 1px 2px rgba(16, 24, 40, .02); transition: box-shadow .2s ease; }
+.section-band:hover { box-shadow: 0 3px 8px rgba(16, 24, 40, .06); }
 .compact-band { padding-block: 16px; }
+
+/* 页面内库存概览条 */
+.inventory-overview-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; flex-shrink: 0; }
+.inventory-overview-card { padding: 12px 16px; background: #ffffff; border: 1px solid var(--border); border-radius: 6px; display: flex; flex-direction: column; gap: 4px; }
+.inventory-overview-card .metric-label { font-size: 12px; color: var(--muted); }
+.inventory-overview-card .metric-value { font-size: 16px; color: var(--text-strong); font-weight: 600; font-variant-numeric: tabular-nums; }
 .section-heading { margin-bottom: 20px; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .section-heading h2 { margin: 0; font-size: 17px; line-height: 1.4; letter-spacing: 0; }
 .section-heading p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
@@ -457,10 +464,9 @@ a:focus-visible {
   .auth-review-note { margin-top: 12px; }
 }
 @media (max-width: 1280px) and (min-width: 721px) {
-  .topbar--inventory { height: 136px; padding-top: 14px; padding-bottom: 14px; }
-  .inventory-topbar-summary { gap: 10px; }
-  .inventory-topbar-actions { gap: 6px; }
-  .page-content--inventory, .page-content--admin-inventory { height: calc(100vh - 136px); }
+  .topbar--inventory { height: 70px; }
+  .inventory-topbar-actions { gap: 8px; }
+  .page-content--inventory, .page-content--admin-inventory { height: calc(100vh - 70px); }
 }
 
 @media (max-width: 980px) {
@@ -477,23 +483,22 @@ a:focus-visible {
   .sidebar.open { transform: translateX(0); }
   .sidebar-backdrop { position: fixed; inset: 0; z-index: 20; display: block; width: 100%; border: 0; background: rgba(15, 23, 42, .45); }
   .workspace { margin-left: 0; }
-  .topbar { height: 68px; padding: 0 16px; }
-  .topbar--inventory { height: 158px; align-items: flex-start; padding-top: 12px; padding-bottom: 12px; }
+  .topbar { height: 64px; padding: 0 16px; }
+  .topbar--inventory { height: 64px; align-items: center; padding-top: 0; padding-bottom: 0; }
   .inventory-topbar-target { inset-inline: 16px; }
-  .topbar--inventory .inventory-topbar { align-items: flex-start; flex-wrap: wrap; gap: 8px 12px; }
-  .topbar--inventory .inventory-topbar-copy { flex: 1 1 150px; min-width: 140px; }
-  .topbar--inventory .inventory-title-line h1 { font-size: 17px; }
-  .topbar--inventory .inventory-topbar-summary { flex: 1 1 100%; gap: 10px; overflow-x: auto; }
-  .topbar--inventory .inventory-topbar-actions { flex: 1 1 100%; justify-content: flex-start; gap: 6px; }
+  .topbar--inventory .inventory-topbar { align-items: center; flex-wrap: nowrap; gap: 8px; }
+  .topbar--inventory .inventory-title-line h1 { font-size: 16px; }
+  .topbar--inventory .inventory-topbar-actions { justify-content: flex-end; gap: 6px; }
   .topbar--inventory .inventory-topbar-actions .el-button { padding-inline: 10px; }
-  .page-content--inventory, .page-content--admin-inventory { height: calc(100vh - 158px); padding-top: 14px; padding-bottom: 14px; }  .topbar .region-picker--compact { margin-left: auto; }
+  .page-content--inventory, .page-content--admin-inventory { height: calc(100vh - 64px); padding-top: 14px; padding-bottom: 14px; }
+  .topbar .region-picker--compact { margin-left: auto; }
   .topbar .region-picker--compact > span { display: none; }
   .topbar .region-picker--compact .el-select { width: min(150px, 36vw); }
   .topbar .region-picker--compact + .role-tag { display: none; }
   .menu-button { display: inline-flex; }
   .page-content { padding: 18px 14px 36px; }
-  .page-content--fixed { height: calc(100vh - 68px); padding-bottom: 18px; }
-  .page-content--fixed.page-content--inventory, .page-content--fixed.page-content--admin-inventory { height: calc(100vh - 158px); }
+  .page-content--fixed { height: calc(100vh - 64px); padding-bottom: 18px; }
+  .page-content--fixed.page-content--inventory, .page-content--fixed.page-content--admin-inventory { height: calc(100vh - 64px); }
   .section-band { padding: 18px 14px; }
   .upload-grid { grid-template-columns: 1fr; }
   .upload-grid { min-width: 0; }
@@ -545,15 +550,112 @@ a:focus-visible {
   .activity-mapping-row { grid-template-columns: minmax(140px, 1fr) 105px 32px; }
   .rule-values--headcost, .rule-values--sets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-/* 较窄屏幕：顶栏高度略增，摘要与操作区允许换行 */
-@media (max-width: 1280px) and (min-width: 721px) {
-  .topbar--inventory { height: 154px; }
-  .page-content--inventory, .page-content--admin-inventory { height: calc(100vh - 154px); }
+
+/* 全局表格金额右对齐与等宽数字对齐 */
+.el-table .tabular-num,
+.tabular-nums,
+.el-table td.is-right,
+.el-table th.is-right {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }
 
-@media (max-width: 720px) {
-  .topbar--inventory { height: 174px; }
-  .inventory-topbar-summary { width: 100%; gap: 10px; overflow-x: auto; }
-  .page-content--inventory, .page-content--admin-inventory { height: calc(100vh - 174px); }
-  .page-content--fixed.page-content--inventory, .page-content--fixed.page-content--admin-inventory { height: calc(100vh - 174px); }
+/* 价格变动与状态视觉指示器 */
+.price-tag-uplift {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #16855b;
+  background: #f0fdf4;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid #bbf7d0;
+  font-variant-numeric: tabular-nums;
+}
+
+.price-strikethrough {
+  text-decoration: line-through;
+  color: #98a2b3;
+  margin-right: 4px;
+}
+
+.price-final-highlight {
+  font-weight: 600;
+  color: #18212f;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 现代化精致终端日志视窗 */
+.modern-log-window {
+  margin-top: 18px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #232c3d;
+  background: #111827;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.modern-log-header {
+  height: 36px;
+  padding: 0 14px;
+  background: #1f2937;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #374151;
+}
+
+.modern-log-dots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.modern-log-dots span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.modern-log-dots .dot-red { background: #ef4444; }
+.modern-log-dots .dot-yellow { background: #f59e0b; }
+.modern-log-dots .dot-green { background: #10b981; }
+
+.modern-log-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ca3af;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.modern-log-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modern-log-tools .el-button {
+  color: #9ca3af;
+  padding: 0 4px;
+}
+
+.modern-log-tools .el-button:hover {
+  color: #f3f4f6;
+}
+
+.modern-log-content {
+  height: 180px;
+  padding: 12px 16px;
+  overflow-y: auto;
+  color: #e5e7eb;
+  font: 12px/1.8 Consolas, "SFMono-Regular", Menlo, monospace;
+}
+
+.modern-log-content .log-row {
+  word-break: break-all;
+  white-space: pre-wrap;
 }

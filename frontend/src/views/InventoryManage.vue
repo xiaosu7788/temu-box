@@ -10,6 +10,7 @@ import CategoryPicker from '../components/CategoryPicker.vue'
 import { selectedCategoryCode } from '../regionState'
 import HalfHeadcost from './HalfHeadcost.vue'
 import InventoryTopbar from '../components/InventoryTopbar.vue'
+import CopyableText from '../components/CopyableText.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -168,19 +169,30 @@ onMounted(async () => {
         <!-- topbarReady 在 onMounted 后置真：冷启动时组件树先构建、再整体插入文档，
              Teleport 只能查询已在文档中的元素，故需等挂载完成后再 Teleport。 -->
         <Teleport v-if="topbarReady" to="#inventory-topbar-target">
-          <InventoryTopbar
-            subtitle="查看库存数据和 SKU 价格"
-            :summary="[
-              { label: 'SKU', value: status?.sku_count || 0 },
-              { label: '文件', value: status?.exists ? '正常' : '缺失' },
-              { label: '大小', value: formatSize(status?.size ?? null) },
-              { label: '更新', value: status?.modified_at || '-' },
-            ]"
-          >
+          <InventoryTopbar subtitle="查看库存数据和 SKU 价格">
             <CategoryPicker v-model="selectedCategoryCode" />
             <el-button :icon="Refresh" :loading="loading" @click="refresh">刷新</el-button>
           </InventoryTopbar>
         </Teleport>
+
+        <div v-if="status" class="inventory-overview-strip">
+          <div class="inventory-overview-card">
+            <span class="metric-label">SKU 总数</span>
+            <strong class="metric-value">{{ status.sku_count || 0 }}</strong>
+          </div>
+          <div class="inventory-overview-card">
+            <span class="metric-label">数据文件</span>
+            <strong class="metric-value">{{ status.exists ? '正常' : '缺失' }}</strong>
+          </div>
+          <div class="inventory-overview-card">
+            <span class="metric-label">文件大小</span>
+            <strong class="metric-value">{{ formatSize(status.size ?? null) }}</strong>
+          </div>
+          <div class="inventory-overview-card">
+            <span class="metric-label">最近更新</span>
+            <strong class="metric-value">{{ status.modified_at || '-' }}</strong>
+          </div>
+        </div>
 
         <section class="section-band inventory-data-panel">
           <div class="section-heading">
@@ -241,8 +253,16 @@ onMounted(async () => {
 
           <div class="inventory-table-scroll">
             <el-table v-loading="itemsLoading" :data="items" stripe>
-              <el-table-column prop="sku" label="SKU" min-width="180" />
-              <el-table-column label="价格" width="120"><template #default="scope">{{ scope.row.price?.toFixed(2) || '-' }}</template></el-table-column>
+              <el-table-column label="SKU" min-width="200">
+                <template #default="scope">
+                  <CopyableText :text="scope.row.sku" />
+                </template>
+              </el-table-column>
+              <el-table-column label="价格" width="120" align="right" header-align="right">
+                <template #default="scope">
+                  <span class="tabular-num">{{ scope.row.price != null ? `¥${scope.row.price.toFixed(2)}` : '-' }}</span>
+                </template>
+              </el-table-column>
               <el-table-column prop="set_type" label="类型" width="120" />
               <el-table-column label="标记" width="110">
                 <template #default="scope">

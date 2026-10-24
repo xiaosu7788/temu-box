@@ -8,6 +8,7 @@ import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { InventoryCategory, InventoryDiffItem, InventoryPreview, InventoryStatus, SkuResult } from '../types'
 import AdminHalfHeadcost from './AdminHalfHeadcost.vue'
 import InventoryTopbar from '../components/InventoryTopbar.vue'
+import CopyableText from '../components/CopyableText.vue'
 type InventoryTab = 'inventory' | 'half-headcost'
 
 const activeTab = ref<InventoryTab>('inventory')
@@ -419,16 +420,36 @@ onMounted(() => {
     <!-- topbarReady 在 onMounted 后置真：冷启动时整棵组件树先构建、再插入文档，
          Teleport 只能查询已在文档中的元素，故必须等挂载完成后再 Teleport。 -->
     <Teleport v-if="topbarReady" to="#inventory-topbar-target">
-      <InventoryTopbar
-        admin
-        :summary="activeTab === 'inventory' ? inventorySummary : []"
-      >
+      <InventoryTopbar admin>
         <el-select :model-value="inventoryCategory" class="inventory-category-select" title="库存类目" @change="switchCategory">
           <el-option v-for="cat in inventoryCategories" :key="cat.key" :value="cat.key" :label="cat.label" />
         </el-select>
         <el-button :icon="Refresh" :loading="loading" @click="refreshActiveTab">刷新</el-button>
       </InventoryTopbar>
     </Teleport>
+
+    <div v-if="activeTab === 'inventory' && status" class="inventory-overview-strip">
+      <div class="inventory-overview-card">
+        <span class="metric-label">SKU 总数</span>
+        <strong class="metric-value">{{ status.sku_count || 0 }}</strong>
+      </div>
+      <div class="inventory-overview-card">
+        <span class="metric-label">文件状态</span>
+        <strong class="metric-value">{{ status.exists ? '正常' : '缺失' }}</strong>
+      </div>
+      <div class="inventory-overview-card">
+        <span class="metric-label">文件大小</span>
+        <strong class="metric-value">{{ formatSize(status.size ?? null) }}</strong>
+      </div>
+      <div class="inventory-overview-card">
+        <span class="metric-label">缓存有效性</span>
+        <strong class="metric-value">{{ status.cache_valid ? '有效' : '待重建' }}</strong>
+      </div>
+      <div class="inventory-overview-card">
+        <span class="metric-label">最近更新</span>
+        <strong class="metric-value">{{ status.modified_at || '-' }}</strong>
+      </div>
+    </div>
 
     <el-tabs v-model="activeTab" class="inventory-tabs inventory-tabs--fixed admin-inventory-tabs">
       <el-tab-pane name="inventory" label="库存数据">
@@ -506,8 +527,16 @@ onMounted(() => {
       </div>
       <div class="inventory-table-scroll">
         <el-table v-loading="itemsLoading" :data="items" stripe>
-          <el-table-column prop="sku" label="SKU" min-width="180" />
-          <el-table-column label="价格" width="120"><template #default="scope">{{ scope.row.price?.toFixed(2) || '-' }}</template></el-table-column>
+          <el-table-column label="SKU" min-width="200">
+            <template #default="scope">
+              <CopyableText :text="scope.row.sku" />
+            </template>
+          </el-table-column>
+          <el-table-column label="价格" width="120" align="right" header-align="right">
+            <template #default="scope">
+              <span class="tabular-num">{{ scope.row.price != null ? `¥${scope.row.price.toFixed(2)}` : '-' }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="set_type" label="类型" width="120" />
           <el-table-column label="标记" width="110">
             <template #default="scope">
