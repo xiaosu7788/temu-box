@@ -61,7 +61,7 @@ class ActivityTaskManager:
         if recovered:
             logger.info("Recovered %d interrupted activity job(s) after restart", recovered)
 
-    def create(self, filename: str, owner_id: int, content: bytes, snapshot: dict | None = None, uplift_limit: float | None = None, parse_config: dict | None = None, id_profit_rules: list[dict] | None = None, drop_unrecognized_skcs: list[str] | None = None, drop_all_unrecognized: bool = False) -> dict:
+    def create(self, filename: str, owner_id: int, content: bytes, snapshot: dict | None = None, uplift_limit: float | None = None, parse_config: dict | None = None, id_profit_rules: list[dict] | None = None, drop_unrecognized_skcs: list[str] | None = None, drop_all_unrecognized: bool = True) -> dict:
         if self._pool.full():
             raise QueueFullError(f"任务队列已满（上限 {self._pool.stats()['queue_limit']} 个），请稍后再试")
         job_id = uuid.uuid4().hex

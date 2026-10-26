@@ -1030,3 +1030,72 @@ def test_bulk_activity_endpoint_applies_user_drop_selection():
         sheet = workbook["活动申报价格"]
         assert [sheet.cell(row, 1).value for row in range(2, sheet.max_row + 1)] == ["MB131-A-5", "BAD_SKC"]
         workbook.close()
+
+
+def _run_activity_job(client, content: bytes, data=None) -> dict:
+    import time
+
+    response = client.post(
+        "/api/activities/bulk",
+        data=data or {},
+        files={"file": ("activity.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert response.status_code == 202, response.text
+    job_id = response.json()["id"]
+    detail = {}
+    for _ in range(400):
+        detail = client.get(f"/api/activities/{job_id}").json()
+        if detail["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.05)
+    assert detail.get("status") == "completed", detail
+    return detail
+
+
+def test_bulk_activity_endpoint_defaults_to_dropping_unrecognized_rows():
+    create_user("activity_default_drop", hash_password("defaultdrop123"), status="approved")
+
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "activity_default_drop", "password": "defaultdrop123"})
+        assert login.status_code == 200
+
+        # 不传任何删除参数时按默认执行：删除全部无法识别的 SKC 所在行
+        detail = _run_activity_job(client, make_unrecognized_activity_workbook())
+
+        assert detail["stats"]["drop_all_unrecognized"] is True
+        assert detail["stats"]["dropped_unrecognized_rows"] == 3
+        assert detail["stats"]["skipped_rows"] == 0
+
+        download = client.get(f"/api/activities/{detail['id']}/download")
+        assert download.status_code == 200
+        workbook = load_workbook(BytesIO(download.content), data_only=True)
+        sheet = workbook["活动申报价格"]
+        assert [sheet.cell(row, 1).value for row in range(2, sheet.max_row + 1)] == ["MB131-A-5"]
+        workbook.close()
+
+
+def test_bulk_activity_endpoint_keeps_unrecognized_rows_when_disabled():
+    create_user("activity_keep_unrecognized", hash_password("keepunreg123"), status="approved")
+
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "activity_keep_unrecognized", "password": "keepunreg123"})
+        assert login.status_code == 200
+
+        # 用户主动取消默认删除时，无法识别行原样保留
+        detail = _run_activity_job(client, make_unrecognized_activity_workbook(), {"drop_all_unrecognized": "false"})
+
+        assert detail["stats"]["drop_all_unrecognized"] is False
+        assert detail["stats"]["dropped_unrecognized_rows"] == 0
+        assert detail["stats"]["skipped_rows"] == 3
+
+        download = client.get(f"/api/activities/{detail['id']}/download")
+        assert download.status_code == 200
+        workbook = load_workbook(BytesIO(download.content), data_only=True)
+        sheet = workbook["活动申报价格"]
+        assert [sheet.cell(row, 1).value for row in range(2, sheet.max_row + 1)] == [
+            "MB131-A-5",
+            "UNKNOWN-X",
+            "UNKNOWN-X",
+            "BAD_SKC",
+        ]
+        workbook.close()

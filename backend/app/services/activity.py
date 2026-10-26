@@ -682,7 +682,7 @@ def process_activity_workbook(
             reference = _reference_price(worksheet.cell(row, price_column).value)
             if parsed is None:
                 # 识别失败的 SKC：只有用户明确选择（勾选该 SKC、或勾选删除全部）才删行；
-                # 否则保持历史行为——原样保留并计入 skipped
+                # 否则（用户主动取消默认删除）原样保留并计入 skipped
                 if drop_everything or skc_text in drop_skc_set:
                     rows_to_delete.append(row)
                     dropped_unrecognized += 1

@@ -471,7 +471,8 @@ async def process_bulk_activity(
     region_code: Optional[str] = Form(None),
     category_code: Optional[str] = Form(None),
     drop_unrecognized_skcs: Optional[str] = Form(None),
-    drop_all_unrecognized: bool = Form(False),
+    # 未显式传值时默认删除全部无法识别的 SKC 所在行；显式传 false 才会保留
+    drop_all_unrecognized: Optional[bool] = Form(None),
     user: dict = Depends(current_user),
 ):
     validate_excel(file)
@@ -488,6 +489,11 @@ async def process_bulk_activity(
     parse_config = parse_activity_rules(skc_rules, category_allowed_pieces(category))
     parsed_id_profit_rules = parse_activity_id_profit_rules(id_profit_rules)
     drop_skcs = parse_activity_drop_skc_list(drop_unrecognized_skcs)
+    if drop_all_unrecognized is not None:
+        drop_everything = bool(drop_all_unrecognized)
+    else:
+        # 两个参数都不传 → 默认删除全部；显式传了 SKC 列表（即使是空数组）→ 按列表执行
+        drop_everything = drop_unrecognized_skcs is None
     try:
         snapshot = await run_in_threadpool(region_snapshot, region_code, category_code)
     except ValueError as exc:
@@ -505,11 +511,11 @@ async def process_bulk_activity(
             parse_config,
             parsed_id_profit_rules,
             drop_skcs,
-            drop_all_unrecognized,
+            drop_everything,
         )
     except QueueFullError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
-    if drop_all_unrecognized:
+    if drop_everything:
         drop_note = "，删除全部无法识别的SKC所在行"
     elif drop_skcs:
         drop_note = f"，删除{len(drop_skcs)}个无法识别的SKC所在行"

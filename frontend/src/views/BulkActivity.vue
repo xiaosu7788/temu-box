@@ -39,9 +39,9 @@ const previewPage = ref(1)
 const previewPageSize = ref(100)
 const previewFilter = ref<ActivitySkuPreviewItem['result'] | ''>('')
 const previewing = ref(false)
-// 用户勾选要删除的「识别不到 SKC」：默认一个都不删，行原样保留
+// 「识别不到 SKC」默认全部删除；用户可在预览或提交前取消，改为只删勾选项/原样保留
 const dropUnrecognizedSkcs = ref<string[]>([])
-const dropAllUnrecognized = ref(false)
+const dropAllUnrecognized = ref(true)
 const previewLoading = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | undefined
 const idRuleTypes: ActivityIdType[] = ['SPU', 'SKC', 'SKU']
@@ -142,13 +142,22 @@ const dropRowCount = computed(() => {
 })
 const dropPickText = computed(() => (dropAllUnrecognized.value ? `全部 ${unrecognizedRowCount.value} 行` : `已选 ${dropUnrecognizedSkcs.value.length} 项 / ${dropRowCount.value} 行`))
 const dropSummary = computed(() => {
-  if (dropAllUnrecognized.value) return `删除全部 ${unrecognizedRowCount.value} 行无法识别数据`
+  if (dropAllUnrecognized.value) {
+    return unrecognizedRowCount.value
+      ? `删除全部 ${unrecognizedRowCount.value} 行无法识别数据`
+      : '删除无法识别的 SKC 所在行'
+  }
   if (!dropUnrecognizedSkcs.value.length) return ''
   const blankSelected = dropUnrecognizedSkcs.value.includes('')
   const namedCount = dropUnrecognizedSkcs.value.filter(Boolean).length
   if (!namedCount) return `删除 SKC货号为空的行，共 ${dropRowCount.value} 行无法识别数据`
   const suffix = blankSelected ? '与 SKC货号为空的行' : ''
   return `删除 ${namedCount} 个 SKC${suffix}，共 ${dropRowCount.value} 行无法识别数据`
+})
+const dropSelectionHint = computed(() => {
+  if (dropAllUnrecognized.value) return '默认删除全部无法识别的 SKC 所在行'
+  if (dropUnrecognizedSkcs.value.length) return `仅删除预览中勾选的 ${dropUnrecognizedSkcs.value.length} 项`
+  return '无法识别的 SKC 行将原样保留'
 })
 const canSubmit = computed(() => !!regionCode.value && !!categoryCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || skuRulesConfigured.value) && (!useCustomIdProfitRules.value || idProfitRulesValid.value))
 const isActiveTask = computed(() => !!task.value && (task.value.status === 'queued' || task.value.status === 'running'))
@@ -365,7 +374,7 @@ function clearUnrecognizedSkcs() {
 
 function resetUnrecognizedSelection() {
   dropUnrecognizedSkcs.value = []
-  dropAllUnrecognized.value = false
+  dropAllUnrecognized.value = true
 }
 
 // 空 SKC 在聚合里是空字符串，界面上要给出可读文案而不是一片空白
@@ -467,9 +476,10 @@ async function submit() {
       useCustomIdProfitRules.value ? idProfitRules.value : undefined,
       categoryCode.value,
       {
-        // 勾选「删除全部」时按全量删除，否则只删勾选到的 SKC；未勾选 = 行原样保留
+        // 默认「删除全部」；取消后只删勾选到的 SKC，全不勾 = 行原样保留
         skcs: dropAllUnrecognized.value ? undefined : [...dropUnrecognizedSkcs.value],
         all: dropAllUnrecognized.value,
+        keep: !dropAllUnrecognized.value && !dropUnrecognizedSkcs.value.length,
       },
     ))
     files.value = []
@@ -634,7 +644,8 @@ onBeforeUnmount(stopPolling)
 
     <div class="activity-preview-actions">
       <el-button type="primary" plain :loading="previewing" :disabled="!canPreview" @click="previewSkuRules">预览识别结果</el-button>
-      <span>{{ files.length ? '预览为可选操作，可直接提交任务' : '请先选择报名商品信息表' }}</span>
+      <el-checkbox v-model="dropAllUnrecognized">删除无法识别的 SKC 所在行</el-checkbox>
+      <span>{{ files.length ? '默认删除；预览后可改为只删选中的 SKC 或全部保留' : '请先选择报名商品信息表' }}</span>
     </div>
 
     <el-dialog
@@ -751,7 +762,7 @@ onBeforeUnmount(stopPolling)
             <p class="activity-unrecognized-title">
               识别不到 <strong>{{ unrecognizedSkcTotal }}</strong> 个 SKC，共 <strong>{{ unrecognizedRowCount }}</strong> 行。
               <span v-if="blankSkcRowCount" class="activity-unrecognized-warn">其中 {{ blankSkcRowCount }} 行因 SKC货号为空而无法识别（已单独列出）。</span>
-              <span>不勾选时这些行原样保留；勾选后提交任务会删除该 SKC 的全部行。</span>
+              <span>{{ dropAllUnrecognized ? '默认删除这些行；取消下方勾选可改为只删勾选项或原样保留。' : '提交时只删除勾选的 SKC 所在行，其余无法识别行原样保留。' }}</span>
             </p>
             <div class="activity-unrecognized-tools">
               <el-input
@@ -775,7 +786,7 @@ onBeforeUnmount(stopPolling)
             </el-checkbox>
           </el-checkbox-group>
           <div class="activity-unrecognized-foot">
-            <el-checkbox v-model="dropAllUnrecognized">删除全部无法识别的 SKC 所在行</el-checkbox>
+            <el-checkbox v-model="dropAllUnrecognized">删除全部无法识别的 SKC 所在行（默认）</el-checkbox>
             <span v-if="unrecognizedSkcsTruncated" class="activity-unrecognized-warn">
               列表最多显示 {{ unrecognizedSkcs.length }} 个（共 {{ unrecognizedSkcTotal }} 个），其余请用上面的「删除全部」。
             </span>
@@ -857,6 +868,7 @@ onBeforeUnmount(stopPolling)
     <div class="action-row left">
       <el-button type="primary" :loading="loading" :disabled="!canSubmit" @click="submit">提交处理任务</el-button>
       <el-button :icon="RefreshRight" :loading="loadingTask" @click="loadActiveTask">刷新任务状态</el-button>
+      <span class="activity-drop-hint">{{ dropSelectionHint }}</span>
     </div>
   </section>
 

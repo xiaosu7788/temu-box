@@ -314,6 +314,7 @@ a:focus-visible {
 .activity-rule-section .el-empty__description { margin-top: 4px; }
 .activity-preview-actions { margin-top: 20px; padding-top: 18px; display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--border); }
 .activity-preview-actions span, .activity-preview-note { color: var(--muted); font-size: 12px; }
+.activity-drop-hint { color: var(--muted); font-size: 12px; }
 .activity-sku-preview { min-width: 0; }
 .activity-preview-dialog { margin-top: max(4vh, 24px); margin-bottom: max(4vh, 24px); }
 .activity-preview-dialog .el-dialog__body { padding-top: 8px; overflow: hidden; }
@@ -614,7 +615,9 @@ a:focus-visible {
   gap: 6px;
 }
 
-.modern-log-dots span {
+.modern-log-dots .dot-red,
+.modern-log-dots .dot-yellow,
+.modern-log-dots .dot-green {
   width: 10px;
   height: 10px;
   border-radius: 50%;
@@ -626,6 +629,8 @@ a:focus-visible {
 .modern-log-dots .dot-green { background: #10b981; }
 
 .modern-log-title {
+  flex: 0 0 auto;
+  white-space: nowrap;
   font-size: 11px;
   font-weight: 600;
   color: #9ca3af;

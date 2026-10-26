@@ -293,6 +293,8 @@ export interface ActivityDropSelection {
   skcs?: string[]
   /** true 表示删除全部无法识别 SKC 的行（预览列表被截断或用户选择全删时使用） */
   all?: boolean
+  /** 用户主动取消删除时传 false，避免后端按默认删除执行 */
+  keep?: boolean
 }
 
 export async function processBulkActivity(file: File, regionCode: string, upliftLimit?: number, rules?: ActivitySkuRules, idProfitRules?: ActivityIdProfitRule[], categoryCode?: string, drop?: ActivityDropSelection) {
@@ -303,8 +305,9 @@ export async function processBulkActivity(file: File, regionCode: string, uplift
   if (upliftLimit !== undefined) form.append('uplift_limit', String(upliftLimit))
   if (rules) form.append('skc_rules', JSON.stringify(rules))
   if (idProfitRules) form.append('id_profit_rules', JSON.stringify(idProfitRules))
-  // 未选择时两个字段都不发送，后端保持「无法识别行原样保留」的既有行为
-  if (drop?.all) form.append('drop_all_unrecognized', 'true')
+  // 默认删除全部无法识别行；用户主动选择保留时才显式传 false
+  if (drop?.keep) form.append('drop_all_unrecognized', 'false')
+  else if (drop?.all) form.append('drop_all_unrecognized', 'true')
   else if (drop?.skcs?.length) form.append('drop_unrecognized_skcs', JSON.stringify(drop.skcs))
   const { data } = await uploadHttp.post<ActivityTaskItem & Pick<BulkActivityResult, 'download_url'>>('/activities/bulk', form)
   return data
