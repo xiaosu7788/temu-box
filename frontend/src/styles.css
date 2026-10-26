@@ -342,6 +342,7 @@ a:focus-visible {
 .activity-unrecognized-item { min-width: 0; }
 .activity-unrecognized-item .el-checkbox__label { min-width: 0; display: inline-flex; align-items: baseline; gap: 8px; }
 .activity-unrecognized-skc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-unrecognized-empty-skc { color: var(--text-muted); font-style: italic; }
 .activity-unrecognized-meta { color: var(--muted); font-size: 12px; }
 .activity-unrecognized-foot { padding: 8px 14px; display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--border); font-size: 12px; }
 .activity-unrecognized-warn { color: var(--danger); }

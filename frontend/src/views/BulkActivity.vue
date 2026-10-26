@@ -3,7 +3,7 @@ import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'v
 import { ArrowDown, ArrowUp, CopyDocument, Delete, Download, Plus, RefreshRight, Search, UploadFilled } from '@element-plus/icons-vue'
 import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
 import { activityDownloadUrl, getActivityTask, getActivityTasks, getSettings, previewActivitySkuRules, processBulkActivity } from '../api'
-import { notifyError, notifySuccess } from '../feedback'
+import { notifyError, notifySuccess, notifyWarning } from '../feedback'
 import type { ActivityIdProfitRule, ActivityIdType, ActivitySetMapping, ActivitySingleRule, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem } from '../types'
 import CostRules from '../components/CostRules.vue'
 import FileUploadCard from '../components/FileUploadCard.vue'
@@ -128,21 +128,27 @@ const unrecognizedSearch = ref('')
 const filteredUnrecognizedSkcs = computed(() => {
   const query = unrecognizedSearch.value.trim().toUpperCase()
   if (!query) return unrecognizedSkcs.value
-  return unrecognizedSkcs.value.filter((item) => item.skc.toUpperCase().includes(query))
+  return unrecognizedSkcs.value.filter((item) => unrecognizedSkcLabel(item.skc).toUpperCase().includes(query))
 })
 const unrecognizedSkcTotal = computed(() => skuPreview.value?.unrecognized_skc_total ?? unrecognizedSkcs.value.length)
 const unrecognizedSkcsTruncated = computed(() => skuPreview.value?.unrecognized_skcs_truncated ?? unrecognizedSkcTotal.value > unrecognizedSkcs.value.length)
 const unrecognizedRowCount = computed(() => skuPreview.value?.unrecognized_rows || 0)
+// 空 SKC 行单独提示，避免用户以为自己没有这类数据
+const blankSkcRowCount = computed(() => unrecognizedSkcs.value.find((item) => !item.skc)?.count || 0)
 const dropRowCount = computed(() => {
   if (dropAllUnrecognized.value) return unrecognizedRowCount.value
   const counts = new Map(unrecognizedSkcs.value.map((item) => [item.skc, item.count]))
   return dropUnrecognizedSkcs.value.reduce((sum, skc) => sum + (counts.get(skc) || 0), 0)
 })
-const dropPickText = computed(() => (dropAllUnrecognized.value ? `全部 ${unrecognizedRowCount.value} 行` : `已选 ${dropUnrecognizedSkcs.value.length} 个 SKC / ${dropRowCount.value} 行`))
+const dropPickText = computed(() => (dropAllUnrecognized.value ? `全部 ${unrecognizedRowCount.value} 行` : `已选 ${dropUnrecognizedSkcs.value.length} 项 / ${dropRowCount.value} 行`))
 const dropSummary = computed(() => {
   if (dropAllUnrecognized.value) return `删除全部 ${unrecognizedRowCount.value} 行无法识别数据`
   if (!dropUnrecognizedSkcs.value.length) return ''
-  return `删除 ${dropUnrecognizedSkcs.value.length} 个 SKC 共 ${dropRowCount.value} 行无法识别数据`
+  const blankSelected = dropUnrecognizedSkcs.value.includes('')
+  const namedCount = dropUnrecognizedSkcs.value.filter(Boolean).length
+  if (!namedCount) return `删除 SKC货号为空的行，共 ${dropRowCount.value} 行无法识别数据`
+  const suffix = blankSelected ? '与 SKC货号为空的行' : ''
+  return `删除 ${namedCount} 个 SKC${suffix}，共 ${dropRowCount.value} 行无法识别数据`
 })
 const canSubmit = computed(() => !!regionCode.value && !!categoryCode.value && files.value.length === 1 && !!files.value[0]?.raw && (!useCustomSkuRules.value || skuRulesConfigured.value) && (!useCustomIdProfitRules.value || idProfitRulesValid.value))
 const isActiveTask = computed(() => !!task.value && (task.value.status === 'queued' || task.value.status === 'running'))
@@ -287,7 +293,7 @@ let previewRequestId = 0
 
 async function fetchPreview(page = previewPage.value) {
   const file = files.value[0]?.raw
-  if (!file || !canPreview.value) return
+  if (!file || !canPreview.value) return false
   const requestId = ++previewRequestId
   previewLoading.value = true
   try {
@@ -299,14 +305,16 @@ async function fetchPreview(page = previewPage.value) {
       categoryCode.value,
       { page, pageSize: previewPageSize.value, resultFilter: previewFilter.value || null },
     )
-    if (requestId !== previewRequestId) return  // 已有更新的请求，丢弃过期响应
+    if (requestId !== previewRequestId) return false  // 已有更新的请求，丢弃过期响应
     skuPreview.value = payload
     previewPage.value = payload.page
     // 重新预览后丢弃已经不在列表里的勾选（换文件、改识别规则、切区域品类都会走这里）
     const available = new Set((payload.unrecognized_skcs || []).map((item) => item.skc))
     dropUnrecognizedSkcs.value = dropUnrecognizedSkcs.value.filter((skc) => available.has(skc))
+    return true
   } catch (error) {
     if (requestId === previewRequestId) notifyError(error)
+    return false
   } finally {
     if (requestId === previewRequestId) previewLoading.value = false
   }
@@ -318,13 +326,13 @@ async function previewSkuRules() {
   previewing.value = true
   try {
     previewPage.value = 1
-    await fetchPreview(1)
+    if (!await fetchPreview(1)) return
     previewDialogVisible.value = true
-    // 只有真正拿到数据才提示成功，避免出现「提示已更新但表格为空」的误导
-    if (skuPreview.value?.items?.length) {
+    // 请求成功但表里没有数据行属于正常情况（如整表为空），不再误报成后台版本不一致
+    if (skuPreview.value?.total_rows) {
       notifySuccess('SKC识别预览已更新')
     } else {
-      notifyError('预览没有返回明细，请确认后台服务已更新到与前端一致的版本')
+      notifyWarning('当前表没有可预览的数据行，请检查 SKC货号与活动申报价格列')
     }
   } finally {
     previewing.value = false
@@ -358,6 +366,11 @@ function clearUnrecognizedSkcs() {
 function resetUnrecognizedSelection() {
   dropUnrecognizedSkcs.value = []
   dropAllUnrecognized.value = false
+}
+
+// 空 SKC 在聚合里是空字符串，界面上要给出可读文案而不是一片空白
+function unrecognizedSkcLabel(skc: string) {
+  return skc ? skc : '（SKC货号为空）'
 }
 
 // 兼容旧后端：缺少 rows 时只显示行数，避免整块面板渲染失败
@@ -737,6 +750,7 @@ onBeforeUnmount(stopPolling)
           <div class="activity-unrecognized-head">
             <p class="activity-unrecognized-title">
               识别不到 <strong>{{ unrecognizedSkcTotal }}</strong> 个 SKC，共 <strong>{{ unrecognizedRowCount }}</strong> 行。
+              <span v-if="blankSkcRowCount" class="activity-unrecognized-warn">其中 {{ blankSkcRowCount }} 行因 SKC货号为空而无法识别（已单独列出）。</span>
               <span>不勾选时这些行原样保留；勾选后提交任务会删除该 SKC 的全部行。</span>
             </p>
             <div class="activity-unrecognized-tools">
@@ -755,7 +769,8 @@ onBeforeUnmount(stopPolling)
           </div>
           <el-checkbox-group v-model="dropUnrecognizedSkcs" :disabled="dropAllUnrecognized" class="activity-unrecognized-list">
             <el-checkbox v-for="item in filteredUnrecognizedSkcs" :key="item.skc" :value="item.skc" class="activity-unrecognized-item">
-              <CopyableText :text="item.skc" class="activity-unrecognized-skc" />
+              <span v-if="!item.skc" class="activity-unrecognized-skc activity-unrecognized-empty-skc">（SKC货号为空）</span>
+              <CopyableText v-else :text="item.skc" class="activity-unrecognized-skc" />
               <span class="activity-unrecognized-meta">{{ unrecognizedRowsText(item) }}</span>
             </el-checkbox>
           </el-checkbox-group>
@@ -771,7 +786,8 @@ onBeforeUnmount(stopPolling)
             <el-table-column prop="row" label="行号" width="72" />
             <el-table-column label="SKC货号" min-width="220">
               <template #default="scope">
-                <CopyableText :text="scope.row.skc" />
+                <span v-if="!scope.row.skc" class="table-muted">（空）</span>
+                <CopyableText v-else :text="scope.row.skc" />
               </template>
             </el-table-column>
             <el-table-column label="识别结果" width="100">

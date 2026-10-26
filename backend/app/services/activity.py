@@ -40,6 +40,8 @@ MAX_UNRECOGNIZED_SKCS = 200
 MAX_UNRECOGNIZED_ROWS_PER_SKC = 20
 MAX_DROP_SKC_LIST = 500
 MAX_DROP_SKC_LENGTH = 200
+# 判定空 SKC 行是否「整行空白」时最多扫这么多列，防住被格式撑大的表
+MAX_CONTENT_SCAN_COLUMNS = 60
 
 
 def _text(value: object) -> str:
@@ -105,7 +107,8 @@ def normalize_drop_skc_list(value: object) -> list[str]:
     """归一化「删除无法识别的 SKC」选择列表。
 
     未提供（None）时返回空列表，表示不删除任何行，与历史行为一致；
-    去空、按原文去重并保持顺序；上限用于挡住异常请求。
+    按原文去重并保持顺序，空字符串保留，表示「删除 SKC 货号为空的无法识别行」；
+    上限用于挡住异常请求。
     """
     if value is None:
         return []
@@ -120,8 +123,6 @@ def normalize_drop_skc_list(value: object) -> list[str]:
         if not isinstance(item, str):
             raise ValueError("要删除的SKC必须是文本")
         text = _text(item)
-        if not text:
-            continue
         if len(text) > MAX_DROP_SKC_LENGTH:
             raise ValueError(f"SKC不能超过{MAX_DROP_SKC_LENGTH}个字符")
         if text in seen:
@@ -361,6 +362,48 @@ def _reference_price(value: object) -> Optional[float]:
     return price if price >= 0 else None
 
 
+def _header_last_column(worksheet, header_row: int) -> int:
+    """表头实际用到的最右列（受 MAX_CONTENT_SCAN_COLUMNS 限制）。
+
+    预览与正式处理都用它界定「整行是否有内容」的扫描范围，
+    这样两边的空 SKC 判定口径保持一致。
+    """
+    limit = min(int(worksheet.max_column or 0), MAX_CONTENT_SCAN_COLUMNS)
+    if not limit:
+        return 0
+    # read_only 模式下 ws.cell() 每次调用都会重扫 XML，这里只迭代一次表头行
+    row_cells = next(
+        worksheet.iter_rows(min_row=header_row, max_row=header_row, max_col=limit, values_only=True),
+        (),
+    )
+    last = 0
+    for index, value in enumerate(row_cells, start=1):
+        if _text(value):
+            last = index
+    return last
+
+
+def _row_has_content(worksheet, row: int, last_column: int) -> bool:
+    """判断一行是否有实际数据（不看格式产生的空单元格）。
+
+    SKC 列为空时要靠整行其它列区分「真正的数据行」和「Excel 撑大的空行」：
+    只要任一列有内容（活动类型、价格、ID 等）就算数据行，整行空白才跳过。
+    """
+    return any(_text(worksheet.cell(row, column).value) for column in range(1, last_column + 1))
+
+
+def _cells_have_content(row_cells) -> bool:
+    """同 _row_has_content，但用于 read_only 模式的 iter_rows 结果，避免重复扫表。"""
+    return any(_text(value) for value in row_cells)
+
+
+def _cell_at(row_cells, column: int):
+    """按 1-based 列号读取 iter_rows 结果；稀疏行返回的元组可能比表头短。"""
+    if not column or column - 1 >= len(row_cells):
+        return None
+    return row_cells[column - 1]
+
+
 def _uplifted_price(base: float, reference: float, uplift_limit: float) -> float:
     max_cents = min(int(round(max(0, uplift_limit) * 100)), int(round((reference - base) * 100)))
     if max_cents <= 0:
@@ -459,6 +502,8 @@ def preview_activity_workbook(
         price_column = columns["price"]
         # 需要 SKC/价格列与三个 ID 列中最大者；iter_rows 只到这一列即可
         last_column = max([skc_column, price_column] + [columns[k] for k in ("spu_id", "skc_id", "sku_id") if k in columns])
+        # 判定空 SKC 行是否整行空白时要把表头覆盖的列都算进去
+        content_last_column = max(last_column, _header_last_column(worksheet, header_row))
         # 列号 → ID 规则类型（SPU/SKC/SKU），与 match_id_profit_rule 的键保持一致
         id_columns = {columns[key]: id_type for id_type, key in (("SPU", "spu_id"), ("SKC", "skc_id"), ("SKU", "sku_id")) if key in columns}
         uplift_limit = float(activity_settings.get("uplift_limit", 1))
@@ -468,11 +513,14 @@ def preview_activity_workbook(
         # read_only 模式下 ws.cell(row, col) 每次调用都重扫 XML 流（O(N²)），
         # 是预览慢的根因；iter_rows 顺序流式读取，一次扫完。
         for row_index, row_cells in enumerate(
-            worksheet.iter_rows(min_row=header_row + 1, max_col=last_column, values_only=True),
+            worksheet.iter_rows(min_row=header_row + 1, max_col=content_last_column, values_only=True),
             start=header_row + 1,
         ):
-            skc = row_cells[skc_column - 1]
-            if not _text(skc):
+            skc = _cell_at(row_cells, skc_column)
+            skc_text = _text(skc)
+            # SKC 为空但价格/ID 有内容的行是真实数据行，按「无法识别」统计；
+            # 整行空白只可能是 Excel 撑出来的空行，直接跳过。
+            if not skc_text and not _cells_have_content(row_cells):
                 continue
             total += 1
             detail = parse_skc_detail(skc, normalized, normalized=True)
@@ -483,7 +531,7 @@ def preview_activity_workbook(
                 else:
                     single_rows += 1
                 result = "套装" if kind == "set" else "单品"
-                identifiers = {id_type: row_cells[col - 1] for col, id_type in id_columns.items()}
+                identifiers = {id_type: _cell_at(row_cells, col) for col, id_type in id_columns.items()}
                 matched_rule = match_id_profit_rule(identifiers, effective_id_rules)
                 adjustment = float(matched_rule["profit"]) if matched_rule else 0
                 if matched_rule:
@@ -491,7 +539,7 @@ def preview_activity_workbook(
                 base_price = activity_base_price((kind, detail["value"]), settings, adjustment)
                 # 正式处理会把价格上浮到 (base, reference] 区间内（受 uplift_limit 封顶）；
                 # 预览据此给出实际会写入的价格区间，并标出「参照价低于底价 → 该行会被删除」。
-                reference = _reference_price(row_cells[price_column - 1])
+                reference = _reference_price(_cell_at(row_cells, price_column))
                 if reference is None:
                     final_low = final_high = None
                     action = "无法识别"
@@ -523,7 +571,6 @@ def preview_activity_workbook(
                 }
             else:
                 unrecognized_rows += 1
-                skc_text = _text(skc)
                 bucket = unrecognized_buckets.get(skc_text)
                 if bucket is None:
                     bucket = {"skc": skc_text, "count": 0, "rows": []}
@@ -538,11 +585,11 @@ def preview_activity_workbook(
                     "result": "无法识别",
                     "value": None,
                     "base_price": None,
-                    "reference_price": _reference_price(row_cells[price_column - 1]),
+                    "reference_price": _reference_price(_cell_at(row_cells, price_column)),
                     "final_price_low": None,
                     "final_price_high": None,
                     "action": "无法识别",
-                    "method": "未匹配规则或套装件数未配置",
+                    "method": "SKC货号为空" if not skc_text else "未匹配规则或套装件数未配置",
                 }
             all_items.append(item)
 
@@ -610,6 +657,7 @@ def process_activity_workbook(
         )
         price_column = columns["price"]
         skc_column = columns["skc"]
+        content_last_column = _header_last_column(worksheet, header_row)
         uplift_limit = float(activity_settings.get("uplift_limit", 1))
         rows_to_delete = []
         # 用户勾选要删除的 SKC，按原文精确匹配：识别结果是 SKC 文本的纯函数，
@@ -627,8 +675,8 @@ def process_activity_workbook(
         for row in range(header_row + 1, worksheet.max_row + 1):
             skc = worksheet.cell(row, skc_column).value
             skc_text = _text(skc)
-            if not skc_text:
-                skipped += 1
+            # 空 SKC 但行内还有其他内容 → 视为无法识别（可选删除）；整行空白才跳过
+            if not skc_text and not _row_has_content(worksheet, row, content_last_column):
                 continue
             parsed = parse_skc(skc, normalized_parse_config, normalized=True)
             reference = _reference_price(worksheet.cell(row, price_column).value)

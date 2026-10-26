@@ -12,9 +12,20 @@ const uploadHttp = axios.create({
 })
 
 export function errorMessage(error: unknown): string {
+  // 业务代码有时直接抛/传字符串，优先原样展示，避免被兜底成「请求失败」
+  if (typeof error === 'string') return error
   if (axios.isAxiosError(error)) {
     if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') return '请求超时，请检查服务器和数据库连接'
-    return error.response?.data?.detail || error.message
+    const detail = error.response?.data?.detail
+    if (typeof detail === 'string' && detail.trim()) return detail
+    // FastAPI 的 422 校验错误是数组，挑出可读的 msg，避免提示变成 [object Object]
+    if (Array.isArray(detail)) {
+      const messages = detail
+        .map((item) => (item && typeof item === 'object' ? String(item.msg || '') : String(item || '')))
+        .filter(Boolean)
+      if (messages.length) return messages.join('；')
+    }
+    return error.message
   }
   return error instanceof Error ? error.message : '请求失败'
 }

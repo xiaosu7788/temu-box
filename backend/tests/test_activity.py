@@ -766,6 +766,29 @@ def make_unrecognized_activity_workbook() -> bytes:
     return content.getvalue()
 
 
+def make_blank_skc_activity_workbook() -> bytes:
+    """构造含「SKC 货号为空」行的报名表。
+
+    行号：2 = 正常单品；3 = SKC 为空但有价格；4 = SKC 为空格；5 = 整行空白（应忽略）；
+    6 = SKC 为空但只有活动类型；7 = SKC 为空但只有 SPU ID。
+    空 SKC 行应计入无法识别，且可按空字符串单独删除。
+    """
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "活动申报价格"
+    sheet.append(["活动类型", "SPU ID", "SKC货号", "活动申报价格"])
+    sheet.append(["活动", "1", "MB131-A-5", 17])
+    sheet.append(["活动", "2", None, 20])
+    sheet.append(["活动", "3", "   ", 21])
+    sheet.append([None, None, None, None])
+    sheet.append(["活动", None, None, None])
+    sheet.append([None, "7", None, None])
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+    return content.getvalue()
+
+
 def read_result_skcs(path) -> list:
     workbook = load_workbook(path, data_only=True)
     sheet = workbook["活动申报价格"]
@@ -795,6 +818,28 @@ def test_preview_unrecognized_summary_is_not_affected_by_result_filter():
     assert preview["unrecognized_rows"] == 3
     assert preview["unrecognized_skc_total"] == 2
     assert [item["skc"] for item in preview["unrecognized_skcs"]] == ["UNKNOWN-X", "BAD_SKC"]
+
+
+def test_preview_counts_blank_skc_rows_as_unrecognized():
+    preview = preview_activity_workbook(make_blank_skc_activity_workbook())
+
+    # 整行空白被忽略，其余 5 行都算有效数据行
+    assert preview["total_rows"] == 5
+    assert preview["single_rows"] == 1
+    assert preview["unrecognized_rows"] == 4
+    assert preview["unrecognized_skc_total"] == 1
+    assert preview["unrecognized_skcs"] == [
+        {"skc": "", "count": 4, "rows": [3, 4, 6, 7], "rows_truncated": False},
+    ]
+
+    # 「无法识别」筛选和分页都能看到空 SKC 明细（skc 为空串，不显示 null）
+    filtered = preview_activity_workbook(make_blank_skc_activity_workbook(), result_filter="无法识别")
+    assert [(item["row"], item["skc"], item["result"]) for item in filtered["items"]] == [
+        (3, "", "无法识别"),
+        (4, "", "无法识别"),
+        (6, "", "无法识别"),
+        (7, "", "无法识别"),
+    ]
 
 
 def test_preview_caps_unrecognized_skc_list_and_sample_rows():
@@ -874,6 +919,42 @@ def test_processing_drops_all_unrecognized_rows_when_user_asks(tmp_path):
     assert read_result_skcs(output) == ["MB131-A-5"]
 
 
+def test_processing_keeps_blank_skc_rows_by_default(tmp_path):
+    output = tmp_path / "keep-blank-skc.xlsx"
+
+    stats = process_activity_workbook(make_blank_skc_activity_workbook(), output)
+
+    # input_data_rows 仍是物理数据行数（含整行空白），与历史口径一致
+    assert stats["input_data_rows"] == 6
+    assert stats["skipped_rows"] == 4
+    assert stats["dropped_unrecognized_rows"] == 0
+    workbook = load_workbook(output, data_only=True)
+    sheet = workbook["活动申报价格"]
+    # 默认不删：空 SKC 行原样保留（连整行空白也不动表结构）
+    assert [sheet.cell(row, 3).value for row in range(2, sheet.max_row + 1)] == ["MB131-A-5", None, "   ", None, None, None]
+    workbook.close()
+
+
+def test_processing_drops_blank_skc_rows_when_selected(tmp_path):
+    output = tmp_path / "drop-blank-skc.xlsx"
+
+    # 空字符串是「SKC 货号为空」的精确选择，不影响其它无法识别的 SKC
+    stats = process_activity_workbook(
+        make_blank_skc_activity_workbook(),
+        output,
+        drop_unrecognized_skcs=[""],
+    )
+
+    assert stats["dropped_unrecognized_rows"] == 4
+    assert stats["drop_unrecognized_skcs"] == [""]
+    assert stats["skipped_rows"] == 0
+    assert stats["removed_rows"] == 4
+    workbook = load_workbook(output, data_only=True)
+    sheet = workbook["活动申报价格"]
+    assert [sheet.cell(row, 3).value for row in range(2, sheet.max_row + 1)] == ["MB131-A-5"]
+    workbook.close()
+
+
 def test_processing_selection_never_deletes_recognizable_rows(tmp_path):
     output = tmp_path / "safety.xlsx"
 
@@ -894,8 +975,8 @@ def test_normalize_drop_skc_list_rules():
 
     assert normalize_drop_skc_list(None) == []
     assert normalize_drop_skc_list([]) == []
-    # 先 strip 去空再去重，保持首次出现顺序
-    assert normalize_drop_skc_list([" A ", "A", "", "   ", "B", "A"]) == ["A", "B"]
+    # 先 strip 再去重，保持首次出现顺序；空字符串代表「SKC 货号为空」，是有效选择
+    assert normalize_drop_skc_list([" A ", "A", "", "   ", "B", "A"]) == ["A", "", "B"]
 
     for bad in (
         "UNKNOWN-X",
