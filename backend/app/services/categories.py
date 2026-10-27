@@ -347,7 +347,8 @@ def delete_category(code: str) -> None:
             raise ValueError("品类不存在")
         if category.is_default:
             raise ValueError("默认品类不能删除")
-        from app.database import HalfHeadcostSku
+        from app.database import HalfHeadcostSku, WeightHeadcostSku
         session.query(RegionConfig).filter(RegionConfig.category_id == category.id).delete()
         session.query(HalfHeadcostSku).filter(HalfHeadcostSku.category_id == category.id).delete()
+        session.query(WeightHeadcostSku).filter(WeightHeadcostSku.category_id == category.id).delete()
         session.delete(category)

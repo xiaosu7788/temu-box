@@ -111,7 +111,8 @@ npx vue-tsc -b --force
 ### 其他领域
 
 - 订单成本（`services/orders.py`）：货值 + 头程 + 操作费 + 续件费 + 尾程 - 运费补贴；头程减半名单命中时头程
-  按 50%。
+  按 50%。**克重计算头程名单命中时，头程改用「克重 × 0.017」**（`services/weight_headcost.py`），不再按成本
+  参数里的头程取值；两份名单同时命中时先取克重头程、再按减半规则 × 50%。
 - 库存（`services/inventory.py`）：Excel 上传 → 解析 → 缓存（`price_cache.json`）→ SKU 查询；品类映射
   （A 映射式 / 其他自动式）。
 - 任务（`services/taskpool.py` + `services/tasks.py` / `activity_tasks.py`）：提交入队 → 后台线程执行 →

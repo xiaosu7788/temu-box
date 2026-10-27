@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem, AppSettings, AuditLogPage, BulkActivityResult, CategoryPage, CategorySummary, CleanupResult, HalfHeadcostItem, InventoryCategory, InventoryDiffItem, InventoryPreview, InventoryStatus, MonitoringSnapshot, RegionProfile, RegionSummary, SkuResult, SystemSettings, SystemSettingsInfo, TaskItem, User, UpdateJobResponse, UpdateStartResponse, UpdateStatusResponse, VersionInfo } from './types'
+import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem, AppSettings, AuditLogPage, BulkActivityResult, CategoryPage, CategorySummary, CleanupResult, HalfHeadcostItem, InventoryCategory, InventoryDiffItem, InventoryPreview, InventoryStatus, MonitoringSnapshot, RegionProfile, RegionSummary, SkuResult, SystemSettings, SystemSettingsInfo, TaskItem, User, UpdateJobResponse, UpdateStartResponse, UpdateStatusResponse, VersionInfo, WeightHeadcostItem } from './types'
 
 const http = axios.create({
   baseURL: '/api',
@@ -258,6 +258,39 @@ export async function createHalfHeadcost(payload: { sku: string; set_type: strin
 
 export async function updateHalfHeadcost(sku: string, payload: { set_type: string; category_code?: string; inventory_category?: string }) {
   const { data } = await http.put<{ message: string; item: HalfHeadcostItem }>(`/admin/half-headcost/${encodeURIComponent(sku)}`, payload)
+  return data
+}
+
+export async function getWeightHeadcost(query = '', page = 1, pageSize = 30, categoryCode?: string, inventoryCategory = 'A') {
+  const { data } = await http.get<{ total: number; items: WeightHeadcostItem[]; category?: { code: string; name: string }; inventory_category?: string }>('/weight-headcost', {
+    params: { query, page, page_size: pageSize, category_code: categoryCode, inventory_category: inventoryCategory },
+  })
+  return data
+}
+
+export async function importWeightHeadcost(file: File, categoryCode?: string, inventoryCategory = 'A') {
+  const form = new FormData()
+  form.append('file', file)
+  if (categoryCode) form.append('category_code', categoryCode)
+  form.append('inventory_category', inventoryCategory)
+  const { data } = await uploadHttp.post<{ message: string; incoming: number; added: number; updated: number; total: number }>(
+    '/weight-headcost/import',
+    form,
+  )
+  return data
+}
+
+export async function deleteWeightHeadcost(sku: string, categoryCode?: string, inventoryCategory = 'A') {
+  await http.delete(`/weight-headcost/${encodeURIComponent(sku)}`, { params: { category_code: categoryCode, inventory_category: inventoryCategory } })
+}
+
+export async function createWeightHeadcost(payload: { sku: string; weight_g: number; category_code?: string; inventory_category?: string }) {
+  const { data } = await http.post<{ message: string; item: WeightHeadcostItem }>('/admin/weight-headcost', payload)
+  return data
+}
+
+export async function updateWeightHeadcost(sku: string, payload: { weight_g: number; category_code?: string; inventory_category?: string }) {
+  const { data } = await http.put<{ message: string; item: WeightHeadcostItem }>(`/admin/weight-headcost/${encodeURIComponent(sku)}`, payload)
   return data
 }
 

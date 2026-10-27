@@ -7,12 +7,14 @@ import type { InventoryItemFilters } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { InventoryCategory, InventoryDiffItem, InventoryPreview, InventoryStatus, SkuResult } from '../types'
 import AdminHalfHeadcost from './AdminHalfHeadcost.vue'
+import AdminWeightHeadcost from './AdminWeightHeadcost.vue'
 import InventoryTopbar from '../components/InventoryTopbar.vue'
 import CopyableText from '../components/CopyableText.vue'
-type InventoryTab = 'inventory' | 'half-headcost'
+type InventoryTab = 'inventory' | 'half-headcost' | 'weight-headcost'
 
 const activeTab = ref<InventoryTab>('inventory')
 const halfHeadcostRef = ref<{ reload: () => Promise<void> } | null>(null)
+const weightHeadcostRef = ref<{ reload: () => Promise<void> } | null>(null)
 const topbarReady = ref(false)
 const status = ref<InventoryStatus | null>(null)
 const inventorySummary = computed(() => [
@@ -148,6 +150,10 @@ function switchCategory(key: string) {
 function refreshActiveTab() {
   if (activeTab.value === 'half-headcost') {
     void halfHeadcostRef.value?.reload()
+    return
+  }
+  if (activeTab.value === 'weight-headcost') {
+    void weightHeadcostRef.value?.reload()
     return
   }
   void load()
@@ -555,6 +561,9 @@ onMounted(() => {
       </el-tab-pane>
       <el-tab-pane name="half-headcost" label="头程减半名单">
         <AdminHalfHeadcost ref="halfHeadcostRef" :inventory-category="inventoryCategory" />
+      </el-tab-pane>
+      <el-tab-pane name="weight-headcost" label="克重计算头程">
+        <AdminWeightHeadcost ref="weightHeadcostRef" :inventory-category="inventoryCategory" />
       </el-tab-pane>
     </el-tabs>
 

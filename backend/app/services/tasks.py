@@ -16,6 +16,7 @@ from app.services import system
 from app.services.categories import default_category_id
 from app.services.regions import region_snapshot
 from app.services.half_headcost import load_entries, merge_upload
+from app.services.weight_headcost import load_entries as load_weight_entries
 from app.services.inventory import load_price_catalog
 from app.services.orders import build_delivery_sku_map, generate_summary
 from app.services.taskpool import QueueFullError, TaskPool
@@ -161,6 +162,9 @@ class TaskManager:
                     45,
                 )
             half_entries = load_entries(category_id, bound)
+            weight_entries = load_weight_entries(category_id, bound)
+            if weight_entries:
+                self._log(task_id, f"克重计算头程名单已加载（{bound}类目）：{len(weight_entries)} 个编号", 50)
             settings = snapshot.get("settings") or region_snapshot(task.get("region_code"), task.get("category_code"))["settings"]
             self._log(task_id, "正在解析派送订单", 55)
             po_map = build_delivery_sku_map(
@@ -177,6 +181,7 @@ class TaskManager:
                 half_entries,
                 log=lambda message: self._log(task_id, message, 95),
                 settings=settings,
+                weight_headcost_skus=weight_entries,
             )
             self._update(
                 task_id,

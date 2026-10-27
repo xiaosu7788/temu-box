@@ -9,15 +9,17 @@ import type { CategorySummary, InventoryCategory, InventoryStatus, SkuResult } f
 import CategoryPicker from '../components/CategoryPicker.vue'
 import { selectedCategoryCode } from '../regionState'
 import HalfHeadcost from './HalfHeadcost.vue'
+import WeightHeadcost from './WeightHeadcost.vue'
 import InventoryTopbar from '../components/InventoryTopbar.vue'
 import CopyableText from '../components/CopyableText.vue'
 
 const route = useRoute()
 const router = useRouter()
 
-type InventoryTab = 'inventory' | 'half-headcost'
+type InventoryTab = 'inventory' | 'half-headcost' | 'weight-headcost'
 
 function normalizeTab(value: unknown): InventoryTab {
+  if (value === 'weight-headcost') return value
   return value === 'half-headcost' ? value : 'inventory'
 }
 
@@ -283,6 +285,12 @@ onMounted(async () => {
           <el-alert type="info" :closable="false" title="头程减半名单为只读展示，如需导入、添加或修改请联系管理员" />
         </div>
         <HalfHeadcost />
+      </el-tab-pane>
+      <el-tab-pane name="weight-headcost" label="克重计算头程">
+        <div v-if="!isAdmin" class="permission-hint">
+          <el-alert type="info" :closable="false" title="克重计算头程为只读展示，如需导入、添加或修改请联系管理员" />
+        </div>
+        <WeightHeadcost />
       </el-tab-pane>
     </el-tabs>
   </section>

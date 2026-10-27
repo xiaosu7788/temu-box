@@ -102,6 +102,17 @@ class HalfHeadcostSku(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
+class WeightHeadcostSku(Base):
+    """按克重计算头程的 SKU 名单（头程 = 克重 × 0.017）。"""
+
+    __tablename__ = "weight_headcost_skus"
+    category_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sku: Mapped[str] = mapped_column(String(255), primary_key=True)
+    inventory_category: Mapped[str] = mapped_column(String(16), primary_key=True, default="A", server_default="A", index=True)
+    weight_g: Mapped[float] = mapped_column(Float, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 class TaskRecord(Base):
     __tablename__ = "tasks"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -693,6 +704,60 @@ def upsert_half_entry(category_id: int, sku: str, set_type: str, inventory_categ
             session.add(row)
         session.flush()
         return {"sku": row.sku, "set_type": row.set_type, "category_id": row.category_id, "inventory_category": row.inventory_category}
+
+
+def load_weight_entries(category_id: int, inventory_category: Optional[str] = "A") -> dict:
+    key = (inventory_category or "A").strip().upper()
+    with db_session() as session:
+        rows = session.scalars(select(WeightHeadcostSku).where(WeightHeadcostSku.category_id == category_id, WeightHeadcostSku.inventory_category == key)).all()
+        return {row.sku: float(row.weight_g or 0) for row in rows}
+
+
+def count_weight_entries(inventory_category: Optional[str] = None) -> int:
+    with db_session() as session:
+        statement = select(func.count()).select_from(WeightHeadcostSku)
+        if inventory_category:
+            statement = statement.where(WeightHeadcostSku.inventory_category == (inventory_category or "A").strip().upper())
+        return session.scalar(statement) or 0
+
+
+def merge_weight_entries(category_id: int, values: dict, inventory_category: Optional[str] = "A") -> tuple[int, int]:
+    key = (inventory_category or "A").strip().upper()
+    with db_session() as session:
+        before = {row.sku for row in session.scalars(select(WeightHeadcostSku).where(WeightHeadcostSku.category_id == category_id, WeightHeadcostSku.inventory_category == key)).all()}
+        for sku, weight_g in values.items():
+            row = session.get(WeightHeadcostSku, (category_id, sku, key))
+            if row:
+                row.weight_g = float(weight_g)
+                row.updated_at = datetime.now(timezone.utc)
+            else:
+                session.add(WeightHeadcostSku(category_id=category_id, sku=sku, inventory_category=key, weight_g=float(weight_g)))
+        return len(set(values) - before), len(before | set(values))
+
+
+def upsert_weight_entry(category_id: int, sku: str, weight_g: float, inventory_category: Optional[str] = "A") -> dict:
+    key = (inventory_category or "A").strip().upper()
+    with db_session() as session:
+        row = session.get(WeightHeadcostSku, (category_id, sku, key))
+        if row:
+            row.weight_g = float(weight_g)
+            row.updated_at = datetime.now(timezone.utc)
+        else:
+            row = WeightHeadcostSku(category_id=category_id, sku=sku, inventory_category=key, weight_g=float(weight_g))
+            session.add(row)
+        session.flush()
+        return {"sku": row.sku, "weight_g": float(row.weight_g), "headcost": round(float(row.weight_g) * 0.017, 2), "category_id": row.category_id, "inventory_category": row.inventory_category}
+
+
+def delete_weight_entry(category_id: int, sku: str, inventory_category: Optional[str] = "A") -> bool:
+    key = (inventory_category or "A").strip().upper()
+    with db_session() as session:
+        row = session.get(WeightHeadcostSku, (category_id, sku, key))
+        if not row:
+            return False
+        session.delete(row)
+        return True
+
 
 def save_task_record(task: dict) -> None:
     with db_session() as session:

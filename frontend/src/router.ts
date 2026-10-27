@@ -23,6 +23,7 @@ export const router = createRouter({
     { path: '/sku', redirect: '/inventory' },
     { path: '/inventory', component: InventoryManage, meta: { title: '库存管理' } },
     { path: '/half-headcost', redirect: '/inventory?tab=half-headcost' },
+    { path: '/weight-headcost', redirect: '/inventory?tab=weight-headcost' },
     { path: '/activities', component: BulkActivity, meta: { title: '批量报名活动' } },
     { path: '/tasks', component: TaskHistory, meta: { title: '任务记录' } },
     { path: '/admin', redirect: '/admin/monitoring' },

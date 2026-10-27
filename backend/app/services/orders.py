@@ -28,11 +28,15 @@ TAIL_FEE = 0
 SHIPPING_SUBSIDY = 0
 
 
-def calc_order_cost(sku_items, half_headcost_skus=None, settings=None, manual_combo_skus=None):
+HEADCOST_PER_GRAM = 0.017
+
+
+def calc_order_cost(sku_items, half_headcost_skus=None, settings=None, manual_combo_skus=None, weight_headcost_skus=None):
     if not sku_items:
         return None
     half_headcost_skus = half_headcost_skus or {}
     manual_combo_skus = manual_combo_skus or set()
+    weight_headcost_skus = weight_headcost_skus or {}
     settings = settings or {}
     order_settings = settings.get("order", {})
     headcost_map = {**HEADCOST_MAP, **order_settings.get("headcost", {})}
@@ -54,7 +58,11 @@ def calc_order_cost(sku_items, half_headcost_skus=None, settings=None, manual_co
         fee_qty += quantity
         # 无套装型/自定义套装型品类只配置部分档位：未配置的档位统一按单品头程计算
         headcost = float(headcost_map.get(set_type, headcost_map.get("单品", 5)))
+        if sku in weight_headcost_skus:
+            # 克重计算头程优先：克重 × 0.017，替代成本参数里的头程
+            headcost = round(float(weight_headcost_skus[sku]) * HEADCOST_PER_GRAM, 2)
         if sku in half_headcost_skus:
+            # 头程减半名单是独立的折扣规则：命中后按 50% 计算（克重头程同样适用）
             headcost /= 2
         total += quantity * (price + headcost)
     if fee_qty:
@@ -135,8 +143,10 @@ def generate_summary(
     half_headcost_skus=None,
     log: LogFn = None,
     settings=None,
+    weight_headcost_skus=None,
 ):
     half_headcost_skus = half_headcost_skus or {}
+    weight_headcost_skus = weight_headcost_skus or {}
     # 手动组合的 SKU：成本直接用库存登记的货值（不加头程），导出时货值列显示 /
     manual_combo_skus = {sku for sku, item in (catalog or {}).items() if item.get("manual_combo")}
     if isinstance(sales_source, (bytes, bytearray)):
@@ -205,7 +215,7 @@ def generate_summary(
                 "/".join(skus),
                 price_display,
                 total_qty,
-                calc_order_cost(cost_items, half_headcost_skus, settings, manual_combo_skus),
+                calc_order_cost(cost_items, half_headcost_skus, settings, manual_combo_skus, weight_headcost_skus),
                 amount,
                 "/".join(unique_types),
             ))

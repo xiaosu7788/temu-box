@@ -231,7 +231,8 @@ a:focus-visible {
 .admin-inventory-tabs > .el-tabs__content { min-height: 0; flex: 1 1 auto; overflow: hidden; }
 .admin-inventory-tabs .el-tab-pane { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .admin-inventory-tabs .admin-inventory-data-panel { min-height: 0; flex: 1 1 auto; margin-bottom: 0; }
-.admin-inventory-tabs .admin-half-headcost-panel { min-height: 0; flex: 1 1 auto; }
+.admin-inventory-tabs .admin-half-headcost-panel,
+.admin-inventory-tabs .admin-weight-headcost-panel { min-height: 0; flex: 1 1 auto; }
 .activity-upload-panel .el-upload { width: 100%; }
 .activity-upload-panel .el-upload-dragger { width: 100%; min-height: 180px; padding: 30px 12px; }
 .activity-settings-row { margin-top: 18px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 1fr); gap: 18px; border-top: 1px solid var(--border); }

@@ -46,12 +46,13 @@ from app.database import (
     delete_inventory_category_def,
     save_activity_skc_rules,
 )
-from app.schemas import ActivitySkuRulesPayload, AdminUserBulkDeleteRequest, AdminUserBulkUpdateRequest, AdminUserUpdateRequest, CategoryCreateRequest, CategoryUpdateRequest, HalfHeadcostCreateRequest, HalfHeadcostUpdateRequest, InventoryApplyRequest, InventoryCategoryCreateRequest, InventoryCategoryUpdateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest, SystemSettingsPayload
+from app.schemas import ActivitySkuRulesPayload, AdminUserBulkDeleteRequest, AdminUserBulkUpdateRequest, AdminUserUpdateRequest, CategoryCreateRequest, CategoryUpdateRequest, HalfHeadcostCreateRequest, HalfHeadcostUpdateRequest, InventoryApplyRequest, InventoryCategoryCreateRequest, InventoryCategoryUpdateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest, SystemSettingsPayload, WeightHeadcostCreateRequest, WeightHeadcostUpdateRequest
 from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
 from app.services import audit, system, updater
 from app.services.categories import category_allowed_pieces, category_skc_rules, create_category, delete_category, get_category, list_categories, TEMPLATE_TYPES, update_category
 from app.services.cleanup import cleanup_scheduler, purge_all, run_once as run_cleanup_once
 from app.services.half_headcost import delete_entry, entry_exists, load_entries, merge_upload, save_entry
+from app.services.weight_headcost import delete_entry as delete_weight_entry, entry_exists as weight_entry_exists, headcost_for_weight, load_entries as load_weight_entries, merge_upload as merge_weight_upload, save_entry as save_weight_entry
 from app.services.activity import MAX_PREVIEW_PAGE_SIZE, MAX_PREVIEW_ROWS, PREVIEW_RESULT_FILTERS, normalize_drop_skc_list, normalize_id_profit_rules, normalize_parse_config, preview_activity_workbook
 from app.services.activity_tasks import activity_task_manager
 from app.services.monitoring import snapshot as monitoring_snapshot
@@ -769,6 +770,122 @@ def admin_update_half_headcost(sku: str, payload: HalfHeadcostUpdateRequest, req
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     audit.record(_admin, "half_headcost.update", "half_headcost", normalized, f"更新头程减半名单（品类 {category['code']}，库存类目 {inventory_key}）：{normalized} → {item['set_type']}", request)
     return {"message": "头程减半名单已更新", "item": item, "category": {"code": category["code"], "name": category["name"]}, "inventory_category": inventory_key}
+
+
+def _weight_item(sku: str, weight_g: float) -> dict:
+    return {"sku": sku, "weight_g": round(float(weight_g), 2), "headcost": headcost_for_weight(weight_g)}
+
+
+@app.get("/api/weight-headcost")
+def list_weight_headcost(
+    query: str = Query("", max_length=80),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(30, ge=10, le=200),
+    category_code: Optional[str] = Query(None, max_length=16),
+    inventory_category: Optional[str] = Query(None, max_length=16),
+    _user: dict = Depends(current_user),
+):
+    try:
+        category = get_category(category_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    inventory_key = resolve_inventory_category(inventory_category)
+    entries = load_weight_entries(category["id"], inventory_key)
+    keyword = query.strip().upper()
+    items = [
+        _weight_item(sku, weight)
+        for sku, weight in sorted(entries.items())
+        if not keyword or keyword in sku.upper()
+    ]
+    start = (page - 1) * page_size
+    return {"total": len(items), "items": items[start:start + page_size], "category": {"code": category["code"], "name": category["name"]}, "inventory_category": inventory_key}
+
+
+@app.post("/api/weight-headcost/import")
+async def import_weight_headcost(
+    request: Request,
+    file: UploadFile = File(...),
+    category_code: Optional[str] = Form(None),
+    inventory_category: Optional[str] = Form(None),
+    _admin: dict = Depends(admin_user),
+):
+    validate_excel(file)
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    await file.close()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="上传文件超过服务器限制")
+    try:
+        category = get_category(category_code, include_disabled=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    inventory_key = resolve_inventory_category(inventory_category)
+    try:
+        result = await run_in_threadpool(merge_weight_upload, content, category["id"], inventory_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record(_admin, "weight_headcost.import", "weight_headcost", category["code"], f"导入克重计算头程名单（品类 {category['code']}，库存类目 {inventory_key}）：{file.filename}（新增 {result['added']}，更新 {result['updated']}）", request)
+    return {"message": "克重计算头程名单已合并", "inventory_category": inventory_key, **result}
+
+
+@app.delete("/api/weight-headcost/{sku}")
+def remove_weight_headcost(sku: str, request: Request, category_code: Optional[str] = Query(None, max_length=16), inventory_category: Optional[str] = Query(None, max_length=16), _admin: dict = Depends(admin_user)):
+    normalized = sku.strip().upper()
+    try:
+        category = get_category(category_code, include_disabled=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    inventory_key = resolve_inventory_category(inventory_category)
+    if not delete_weight_entry(normalized, category["id"], inventory_key):
+        raise HTTPException(status_code=404, detail="编号不在克重计算头程名单中")
+    audit.record(_admin, "weight_headcost.delete", "weight_headcost", normalized, f"从克重计算头程名单删除（品类 {category['code']}，库存类目 {inventory_key}）：{normalized}", request)
+    return {"message": "已删除", "sku": normalized, "inventory_category": inventory_key}
+
+
+@app.post("/api/admin/weight-headcost", status_code=201)
+def admin_create_weight_headcost(payload: WeightHeadcostCreateRequest, request: Request, _admin: dict = Depends(admin_user)):
+    normalized = payload.sku.strip().upper()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="编号不能为空")
+    try:
+        category = get_category(payload.category_code, include_disabled=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    inventory_key = resolve_inventory_category(payload.inventory_category)
+    existed = weight_entry_exists(normalized, category["id"], inventory_key)
+    try:
+        item = save_weight_entry(normalized, payload.weight_g, category["id"], inventory_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record(
+        _admin,
+        "weight_headcost.create",
+        "weight_headcost",
+        normalized,
+        f"{'覆盖' if existed else '新增'}克重计算头程名单（品类 {category['code']}，库存类目 {inventory_key}）：{normalized}（{item['weight_g']}g）",
+        request,
+    )
+    return {"message": "该编号已存在，已覆盖克重" if existed else "克重计算头程名单已添加", "item": item, "category": {"code": category["code"], "name": category["name"]}, "inventory_category": inventory_key}
+
+
+@app.put("/api/admin/weight-headcost/{sku}")
+def admin_update_weight_headcost(sku: str, payload: WeightHeadcostUpdateRequest, request: Request, _admin: dict = Depends(admin_user)):
+    normalized = sku.strip().upper()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="编号不能为空")
+    try:
+        category = get_category(payload.category_code, include_disabled=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    inventory_key = resolve_inventory_category(payload.inventory_category)
+    if not weight_entry_exists(normalized, category["id"], inventory_key):
+        raise HTTPException(status_code=404, detail="编号不在克重计算头程名单中")
+    try:
+        item = save_weight_entry(normalized, payload.weight_g, category["id"], inventory_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.record(_admin, "weight_headcost.update", "weight_headcost", normalized, f"更新克重计算头程名单（品类 {category['code']}，库存类目 {inventory_key}）：{normalized} → {item['weight_g']}g", request)
+    return {"message": "克重计算头程名单已更新", "item": item, "category": {"code": category["code"], "name": category["name"]}, "inventory_category": inventory_key}
+
 
 @app.post("/api/tasks", status_code=202)
 async def create_task(

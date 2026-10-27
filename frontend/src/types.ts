@@ -81,6 +81,12 @@ export interface HalfHeadcostItem {
   set_type: string
 }
 
+export interface WeightHeadcostItem {
+  sku: string
+  weight_g: number
+  headcost: number
+}
+
 export interface BulkActivityStats {
   sheet: string
   header_row: number

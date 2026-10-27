@@ -83,6 +83,19 @@ class HalfHeadcostUpdateRequest(BaseModel):
     category_code: Optional[str] = Field(default=None, max_length=16)
     inventory_category: Optional[str] = Field(default=None, max_length=16)
 
+
+class WeightHeadcostCreateRequest(BaseModel):
+    sku: str = Field(min_length=1, max_length=255)
+    weight_g: float = Field(gt=0, le=1000000)
+    category_code: Optional[str] = Field(default=None, max_length=16)
+    inventory_category: Optional[str] = Field(default=None, max_length=16)
+
+
+class WeightHeadcostUpdateRequest(BaseModel):
+    weight_g: float = Field(gt=0, le=1000000)
+    category_code: Optional[str] = Field(default=None, max_length=16)
+    inventory_category: Optional[str] = Field(default=None, max_length=16)
+
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=80)
     password: str = Field(min_length=8, max_length=128)
