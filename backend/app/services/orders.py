@@ -229,7 +229,8 @@ def generate_summary(
     header_font = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
     center = Alignment(horizontal="center", vertical="center")
-    border = Border(*[Side(style="thin", color="D1D5DB")] * 4)
+    line = Side(style="thin", color="D1D5DB")
+    border = Border(left=line, right=line, top=line, bottom=line)
     for column, header in enumerate(headers, 1):
         cell = out_ws.cell(1, column, header)
         cell.font = header_font
@@ -237,26 +238,46 @@ def generate_summary(
         cell.alignment = center
         cell.border = border
 
-    for row_number, row_data in enumerate(results, 2):
-        for column, value in enumerate(row_data, 1):
-            cell = out_ws.cell(row_number, column, value)
-            cell.font = Font(name="微软雅黑", size=10)
-            cell.alignment = center
-            cell.border = border
-            if column in (3, 5, 6) and value is not None and not isinstance(value, str):
-                cell.number_format = "0.00"
-
+    # 同一 PO 的连续行合并成一块；合并块内部不画横线，否则 WPS/Excel 里看起来像没合并
     merge_columns = [1, 2, 3, 4, 5, 7]
+    blocks = []
     start = 2
     while start <= len(results) + 1:
         end = start
         po = results[start - 2][0]
         while end <= len(results) + 1 and results[end - 2][0] == po:
             end += 1
-        if end - start > 1:
-            for column in merge_columns:
-                out_ws.merge_cells(start_row=start, start_column=column, end_row=end - 1, end_column=column)
+        blocks.append((start, end - 1))
         start = end
+
+    # 先写值，再按块设置边框，最后合并：合并后单元格变成只读，无法再设置样式
+    for row_number, row_data in enumerate(results, 2):
+        for column, value in enumerate(row_data, 1):
+            cell = out_ws.cell(row_number, column, value)
+            cell.font = Font(name="微软雅黑", size=10)
+            cell.alignment = center
+            if column in (3, 5, 6) and value is not None and not isinstance(value, str):
+                cell.number_format = "0.00"
+
+    for block_start, block_end in blocks:
+        for row in range(block_start, block_end + 1):
+            is_first = row == block_start
+            is_last = row == block_end
+            for column in range(1, len(headers) + 1):
+                cell = out_ws.cell(row, column)
+                # 结算金额列不合并，每行保留完整横线；其余列只在合并块首尾画横线
+                full_border = column == 6 or column not in merge_columns
+                cell.border = Border(
+                    left=line,
+                    right=line,
+                    top=line if full_border or is_first else None,
+                    bottom=line if full_border or is_last else None,
+                )
+
+    for block_start, block_end in blocks:
+        if block_end > block_start:
+            for column in merge_columns:
+                out_ws.merge_cells(start_row=block_start, start_column=column, end_row=block_end, end_column=column)
 
     for column, width in enumerate([29, 32, 11, 9, 12, 14, 12], 1):
         out_ws.column_dimensions[chr(64 + column)].width = width
