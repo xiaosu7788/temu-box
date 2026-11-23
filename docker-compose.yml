@@ -75,7 +75,8 @@ services:
   # bridge 需要 BRIDGE_TOKEN（与 backend 的 STORE_BRIDGE_TOKEN 保持一致）。
   bridge:
     profiles: ["stores"]
-    image: temubox-bridge:local
+    # 与 backend/frontend 一样走 GHCR；镜像缺失时可用 --build 本地构建兜底
+    image: ${TEMUBOX_BRIDGE_IMAGE:-ghcr.io/xiaosu7788/temu-box-bridge:latest}
     build:
       context: ./bridge
       dockerfile: Dockerfile
