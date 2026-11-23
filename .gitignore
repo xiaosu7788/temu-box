@@ -31,6 +31,10 @@ bridge/test/.smoke-data/
 bridge/node_modules/
 
 
-# bridge 运行时产物：Temu 会话 cookie、反爬签名脚本、站点缓存
-# ⚠️ session_*.json 是登录凭证，绝不能入库
-bridge/runtime/
+# bridge 运行时数据：只忽略会话与缓存
+# ⚠️ 注意不要整目录忽略——runtime/anti_content/ 是登录必需的签名生成器，
+#    缺了它 clone 下来跑不起来，CI 构建也会失败
+bridge/runtime/session_*.json
+bridge/runtime/glo_session*.json
+bridge/runtime/site_table.json
+bridge/runtime/region_sessions.json

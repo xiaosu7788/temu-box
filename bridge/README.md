@@ -88,3 +88,29 @@ docker compose --profile stores up -d bridge
 
 **每次升级后必须跑 `node test/smoke.js`**，尤其是补丁 1~4（串号相关），
 它们没有编译期保护，只能靠自检覆盖。
+
+## 与上游 temu-ops 的差异（勿直接覆盖上游文件）
+
+`lib/` 里的文件是从 `temu-ops` 原样复制的，但下列文件带了 **bridge 补丁**。
+同步上游版本时必须手工合并，不能整文件覆盖。
+
+| 文件 | 补丁内容 |
+|---|---|
+| `lib/product.js` | 缓存按账号隔离（`cacheGet/cacheSet` 加 `ns`）；导出 `clearCache()`；`categoryConfig` 加 24h 缓存；`createSizeSpec` 结果 5 分钟复用 |
+| `lib/glo_client.js` | `loadKjCookies(account)` 按账号哈希精确读会话（原来取「最新 session 文件」，多账号必串号）；`glo_session_<hash>.json` 按账号分文件 |
+| `lib/fast_login.js` | 新增 `sendCode()`（发登录验证码）；`login()` 支持 `opts.verifyCode` |
+| `lib/kefu_offline.js` | 卡片按 toolId 翻页 |
+| `lib/temu_ops.js` | 多账号会话池适配 |
+
+补丁位置都标了 `⚠️ bridge 补丁` 注释，`grep -rn "bridge 补丁" lib/` 可列出全部。
+
+## runtime/anti_content/
+
+登录必需，两个文件缺一不可：
+
+- `anti_content.js` —— 加载器，在 `vm` 沙箱里跑 SDK，暴露 `generate()`
+- `_mod42983.js` 之类 —— Temu 前端 bundle 里提取的风控 SDK 模块（`messagePack()` 生成签名）
+
+⚠️ 模块 ID 会随 Temu 发版变化，签名失效时需重新提取并更新 `anti_content.js` 里的引用。
+
+会话文件（`session_*.json`）**不入库**，由 `/data` 卷提供；Dockerfile 只 `COPY runtime/anti_content`。
