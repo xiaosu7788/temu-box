@@ -7,6 +7,7 @@ on:
     paths:
       - "backend/**"
       - "frontend/**"
+      - "bridge/**"
       - "docker/**"
       - "docker-compose.yml"
       - "VERSION"
@@ -36,8 +37,15 @@ jobs:
         include:
           - service: backend
             dockerfile: docker/backend.Dockerfile
+            context: .
           - service: frontend
             dockerfile: docker/frontend.Dockerfile
+            context: .
+          # bridge 的 Dockerfile 以 bridge/ 为根（COPY package.json ./），
+          # 所以 context 必须是子目录；dockerfile 路径相对 context，不能再带 bridge/ 前缀
+          - service: bridge
+            dockerfile: Dockerfile
+            context: ./bridge
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -74,7 +82,7 @@ jobs:
       - name: 构建并推送
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           # 服务器为 ARM64（aarch64）。如需 x86 服务器，改成 linux/amd64 或 linux/amd64,linux/arm64。
           platforms: linux/arm64
