@@ -31,15 +31,17 @@ if grep -q '^BRIDGE_TOKEN=.' .env.docker 2>/dev/null; then
 fi
 
 echo "== 4/5 启动服务（不重新构建）=="
+# --force-recreate 是必须的：镜像 tag 是 :latest，pull 之后 compose 认为配置没变，
+# 不带这个参数容器会原地不动，新代码根本没生效（历史踩过）
 if grep -q '^DATABASE_URL=.' .env.docker; then
-  docker compose --env-file .env.docker up -d
+  docker compose --env-file .env.docker up -d --force-recreate backend frontend
 else
-  docker compose --env-file .env.docker --profile internal-db up -d
+  docker compose --env-file .env.docker --profile internal-db up -d --force-recreate backend frontend
 fi
 
 # bridge 已经在跑的话，把它一起拉起（新镜像会在这一步重建容器）
 if grep -q '^BRIDGE_TOKEN=.' .env.docker 2>/dev/null; then
-  docker compose --env-file .env.docker --profile stores up -d bridge \
+  docker compose --env-file .env.docker --profile stores up -d --force-recreate bridge \
     || echo "  ⚠ bridge 启动失败，店铺管理模块暂不可用"
 fi
 
