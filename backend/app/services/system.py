@@ -12,9 +12,18 @@ DEFAULTS = {
     "cleanup_enabled": True,
     "cleanup_retention_days": 30,
     "audit_retention_days": 180,
+    # 店铺模块设置
+    "kefu_writes_enabled": True,          # 客服写操作总熔断（关闭 = 全员只读）
+    "kefu_auto_retry_enabled": True,      # 平台「系统忙碌」是否自动重试
+    "store_login_log_retention_days": 90,  # 店铺登录日志保留天数
+    "kefu_action_retention_days": 180,     # 客服操作审计保留天数
 }
 
+BOOL_KEYS = {"cleanup_enabled", "kefu_writes_enabled", "kefu_auto_retry_enabled"}
+
 LIMITS = {
+    "store_login_log_retention_days": (7, 3650),
+    "kefu_action_retention_days": (7, 3650),
     "task_workers": (1, 16),
     "task_queue_limit": (1, 1000),
     "activity_workers": (1, 16),
@@ -29,11 +38,13 @@ def get() -> dict:
 
 
 def validate(payload: dict) -> dict:
-    result = dict(DEFAULTS)
+    # 从「当前生效值」出发，而不是 DEFAULTS：
+    # 否则调用方漏传某个字段时会把用户已经改过的值重置回默认
+    result = get()
     for key, value in payload.items():
         if key not in result:
             continue
-        if key == "cleanup_enabled":
+        if key in BOOL_KEYS:
             result[key] = bool(value)
             continue
         try:

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint, create_engine, func, inspect as sa_inspect, select, text, true as sa_true, false as sa_false
+from sqlalchemy import or_, BigInteger, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint, create_engine, func, inspect as sa_inspect, select, text, true as sa_true, false as sa_false
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from app.config import DATA_DIR, DATABASE_URL, DB_CONNECT_TIMEOUT, DB_STATEMENT_TIMEOUT_MS, HALF_HEADCOST_PATH, PRICE_CACHE_PATH, TASKS_DIR
@@ -199,8 +199,158 @@ class User(Base):
     note: Mapped[str] = mapped_column(Text, default="", server_default="")
     role: Mapped[str] = mapped_column(String(20), default="user")
     status: Mapped[str] = mapped_column(String(20), default="pending")
+    # 店铺管理模块准入（管理员逐个开启；关闭时前端隐藏入口且接口 403）
+    store_access: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false(), nullable=False)
+    # 一级模块权限（JSON 数组）：orders/inventory/activities/tasks/store
+    modules: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    # 店铺管理下的二级模块（JSON 数组）：goods/create/kefu/actions
+    store_modules: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TemuSession(Base):
+    """用户与 Temu 店铺的一对一会话绑定（一用户一店铺，退出即解绑）。"""
+
+    __tablename__ = "temu_sessions"
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # 账号原文（用于重新登录与 bridge 调用；密码永不入库，除非用户勾选「记住密码」）
+    account: Mapped[str] = mapped_column(String(160), default="")
+    # sha1(小写账号) 前 16 位：用于"同一账号全系统只能有一个活跃会话"的唯一校验
+    account_hash: Mapped[str] = mapped_column(String(40), index=True, default="")
+    account_masked: Mapped[str] = mapped_column(String(120), default="")
+    mall_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    mall_name: Mapped[str] = mapped_column(String(120), default="")
+    # 登录时抓到的店铺列表（JSON），前端多店铺时用于选择
+    mall_list: Mapped[str] = mapped_column(Text, default="[]")
+    # logged_out | logging_in | active | invalid | cooldown
+    status: Mapped[str] = mapped_column(String(24), default="logged_out", server_default="logged_out")
+    remember: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false(), nullable=False)
+    login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cooldown_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_code: Mapped[str] = mapped_column(String(40), default="")
+    last_error: Mapped[str] = mapped_column(String(255), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class TemuStoreAccount(Base):
+    """用户保存的店铺账号库（可多个）。
+
+    与 `temu_sessions` 的区别：sessions 是「此刻正在操作的唯一店铺」，
+    这里是「记住的账号密码清单」，切换店铺时从这里取凭据重新登录。
+    """
+
+    __tablename__ = "temu_store_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    account: Mapped[str] = mapped_column(String(160), default="")
+    account_hash: Mapped[str] = mapped_column(String(40), index=True, default="")
+    account_masked: Mapped[str] = mapped_column(String(120), default="")
+    label: Mapped[str] = mapped_column(String(120), default="")
+    mall_name: Mapped[str] = mapped_column(String(120), default="")
+    ciphertext: Mapped[str] = mapped_column(Text, default="")
+    key_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TemuCredential(Base):
+    """勾选「记住密码」时保存的 Temu 账号凭据（AES-GCM 密文，密钥来自 CREDENTIAL_KEY）。"""
+
+    __tablename__ = "temu_credentials"
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account: Mapped[str] = mapped_column(String(160), default="")
+    ciphertext: Mapped[str] = mapped_column(Text, default="")
+    key_version: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class TemuLoginLog(Base):
+    """店铺登录/退出/失效事件（用户自助排障 + 管理员审计）。"""
+
+    __tablename__ = "temu_login_logs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    account_masked: Mapped[str] = mapped_column(String(120), default="")
+    action: Mapped[str] = mapped_column(String(32), index=True)
+    code: Mapped[str] = mapped_column(String(40), default="")
+    message: Mapped[str] = mapped_column(String(255), default="")
+    ip: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class TemuKefuBatch(Base):
+    """客服写操作的批量任务：一批编号、一个工具、一次确认。
+
+    执行在后台线程里串行进行（每个编号 = 查商品 + 拦截检查 + 提交），
+    前端轮询本表与关联的 temu_kefu_actions 取进度。
+    """
+
+    __tablename__ = "temu_kefu_batches"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    account_masked: Mapped[str] = mapped_column(String(120), default="")
+    tool_id: Mapped[str] = mapped_column(String(32), default="")
+    tool_name: Mapped[str] = mapped_column(String(80), default="")
+    data_type_name: Mapped[str] = mapped_column(String(8), default="SKC")
+    reason_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    reason_detail: Mapped[str] = mapped_column(String(255), default="")
+    # queued | running | done | cancelled | failed
+    status: Mapped[str] = mapped_column(String(20), default="queued", index=True)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    succeeded: Mapped[int] = mapped_column(Integer, default=0)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    skipped: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TemuKefuAction(Base):
+    """客服写操作的事务记录：预览（preview）→ 确认（sent）→ 回执（replied）。
+
+    核心不变量：**拦截检查（preIntercept）有状态，同一商品只能成功一次**。
+    所以创建时一次性完成 queryProduct + preIntercept + 组装 content，全部落库；
+    确认阶段只发送已存的 request_body，绝不重新拦截。
+    """
+
+    __tablename__ = "temu_kefu_actions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    # 批量执行的归属（单条操作为 NULL）
+    batch_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    account_masked: Mapped[str] = mapped_column(String(120), default="")
+    tool_id: Mapped[str] = mapped_column(String(32), default="")
+    tool_name: Mapped[str] = mapped_column(String(80), default="")
+    # 1=SKC 2=SKU 5=SPU
+    data_type: Mapped[int] = mapped_column(Integer, default=1)
+    data_type_name: Mapped[str] = mapped_column(String(8), default="SKC")
+    data_id: Mapped[str] = mapped_column(String(64), default="")
+    reason_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    reason_detail: Mapped[str] = mapped_column(String(255), default="")
+    # preview | sent | accepted | replied | failed | rejected | retry_pending | unknown
+    stage: Mapped[str] = mapped_column(String(20), default="preview", index=True)
+    preview: Mapped[str] = mapped_column(Text, default="")
+    product_snapshot: Mapped[str] = mapped_column(Text, default="")
+    parent_msg_id: Mapped[str] = mapped_column(String(32), default="")
+    intercept_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    intercept_message: Mapped[str] = mapped_column(String(255), default="")
+    request_body: Mapped[str] = mapped_column(Text, default="")
+    response: Mapped[str] = mapped_column(Text, default="")
+    msg_id: Mapped[str] = mapped_column(String(32), default="")
+    robot_reply: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 失败自动重试（平台「系统忙碌」属于临时错误）
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class AppSetting(Base):
@@ -377,7 +527,7 @@ def _ensure_category_schema() -> None:
 
 
 def _ensure_user_schema() -> None:
-    """为本地 create_all 环境中的旧 SQLite users 表补备注列；生产由 Alembic 迁移负责。"""
+    """为本地 create_all 环境中的旧 SQLite users 表补列；生产由 Alembic 迁移负责。"""
     with engine.begin() as connection:
         inspector = sa_inspect(connection)
         if not inspector.has_table("users"):
@@ -385,6 +535,47 @@ def _ensure_user_schema() -> None:
         columns = {column["name"] for column in inspector.get_columns("users")}
         if "note" not in columns:
             connection.execute(text("ALTER TABLE users ADD COLUMN note TEXT NOT NULL DEFAULT ''"))
+        if "store_access" not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN store_access BOOLEAN NOT NULL DEFAULT 0"))
+        if "modules" not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN modules TEXT NOT NULL DEFAULT '[]'"))
+        if "store_modules" not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN store_modules TEXT NOT NULL DEFAULT '[]'"))
+
+
+def _ensure_template_schema() -> None:
+    """为 product_form_templates 补 account_hash（模板与店铺绑定）。"""
+    with engine.begin() as connection:
+        inspector = sa_inspect(connection)
+        if not inspector.has_table("product_form_templates"):
+            return
+        columns = {c["name"] for c in inspector.get_columns("product_form_templates")}
+        if "account_hash" not in columns:
+            connection.execute(text("ALTER TABLE product_form_templates ADD COLUMN account_hash VARCHAR(40) NOT NULL DEFAULT ''"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_product_form_templates_account_hash ON product_form_templates (account_hash)"))
+
+
+def _ensure_temu_schema() -> None:
+    """为本地 create_all 环境的旧 SQLite 补列；生产由 Alembic 负责。"""
+    with engine.begin() as connection:
+        inspector = sa_inspect(connection)
+        if not inspector.has_table("temu_kefu_actions"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("temu_kefu_actions")}
+        if "batch_id" not in columns:
+            connection.execute(text("ALTER TABLE temu_kefu_actions ADD COLUMN batch_id VARCHAR(64)"))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_temu_kefu_actions_batch_id ON temu_kefu_actions (batch_id)"
+            ))
+        if "retry_count" not in columns:
+            connection.execute(text(
+                "ALTER TABLE temu_kefu_actions ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0"
+            ))
+        if "next_retry_at" not in columns:
+            connection.execute(text("ALTER TABLE temu_kefu_actions ADD COLUMN next_retry_at DATETIME"))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_temu_kefu_actions_next_retry_at ON temu_kefu_actions (next_retry_at)"
+            ))
 
 
 def init_database() -> None:
@@ -399,6 +590,8 @@ def init_database() -> None:
         Base.metadata.create_all(engine)
         _ensure_category_schema()
         _ensure_user_schema()
+        _ensure_template_schema()
+        _ensure_temu_schema()
     with SessionLocal.begin() as session:
         if session.scalar(select(InventoryItem.sku).limit(1)) is None:
             cache = _json(PRICE_CACHE_PATH, {})
@@ -1018,13 +1211,25 @@ def insert_audit_log(actor_id: Optional[int], actor_username: str, action: str, 
         ))
 
 
-def list_audit_logs(page: int = 1, page_size: int = 30, action: str = "", actor_id: Optional[int] = None, keyword: str = "") -> dict:
+def list_audit_logs(
+    page: int = 1,
+    page_size: int = 30,
+    action: str = "",
+    actor_id: Optional[int] = None,
+    keyword: str = "",
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+) -> dict:
     with db_session() as session:
         statement = select(AuditLog)
         if action:
             statement = statement.where(AuditLog.action == action)
         if actor_id is not None:
             statement = statement.where(AuditLog.actor_id == actor_id)
+        if start is not None:
+            statement = statement.where(AuditLog.created_at >= start)
+        if end is not None:
+            statement = statement.where(AuditLog.created_at <= end)
         if keyword:
             like = f"%{keyword}%"
             statement = statement.where((AuditLog.detail.like(like)) | (AuditLog.target_id.like(like)) | (AuditLog.actor_username.like(like)))
@@ -1044,6 +1249,18 @@ def list_audit_logs(page: int = 1, page_size: int = 30, action: str = "", actor_
         return {"total": total, "items": items}
 
 
+def delete_audit_logs(ids: list[int]) -> int:
+    """按 id 批量删除审计日志，返回删除条数。"""
+    cleaned = [int(x) for x in (ids or []) if str(x).strip().isdigit()]
+    if not cleaned:
+        return 0
+    with db_session() as session:
+        rows = session.scalars(select(AuditLog).where(AuditLog.id.in_(cleaned))).all()
+        for row in rows:
+            session.delete(row)
+        return len(rows)
+
+
 def distinct_audit_actions() -> list[str]:
     with db_session() as session:
         return list(session.scalars(select(AuditLog.action).distinct().order_by(AuditLog.action)).all())
@@ -1052,6 +1269,26 @@ def distinct_audit_actions() -> list[str]:
 def prune_audit_logs(before: datetime) -> int:
     with db_session() as session:
         return session.query(AuditLog).filter(AuditLog.created_at < before).delete(synchronize_session=False)
+
+
+def prune_temu_login_logs(before: datetime) -> int:
+    """清理过期店铺登录日志（temu_login_logs）。"""
+    with db_session() as session:
+        return (
+            session.query(TemuLoginLog)
+            .filter(TemuLoginLog.created_at < before)
+            .delete(synchronize_session=False)
+        )
+
+
+def prune_temu_kefu_actions(before: datetime) -> int:
+    """清理过期客服写操作审计（temu_kefu_actions）。"""
+    with db_session() as session:
+        return (
+            session.query(TemuKefuAction)
+            .filter(TemuKefuAction.created_at < before)
+            .delete(synchronize_session=False)
+        )
 
 
 def get_user_by_username(username: str) -> Optional[dict]:
@@ -1075,6 +1312,26 @@ def _user_timestamp(value: Optional[datetime]) -> Optional[str]:
     return value.astimezone(timezone.utc).isoformat()
 
 
+def _load_json_list(raw) -> list:
+    """把 TEXT 里存的 JSON 数组读成 list（脏数据一律当空）。"""
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return []
+    return [str(x) for x in value] if isinstance(value, list) else []
+
+
+def _dump_json_list(items) -> str:
+    cleaned = []
+    for x in items or []:
+        s = str(x).strip()
+        if s and s not in cleaned:
+            cleaned.append(s)
+    return json.dumps(cleaned, ensure_ascii=False)
+
+
 def user_dict(row: Optional[User]) -> Optional[dict]:
     if not row:
         return None
@@ -1085,14 +1342,17 @@ def user_dict(row: Optional[User]) -> Optional[dict]:
         "note": row.note or "",
         "role": row.role,
         "status": row.status,
+        "store_access": bool(row.store_access),
+        "modules": _load_json_list(row.modules),
+        "store_modules": _load_json_list(row.store_modules),
         "created_at": _user_timestamp(row.created_at),
         "approved_at": _user_timestamp(row.approved_at),
     }
 
 
-def create_user(username: str, password_hash: str, display_name: str = "", role: str = "user", status: str = "pending") -> dict:
+def create_user(username: str, password_hash: str, display_name: str = "", role: str = "user", status: str = "pending", store_access: bool = False) -> dict:
     with db_session() as session:
-        row = User(username=username, password_hash=password_hash, display_name=display_name, role=role, status=status, approved_at=datetime.now(timezone.utc) if status == "approved" else None)
+        row = User(username=username, password_hash=password_hash, display_name=display_name, role=role, status=status, store_access=store_access, approved_at=datetime.now(timezone.utc) if status == "approved" else None)
         session.add(row)
         session.flush()
         return {**user_dict(row), "password_hash": row.password_hash}
@@ -1114,6 +1374,9 @@ def update_user_credentials(
     password_hash: Optional[str] = None,
     display_name: Optional[str] = None,
     note: Optional[str] = None,
+    store_access: Optional[bool] = None,
+    modules: Optional[list] = None,
+    store_modules: Optional[list] = None,
 ) -> Optional[dict]:
     with db_session() as session:
         row = session.get(User, user_id)
@@ -1127,7 +1390,16 @@ def update_user_credentials(
             row.display_name = display_name
         if note is not None:
             row.note = note
+        if store_access is not None:
+            row.store_access = bool(store_access)
+        if modules is not None:
+            row.modules = _dump_json_list(modules)
+            # store_access 与 modules 里的 "store" 保持同步（老代码仍读它）
+            row.store_access = "store" in [str(x) for x in modules]
+        if store_modules is not None:
+            row.store_modules = _dump_json_list(store_modules)
         return user_dict(row)
+
 
 
 def delete_user(user_id: int) -> bool:
@@ -1143,7 +1415,7 @@ def list_users() -> list[dict]:
     with db_session() as session:
         return [user_dict(row) for row in session.scalars(select(User).order_by(User.id.desc())).all()]
 
-def bulk_update_users(user_ids: list[int], *, display_name: Optional[str] = None, note: Optional[str] = None, status: Optional[str] = None) -> list[dict]:
+def bulk_update_users(user_ids: list[int], *, display_name: Optional[str] = None, note: Optional[str] = None, status: Optional[str] = None, store_access: Optional[bool] = None) -> list[dict]:
     """原子批量更新普通用户资料/状态，禁止混入管理员账号。"""
     ids = list(dict.fromkeys(user_ids))
     if status is not None and status not in {"approved", "rejected"}:
@@ -1162,6 +1434,8 @@ def bulk_update_users(user_ids: list[int], *, display_name: Optional[str] = None
             if status is not None:
                 row.status = status
                 row.approved_at = datetime.now(timezone.utc) if status == "approved" else None
+            if store_access is not None:
+                row.store_access = bool(store_access)
         return [user_dict(row) for row in rows]
 
 
@@ -1190,11 +1464,652 @@ def ensure_admin_user(username: str, password_hash: str) -> Optional[dict]:
                 row.role = "admin"
                 row.status = "approved"
                 row.approved_at = datetime.now(timezone.utc)
+            # 管理员始终拥有店铺管理入口，避免把自己锁在门外
+            if not row.store_access:
+                row.store_access = True
             return user_dict(row)
-        row = User(username=username, password_hash=password_hash, display_name="管理员", role="admin", status="approved", approved_at=datetime.now(timezone.utc))
+        row = User(username=username, password_hash=password_hash, display_name="管理员", role="admin", status="approved", store_access=True, approved_at=datetime.now(timezone.utc))
         session.add(row)
         session.flush()
         return user_dict(row)
+
+
+# ==================== 店铺会话（temu_sessions / 日志 / 凭据） ====================
+
+_TEMU_SESSION_FIELDS = {
+    "account", "account_hash", "account_masked", "mall_id", "mall_name", "mall_list",
+    "status", "remember", "login_at", "last_seen_at", "expires_at",
+    "cooldown_until", "last_error_code", "last_error",
+}
+
+
+def temu_session_dict(row: Optional[TemuSession]) -> Optional[dict]:
+    if not row:
+        return None
+    try:
+        mall_list = json.loads(row.mall_list or "[]")
+    except (TypeError, json.JSONDecodeError):
+        mall_list = []
+    return {
+        "user_id": row.user_id,
+        "account": row.account or "",
+        "account_hash": row.account_hash or "",
+        "account_masked": row.account_masked or "",
+        "mall_id": row.mall_id,
+        "mall_name": row.mall_name or "",
+        "mall_list": mall_list,
+        "status": row.status,
+        "remember": bool(row.remember),
+        "login_at": _user_timestamp(row.login_at),
+        "last_seen_at": _user_timestamp(row.last_seen_at),
+        "expires_at": _user_timestamp(row.expires_at),
+        "cooldown_until": _user_timestamp(row.cooldown_until),
+        "last_error_code": row.last_error_code or "",
+        "last_error": row.last_error or "",
+        "updated_at": _user_timestamp(row.updated_at),
+    }
+
+
+def get_temu_session(user_id: int) -> Optional[dict]:
+    with db_session() as session:
+        return temu_session_dict(session.get(TemuSession, user_id))
+
+
+def upsert_temu_session(user_id: int, **fields) -> dict:
+    with db_session() as session:
+        row = session.get(TemuSession, user_id)
+        if not row:
+            row = TemuSession(user_id=user_id)
+            session.add(row)
+        for key, value in fields.items():
+            if key not in _TEMU_SESSION_FIELDS:
+                continue
+            if key == "mall_list" and not isinstance(value, str):
+                value = json.dumps(value, ensure_ascii=False)
+            setattr(row, key, value)
+        row.updated_at = datetime.now(timezone.utc)
+        session.flush()
+        return temu_session_dict(row)
+
+
+def clear_temu_session(user_id: int, status: str = "logged_out") -> bool:
+    """解绑会话：清账号/店铺信息，但保留「记住密码」偏好。"""
+    with db_session() as session:
+        row = session.get(TemuSession, user_id)
+        if not row:
+            return False
+        row.status = status
+        row.account = ""
+        row.account_hash = ""
+        row.account_masked = ""
+        row.mall_id = None
+        row.mall_name = ""
+        row.mall_list = "[]"
+        row.login_at = None
+        row.last_seen_at = None
+        row.expires_at = None
+        row.updated_at = datetime.now(timezone.utc)
+        return True
+
+
+def find_temu_session_by_account(account_hash: str, exclude_user_id: Optional[int] = None) -> Optional[dict]:
+    """查「同一 Temu 账号是否已被别人占用」（占用态包含 cooling，避免互踢）。"""
+    if not account_hash:
+        return None
+    with db_session() as session:
+        query = select(TemuSession).where(
+            TemuSession.account_hash == account_hash,
+            TemuSession.status.in_(("active", "logging_in", "cooldown")),
+        )
+        if exclude_user_id is not None:
+            query = query.where(TemuSession.user_id != exclude_user_id)
+        return temu_session_dict(session.scalars(query).first())
+
+
+def clear_temu_cooldown(user_id: int) -> None:
+    """把已到期的 cooldown 状态复位成 logged_out。
+
+    冷却到期后 status 会一直停在 'cooldown'，前端据此永久禁用登录按钮、倒计时显示 0 分 00 秒。
+    """
+    with db_session() as session:
+        row = session.get(TemuSession, user_id)
+        if row and row.status == "cooldown":
+            row.status = "logged_out"
+            row.cooldown_until = None
+
+
+def list_temu_sessions() -> list[dict]:
+    with db_session() as session:
+        rows = session.scalars(select(TemuSession).order_by(TemuSession.updated_at.desc())).all()
+        return [temu_session_dict(row) for row in rows]
+
+
+def add_temu_login_log(user_id: Optional[int], account_masked: str, action: str, code: str = "", message: str = "", ip: str = "") -> None:
+    with db_session() as session:
+        session.add(TemuLoginLog(
+            user_id=user_id,
+            account_masked=account_masked or "",
+            action=action,
+            code=str(code or "")[:40],
+            message=str(message or "")[:255],
+            ip=(ip or "")[:64],
+        ))
+
+
+def delete_temu_login_logs(ids: list[int]) -> int:
+    """按 id 批量删除登录日志，返回删除条数。"""
+    cleaned = [int(x) for x in (ids or []) if str(x).strip().isdigit()]
+    if not cleaned:
+        return 0
+    with db_session() as session:
+        rows = session.scalars(select(TemuLoginLog).where(TemuLoginLog.id.in_(cleaned))).all()
+        for row in rows:
+            session.delete(row)
+        return len(rows)
+
+
+def list_temu_login_logs(
+    limit: int = 100,
+    user_id: Optional[int] = None,
+    action: Optional[str] = None,
+    keyword: str = "",
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+) -> list[dict]:
+    with db_session() as session:
+        query = select(TemuLoginLog)
+        if user_id is not None:
+            query = query.where(TemuLoginLog.user_id == user_id)
+        if action:
+            query = query.where(TemuLoginLog.action == action)
+        # 关键字：账号 / 消息 / IP 任一命中
+        kw = (keyword or "").strip()
+        if kw:
+            like = f"%{kw}%"
+            query = query.where(
+                or_(
+                    TemuLoginLog.account_masked.like(like),
+                    TemuLoginLog.message.like(like),
+                    TemuLoginLog.ip.like(like),
+                )
+            )
+        if start is not None:
+            query = query.where(TemuLoginLog.created_at >= start)
+        if end is not None:
+            query = query.where(TemuLoginLog.created_at <= end)
+        query = query.order_by(TemuLoginLog.id.desc()).limit(max(1, min(int(limit), 500)))
+        return [
+            {
+                "id": row.id,
+                "user_id": row.user_id,
+                "account_masked": row.account_masked,
+                "action": row.action,
+                "code": row.code,
+                "message": row.message,
+                "ip": row.ip,
+                "created_at": _user_timestamp(row.created_at),
+            }
+            for row in session.scalars(query).all()
+        ]
+
+
+def _store_account_dict(row: TemuStoreAccount) -> dict:
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "account": row.account or "",
+        "account_hash": row.account_hash or "",
+        "account_masked": row.account_masked or "",
+        "label": row.label or "",
+        "mall_name": row.mall_name or "",
+        "key_version": row.key_version,
+        "created_at": _user_timestamp(row.created_at),
+        "updated_at": _user_timestamp(row.updated_at),
+        "last_used_at": _user_timestamp(row.last_used_at),
+    }
+
+
+def list_store_accounts(user_id: int) -> list[dict]:
+    with db_session() as session:
+        rows = session.scalars(
+            select(TemuStoreAccount)
+            .where(TemuStoreAccount.user_id == user_id)
+            .order_by(TemuStoreAccount.updated_at.desc())
+        ).all()
+        return [_store_account_dict(row) for row in rows]
+
+
+def get_store_account(account_id: int, user_id: Optional[int] = None) -> Optional[dict]:
+    with db_session() as session:
+        row = session.get(TemuStoreAccount, account_id)
+        if not row or (user_id is not None and row.user_id != user_id):
+            return None
+        item = _store_account_dict(row)
+        item["ciphertext"] = row.ciphertext
+        return item
+
+
+def save_store_account(
+    user_id: int,
+    *,
+    account: str,
+    account_hash: str,
+    account_masked: str,
+    ciphertext: str,
+    key_version: int = 1,
+    label: str = "",
+    mall_name: str = "",
+) -> dict:
+    """按 (user_id, account_hash) 幂等写入：同一账号再次保存就更新密文。"""
+    now = datetime.now(timezone.utc)
+    with db_session() as session:
+        row = session.scalar(
+            select(TemuStoreAccount).where(
+                TemuStoreAccount.user_id == user_id,
+                TemuStoreAccount.account_hash == account_hash,
+            )
+        )
+        if row is None:
+            row = TemuStoreAccount(
+                user_id=user_id,
+                account=account,
+                account_hash=account_hash,
+                account_masked=account_masked,
+                label=label or "",
+                mall_name=mall_name or "",
+                ciphertext=ciphertext,
+                key_version=key_version,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+        else:
+            row.account = account
+            row.account_masked = account_masked
+            row.ciphertext = ciphertext
+            row.key_version = key_version
+            row.updated_at = now
+            if label:
+                row.label = label
+            if mall_name:
+                row.mall_name = mall_name
+        session.flush()
+        return _store_account_dict(row)
+
+
+def touch_store_account(account_id: int) -> None:
+    with db_session() as session:
+        row = session.get(TemuStoreAccount, account_id)
+        if row:
+            row.last_used_at = datetime.now(timezone.utc)
+
+
+def delete_store_account(account_id: int, user_id: int) -> bool:
+    with db_session() as session:
+        row = session.scalar(
+            select(TemuStoreAccount).where(
+                TemuStoreAccount.id == account_id,
+                TemuStoreAccount.user_id == user_id,
+            )
+        )
+        if not row:
+            return False
+        session.delete(row)
+        return True
+
+
+def get_temu_credential(user_id: int) -> Optional[dict]:
+    with db_session() as session:
+        row = session.get(TemuCredential, user_id)
+        if not row:
+            return None
+        return {
+            "user_id": row.user_id,
+            "account": row.account,
+            "ciphertext": row.ciphertext,
+            "key_version": row.key_version,
+            "updated_at": _user_timestamp(row.updated_at),
+        }
+
+
+def save_temu_credential(user_id: int, account: str, ciphertext: str, key_version: int = 1) -> None:
+    with db_session() as session:
+        row = session.get(TemuCredential, user_id)
+        if not row:
+            row = TemuCredential(user_id=user_id)
+            session.add(row)
+        row.account = account or ""
+        row.ciphertext = ciphertext or ""
+        row.key_version = key_version
+        row.updated_at = datetime.now(timezone.utc)
+
+
+def delete_temu_credential(user_id: int) -> bool:
+    with db_session() as session:
+        row = session.get(TemuCredential, user_id)
+        if not row:
+            return False
+        session.delete(row)
+        return True
+
+
+# ==================== 客服写操作事务（temu_kefu_actions） ====================
+
+_KEFU_ACTION_FIELDS = {
+    "user_id", "batch_id", "account_masked", "tool_id", "tool_name", "data_type", "data_type_name",
+    "data_id", "reason_code", "reason_detail", "stage", "preview", "product_snapshot",
+    "parent_msg_id", "intercept_code", "intercept_message", "request_body", "response",
+    "msg_id", "robot_reply", "error", "sent_at", "finished_at", "retry_count", "next_retry_at",
+}
+_KEFU_JSON_FIELDS = ("preview", "product_snapshot", "request_body", "response", "robot_reply")
+
+
+def _json_or_none(value: str):
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return None
+
+
+def kefu_action_dict(row: Optional[TemuKefuAction]) -> Optional[dict]:
+    if not row:
+        return None
+    data = {
+        "id": row.id,
+        "user_id": row.user_id,
+        "batch_id": row.batch_id,
+        "account_masked": row.account_masked,
+        "tool_id": row.tool_id,
+        "tool_name": row.tool_name,
+        "data_type": row.data_type,
+        "data_type_name": row.data_type_name,
+        "data_id": row.data_id,
+        "reason_code": row.reason_code,
+        "reason_detail": row.reason_detail,
+        "stage": row.stage,
+        "parent_msg_id": row.parent_msg_id,
+        "intercept_code": row.intercept_code,
+        "intercept_message": row.intercept_message,
+        "msg_id": row.msg_id,
+        "error": row.error,
+        "retry_count": row.retry_count or 0,
+        "next_retry_at": _user_timestamp(row.next_retry_at),
+        "created_at": _user_timestamp(row.created_at),
+        "sent_at": _user_timestamp(row.sent_at),
+        "finished_at": _user_timestamp(row.finished_at),
+    }
+    for name in _KEFU_JSON_FIELDS:
+        data[name] = _json_or_none(getattr(row, name))
+    return data
+
+
+def create_kefu_action(action_id: str, **fields) -> dict:
+    with db_session() as session:
+        row = TemuKefuAction(id=action_id)
+        for key, value in fields.items():
+            if key not in _KEFU_ACTION_FIELDS:
+                continue
+            if key in _KEFU_JSON_FIELDS and not isinstance(value, str):
+                value = json.dumps(value, ensure_ascii=False)
+            setattr(row, key, value)
+        session.add(row)
+        session.flush()
+        return kefu_action_dict(row)
+
+
+def get_kefu_action(action_id: str) -> Optional[dict]:
+    with db_session() as session:
+        return kefu_action_dict(session.get(TemuKefuAction, action_id))
+
+
+def update_kefu_action(action_id: str, **fields) -> Optional[dict]:
+    with db_session() as session:
+        row = session.get(TemuKefuAction, action_id)
+        if not row:
+            return None
+        for key, value in fields.items():
+            if key not in _KEFU_ACTION_FIELDS:
+                continue
+            if key in _KEFU_JSON_FIELDS and value is not None and not isinstance(value, str):
+                value = json.dumps(value, ensure_ascii=False)
+            setattr(row, key, value)
+        return kefu_action_dict(row)
+
+
+def list_kefu_actions(
+    limit: int = 50,
+    user_id: Optional[int] = None,
+    stage: Optional[str] = None,
+    keyword: str = "",
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+) -> list[dict]:
+    with db_session() as session:
+        query = select(TemuKefuAction)
+        if user_id is not None:
+            query = query.where(TemuKefuAction.user_id == user_id)
+        if stage:
+            query = query.where(TemuKefuAction.stage == stage)
+        # 关键字：账号 / 工具名 / 商品 ID / 原因 任一命中
+        kw = (keyword or "").strip()
+        if kw:
+            like = f"%{kw}%"
+            query = query.where(
+                or_(
+                    TemuKefuAction.account_masked.like(like),
+                    TemuKefuAction.tool_name.like(like),
+                    TemuKefuAction.data_id.like(like),
+                    TemuKefuAction.reason_detail.like(like),
+                )
+            )
+        if start is not None:
+            query = query.where(TemuKefuAction.created_at >= start)
+        if end is not None:
+            query = query.where(TemuKefuAction.created_at <= end)
+        query = query.order_by(TemuKefuAction.created_at.desc()).limit(max(1, min(int(limit), 200)))
+        return [kefu_action_dict(row) for row in session.scalars(query).all()]
+
+
+def delete_kefu_actions(ids: list[str]) -> int:
+    """按 id 批量删除客服操作审计记录，返回删除条数。"""
+    cleaned = [str(x).strip() for x in (ids or []) if str(x).strip()]
+    if not cleaned:
+        return 0
+    with db_session() as session:
+        rows = session.scalars(select(TemuKefuAction).where(TemuKefuAction.id.in_(cleaned))).all()
+        for row in rows:
+            session.delete(row)
+        return len(rows)
+
+
+def list_kefu_actions_by_batch(batch_id: str) -> list[dict]:
+    """按创建顺序返回一批里的全部操作（进度列表用）。"""
+    with db_session() as session:
+        rows = session.scalars(
+            select(TemuKefuAction)
+            .where(TemuKefuAction.batch_id == batch_id)
+            .order_by(TemuKefuAction.created_at.asc(), TemuKefuAction.id.asc())
+        ).all()
+        return [kefu_action_dict(row) for row in rows]
+
+
+def latest_kefu_sent_at(account_masked: str) -> Optional[datetime]:
+    """该（脱敏）账号最近一次成功提交的时间，用于隐形限流保护。"""
+    if not account_masked:
+        return None
+    with db_session() as session:
+        row = session.scalars(
+            select(TemuKefuAction)
+            .where(
+                TemuKefuAction.account_masked == account_masked,
+                TemuKefuAction.sent_at.isnot(None),
+            )
+            .order_by(TemuKefuAction.sent_at.desc())
+            .limit(1)
+        ).first()
+        return row.sent_at if row else None
+
+
+def latest_kefu_parent_msg_id(account_masked: str, tool_id: Optional[str] = None) -> str:
+    """该账号最近一次成功提交用过的 parentMsgId。
+
+    工具卡片（contentType=6）只在会话早期推送，随后会被大量提交/受理消息挤出
+    「最近 50 条」窗口；而 parentMsgId 本身在会话内可长期复用（实测同一 ID 用了 17 次），
+    所以卡片拉不到时用这里兜底，不必让用户重开会话。
+    """
+    if not account_masked:
+        return ""
+    with db_session() as session:
+        query = select(TemuKefuAction).where(
+            TemuKefuAction.account_masked == account_masked,
+            TemuKefuAction.parent_msg_id != "",
+            TemuKefuAction.stage.in_(("sent", "accepted", "replied")),
+        )
+        if tool_id:
+            query = query.where(TemuKefuAction.tool_id == tool_id)
+        query = query.order_by(TemuKefuAction.sent_at.desc()).limit(1)
+        row = session.scalars(query).first()
+        return (row.parent_msg_id or "") if row else ""
+
+
+def list_kefu_retry_candidates(now: datetime, limit: int = 10) -> list[dict]:
+    """到期待重试的操作（stage=retry_pending 且 next_retry_at <= now）。"""
+    with db_session() as session:
+        rows = session.scalars(
+            select(TemuKefuAction)
+            .where(
+                TemuKefuAction.stage == "retry_pending",
+                TemuKefuAction.next_retry_at.isnot(None),
+                TemuKefuAction.next_retry_at <= now,
+            )
+            .order_by(TemuKefuAction.next_retry_at.asc())
+            .limit(max(1, min(int(limit), 50)))
+        ).all()
+        return [kefu_action_dict(row) for row in rows]
+
+
+class ProductCreateLog(Base):
+    """每次建品的落库记录：用户管理页的「今日/历史创建数」统计来源。
+
+    批量创建时每条商品也各记一行（batch=True），失败也记，error 里是原因。
+    """
+
+    __tablename__ = "product_create_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    product_name: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(12), default="ok")  # ok / failed
+    error: Mapped[str] = mapped_column(String(500), default="")
+    product_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    batch: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ProductBatchState(Base):
+    """批量创建任务的进度快照（一用户一条，覆盖式）。
+
+    之前只存在进程内存里，后端一重启进度就没了，前端轮询看到 idle 会以为任务丢了。
+    现在每次状态变更写穿到库，重启后能恢复。
+    """
+
+    __tablename__ = "product_batch_states"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    payload: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ProductFormTemplate(Base):
+    """手动创建商品的「表单模板」：把一批填好的属性存下来，下次复用。
+
+    复用时刻意跳过易变字段（标题、图片、货号、颜色）——那些每个商品都不一样。
+    """
+
+    __tablename__ = "product_form_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    name: Mapped[str] = mapped_column(String(120), default="")
+    note: Mapped[str] = mapped_column(String(500), default="")
+    # 绑定到哪个 Temu 店铺（sha1(account) 前 16 位，与 bridge 同一套哈希）。
+    # 空表示「老数据 / 不区分店铺」，对所有店铺可见。
+    account_hash: Mapped[str] = mapped_column(String(40), default="", index=True)
+    # 存的是 buildForm() 的 JSON 快照
+    form_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ==================== 批量任务（temu_kefu_batches） ====================
+
+_KEFU_BATCH_FIELDS = {
+    "user_id", "account_masked", "tool_id", "tool_name", "data_type_name",
+    "reason_code", "reason_detail", "status", "total", "succeeded", "failed",
+    "skipped", "error", "started_at", "finished_at",
+}
+
+
+def kefu_batch_dict(row: Optional[TemuKefuBatch]) -> Optional[dict]:
+    if not row:
+        return None
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "account_masked": row.account_masked,
+        "tool_id": row.tool_id,
+        "tool_name": row.tool_name,
+        "data_type_name": row.data_type_name,
+        "reason_code": row.reason_code,
+        "reason_detail": row.reason_detail,
+        "status": row.status,
+        "total": row.total,
+        "succeeded": row.succeeded,
+        "failed": row.failed,
+        "skipped": row.skipped,
+        "error": row.error,
+        "created_at": _user_timestamp(row.created_at),
+        "started_at": _user_timestamp(row.started_at),
+        "finished_at": _user_timestamp(row.finished_at),
+    }
+
+
+def create_kefu_batch(batch_id: str, **fields) -> dict:
+    with db_session() as session:
+        row = TemuKefuBatch(id=batch_id)
+        for key, value in fields.items():
+            if key in _KEFU_BATCH_FIELDS:
+                setattr(row, key, value)
+        session.add(row)
+        session.flush()
+        return kefu_batch_dict(row)
+
+
+def update_kefu_batch(batch_id: str, **fields) -> Optional[dict]:
+    with db_session() as session:
+        row = session.get(TemuKefuBatch, batch_id)
+        if not row:
+            return None
+        for key, value in fields.items():
+            if key in _KEFU_BATCH_FIELDS:
+                setattr(row, key, value)
+        return kefu_batch_dict(row)
+
+
+def get_kefu_batch(batch_id: str) -> Optional[dict]:
+    with db_session() as session:
+        return kefu_batch_dict(session.get(TemuKefuBatch, batch_id))
+
+
+def list_kefu_batches(user_id: Optional[int] = None, limit: int = 20) -> list[dict]:
+    with db_session() as session:
+        query = select(TemuKefuBatch)
+        if user_id is not None:
+            query = query.where(TemuKefuBatch.user_id == user_id)
+        query = query.order_by(TemuKefuBatch.created_at.desc()).limit(max(1, min(int(limit), 100)))
+        return [kefu_batch_dict(row) for row in session.scalars(query).all()]
 
 
 def database_status() -> dict:
@@ -1233,3 +2148,78 @@ def set_flag(key: str, value: bool = True) -> None:
             row.updated_at = datetime.now(timezone.utc)
         else:
             session.add(AppSetting(key=key, value=encoded))
+
+def log_product_create(
+    user_id: int,
+    product_name: str,
+    *,
+    status: str = "ok",
+    error: str = "",
+    product_id: Optional[int] = None,
+    batch: bool = False,
+) -> None:
+    """记一条建品日志（失败不抛出，统计用途不能反过来影响建品）。"""
+    try:
+        with db_session() as session:
+            session.add(
+                ProductCreateLog(
+                    user_id=int(user_id),
+                    product_name=str(product_name or "")[:255],
+                    status=str(status or "ok")[:12],
+                    error=str(error or "")[:500],
+                    product_id=product_id,
+                    batch=bool(batch),
+                )
+            )
+    except Exception:  # noqa: BLE001 - 日志失败不影响主流程
+        logging.getLogger("temubox.product").warning("写建品日志失败", exc_info=True)
+
+
+def product_create_stats(user_id: Optional[int] = None) -> dict:
+    """建品统计：总成功数、今日成功数、失败数。user_id=None 时统计全站。"""
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    with db_session() as session:
+        def _count(*conds):
+            stmt = select(func.count()).select_from(ProductCreateLog)
+            for c in conds:
+                stmt = stmt.where(c)
+            return session.scalar(stmt) or 0
+
+        base = [] if user_id is None else [ProductCreateLog.user_id == int(user_id)]
+        ok = [ProductCreateLog.status == "ok"]
+        return {
+            "total_ok": _count(*(base + ok)),
+            "today_ok": _count(*(base + ok + [ProductCreateLog.created_at >= today])),
+            "week_ok": _count(*(base + ok + [ProductCreateLog.created_at >= now - timedelta(days=7)])),
+            "failed": _count(*(base + [ProductCreateLog.status == "failed"])),
+        }
+
+def save_batch_state(user_id: int, payload: dict) -> None:
+    """写穿批量任务进度（失败只记日志，不能反过来影响建品）。"""
+    try:
+        with db_session() as session:
+            row = session.get(ProductBatchState, int(user_id))
+            encoded = json.dumps(payload, ensure_ascii=False)
+            if row:
+                row.payload = encoded
+                row.updated_at = datetime.now(timezone.utc)
+            else:
+                session.add(ProductBatchState(user_id=int(user_id), payload=encoded))
+    except Exception:  # noqa: BLE001
+        logging.getLogger("temubox.product").warning("写批量进度失败", exc_info=True)
+
+
+def load_batch_state(user_id: int) -> Optional[dict]:
+    """读回批量任务进度（没有返回 None）。"""
+    try:
+        with db_session() as session:
+            row = session.get(ProductBatchState, int(user_id))
+            if not row or not row.payload:
+                return None
+            data = json.loads(row.payload)
+            return data if isinstance(data, dict) else None
+    except Exception:  # noqa: BLE001
+        return None

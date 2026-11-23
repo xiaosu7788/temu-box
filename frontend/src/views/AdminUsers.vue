@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ArrowDown, Check, CloseBold, Delete, EditPen, MoreFilled, Refresh, Select } from '@element-plus/icons-vue'
+import { ArrowDown, Check, CloseBold, Delete, EditPen, MoreFilled, Refresh, Select, Shop } from '@element-plus/icons-vue'
 import {
   bulkDeleteAdminUsers,
   bulkUpdateAdminUsers,
@@ -21,10 +21,41 @@ const bulkSaving = ref(false)
 const editing = ref<User | null>(null)
 const editDialogVisible = ref(false)
 const bulkDialogVisible = ref(false)
-const editForm = reactive({ username: '', display_name: '', note: '', password: '' })
+const MODULE_OPTIONS = [
+  { key: 'orders', label: '订单计算' },
+  { key: 'inventory', label: '库存管理' },
+  { key: 'activities', label: '批量报名活动' },
+  { key: 'tasks', label: '任务记录' },
+  { key: 'store', label: '店铺管理' },
+]
+const STORE_MODULE_OPTIONS = [
+  { key: 'goods', label: '商品查询' },
+  { key: 'create', label: '创建商品' },
+  { key: 'kefu', label: '客服自助' },
+  { key: 'actions', label: '操作记录' },
+]
+
+const editForm = reactive({
+  username: '',
+  display_name: '',
+  note: '',
+  password: '',
+  modules: [] as string[],
+  store_modules: [] as string[],
+})
 const bulkForm = reactive({ setDisplayName: false, display_name: '', setNote: false, note: '' })
 const selectedIds = computed(() => selectedUsers.value.filter((user) => user.role !== 'admin').map((user) => user.id))
 const canBulkEdit = computed(() => bulkForm.setDisplayName || bulkForm.setNote)
+
+// 店铺管理模块准入筛选：默认关闭，管理员逐个开通
+const storeFilter = ref<'all' | 'granted' | 'revoked'>('all')
+const storeSwitchSaving = ref<number | null>(null)
+const filteredUsers = computed(() => {
+  if (storeFilter.value === 'all') return users.value
+  const wantGranted = storeFilter.value === 'granted'
+  return users.value.filter((user) => (user.role === 'admin' ? true : !!user.store_access) === wantGranted)
+})
+const storeNotGrantedCount = computed(() => users.value.filter((user) => user.role !== 'admin' && !user.store_access).length)
 
 async function load() {
   loading.value = true
@@ -78,6 +109,15 @@ function openEdit(user: User) {
   editForm.display_name = user.display_name || ''
   editForm.note = user.note || ''
   editForm.password = ''
+  // 老用户没配过 modules 时按默认（除店铺外全开）
+  editForm.modules = Array.isArray(user.modules)
+    ? [...user.modules]
+    : user.store_access
+      ? ['orders', 'inventory', 'activities', 'tasks', 'store']
+      : ['orders', 'inventory', 'activities', 'tasks']
+  editForm.store_modules = Array.isArray(user.store_modules) && user.store_modules.length
+    ? [...user.store_modules]
+    : ['goods', 'create', 'kefu', 'actions']
   editDialogVisible.value = true
 }
 
@@ -88,6 +128,8 @@ async function saveUser() {
     Object.assign(editing.value, await updateAdminUser(editing.value.id, {
       username: editForm.username.trim(),
       display_name: editForm.display_name.trim(),
+      modules: editForm.modules,
+      store_modules: editForm.store_modules,
       note: editForm.note.trim(),
       password: editForm.password || undefined,
     }))
@@ -116,6 +158,7 @@ async function removeUser(user: User) {
     deleting.value = null
   }
 }
+
 
 function handleRowCommand(command: string, user: User) {
   if (command === 'edit') openEdit(user)
@@ -186,7 +229,52 @@ function handleBulkCommand(command: string) {
   if (command === 'edit') openBulkEdit()
   if (command === 'enable') void bulkSetStatus('approved')
   if (command === 'disable') void bulkSetStatus('rejected')
+  if (command === 'store-on') void bulkSetStoreAccess(true)
+  if (command === 'store-off') void bulkSetStoreAccess(false)
   if (command === 'delete') void bulkDelete()
+}
+
+/** 行内开关：关闭时必须二次确认（会强制退出该用户的店铺会话） */
+async function toggleStoreAccess(user: User, enabled: boolean) {
+  if (user.role === 'admin') return
+  if (!enabled && !await confirmAction(
+    `关闭「${user.username}」的店铺管理模块？该用户当前的店铺会话会被强制退出登录，前端入口也会隐藏。`,
+    '关闭店铺管理模块',
+  )) {
+    return
+  }
+  storeSwitchSaving.value = user.id
+  try {
+    Object.assign(user, await updateAdminUser(user.id, { store_access: enabled }))
+    notifySuccess(enabled ? '已开通店铺管理模块' : '已关闭店铺管理模块')
+  } catch (error) {
+    notifyError(error)
+    await load()
+  } finally {
+    storeSwitchSaving.value = null
+  }
+}
+
+async function bulkSetStoreAccess(enabled: boolean) {
+  if (!selectedIds.value.length) return
+  const label = enabled ? '开通' : '关闭'
+  const extra = enabled ? '' : '，并强制退出这些用户当前的店铺会话'
+  if (!await confirmAction(
+    `确定${label}选中的 ${selectedIds.value.length} 个用户的店铺管理模块${extra}吗？`,
+    `批量${label}店铺管理模块`,
+  )) return
+  bulkSaving.value = true
+  try {
+    const result = await bulkUpdateAdminUsers({ user_ids: selectedIds.value, store_access: enabled })
+    const revoked = result.store_sessions_revoked || 0
+    selectedUsers.value = []
+    await load()
+    notifySuccess(`已${label} ${result.updated} 个用户${revoked ? `，强制退出 ${revoked} 个店铺会话` : ''}`)
+  } catch (error) {
+    notifyError(error)
+  } finally {
+    bulkSaving.value = false
+  }
 }
 
 onMounted(load)
@@ -198,6 +286,11 @@ onMounted(load)
       <div class="subpage-title"><div><h2>用户管理</h2><p>审核并管理普通用户账号、显示名称与内部备注</p></div></div>
       <div class="user-toolbar">
         <el-tag v-if="selectedIds.length" type="primary" effect="plain">已选 {{ selectedIds.length }} 人</el-tag>
+        <el-select v-model="storeFilter" class="store-filter" aria-label="按店铺管理开通状态筛选">
+          <el-option label="店铺管理：全部" value="all" />
+          <el-option label="已开通店铺管理" value="granted" />
+          <el-option label="未开通店铺管理" value="revoked" />
+        </el-select>
         <el-dropdown v-if="selectedIds.length" trigger="click" @command="handleBulkCommand">
           <el-button type="primary" :icon="MoreFilled" :loading="bulkSaving">
             批量操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
@@ -207,6 +300,8 @@ onMounted(load)
               <el-dropdown-item command="edit" :icon="EditPen">批量编辑名称/备注</el-dropdown-item>
               <el-dropdown-item command="enable" :icon="Check">批量启用</el-dropdown-item>
               <el-dropdown-item command="disable" :icon="CloseBold">批量禁用</el-dropdown-item>
+              <el-dropdown-item command="store-on" :icon="Shop" divided>批量开通店铺管理</el-dropdown-item>
+              <el-dropdown-item command="store-off" :icon="Shop">批量关闭店铺管理</el-dropdown-item>
               <el-dropdown-item command="delete" :icon="Delete" divided>批量删除</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -217,11 +312,12 @@ onMounted(load)
 
     <el-alert class="users-hint" type="info" :closable="false" show-icon>
       勾选表头可全选普通用户；管理员账号不可批量编辑或删除。备注仅管理员可见，不会显示给用户。
+      店铺管理模块默认关闭，需逐个开通（当前 {{ storeNotGrantedCount }} 个用户未开通）；关闭时会强制退出该用户已登录的店铺会话。
     </el-alert>
 
     <el-table
       v-loading="loading"
-      :data="users"
+      :data="filteredUsers"
       row-key="id"
       stripe
       @selection-change="onSelectionChange"
@@ -238,26 +334,39 @@ onMounted(load)
       <el-table-column label="状态" width="100">
         <template #default="scope"><el-tag :type="statusType(scope.row.status)" size="small">{{ statusText(scope.row.status) }}</el-tag></template>
       </el-table-column>
+      <el-table-column label="店铺管理" width="118">
+        <template #default="scope">
+          <el-switch
+            v-if="scope.row.role !== 'admin'"
+            :model-value="!!scope.row.store_access"
+            :loading="storeSwitchSaving === scope.row.id"
+            size="small"
+            @update:model-value="(value: boolean | string | number) => toggleStoreAccess(scope.row, Boolean(value))"
+          />
+          <span v-else class="admin-row-hint">始终开通</span>
+        </template>
+      </el-table-column>
       <el-table-column label="注册时间" min-width="165">
         <template #default="scope"><span class="user-date">{{ formatLocalDateTime(scope.row.created_at) }}</span></template>
       </el-table-column>
       <el-table-column label="操作" width="190" fixed="right">
         <template #default="scope">
-          <div v-if="scope.row.role !== 'admin'" class="row-actions">
-            <el-button v-if="scope.row.status === 'pending'" size="small" type="success" :icon="Select" @click="changeStatus(scope.row, 'approve')">通过</el-button>
-            <el-button v-if="scope.row.status !== 'rejected'" size="small" plain type="warning" :icon="CloseBold" @click="changeStatus(scope.row, 'disable')">禁用</el-button>
-            <el-button v-else size="small" plain type="success" :icon="Check" @click="changeStatus(scope.row, 'enable')">启用</el-button>
-            <el-dropdown trigger="click" @command="(command: string) => handleRowCommand(command, scope.row)">
-              <el-button size="small" circle :icon="MoreFilled" aria-label="更多操作" />
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="edit" :icon="EditPen">编辑资料</el-dropdown-item>
-                  <el-dropdown-item command="delete" :icon="Delete" divided>删除用户</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+          <div class="row-actions">
+            <template v-if="scope.row.role !== 'admin'">
+              <el-button v-if="scope.row.status === 'pending'" size="small" type="success" :icon="Select" @click="changeStatus(scope.row, 'approve')">通过</el-button>
+              <el-button v-if="scope.row.status !== 'rejected'" size="small" plain type="warning" :icon="CloseBold" @click="changeStatus(scope.row, 'disable')">禁用</el-button>
+              <el-button v-else size="small" plain type="success" :icon="Check" @click="changeStatus(scope.row, 'enable')">启用</el-button>
+              <el-dropdown trigger="click" @command="(command: string) => handleRowCommand(command, scope.row)">
+                <el-button size="small" circle :icon="MoreFilled" aria-label="更多操作" />
+                <template #dropdown>
+                  <el-dropdown-menu>
+                                      <el-dropdown-item command="edit" :icon="EditPen" divided>编辑资料</el-dropdown-item>
+                    <el-dropdown-item command="delete" :icon="Delete" divided>删除用户</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </template>
           </div>
-          <span v-else class="admin-row-hint">管理员</span>
         </template>
       </el-table-column>
     </el-table>
@@ -269,6 +378,18 @@ onMounted(load)
         <el-form-item label="显示名称"><el-input v-model="editForm.display_name" maxlength="120" placeholder="请输入显示名称" /></el-form-item>
         <el-form-item label="管理员备注"><el-input v-model="editForm.note" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="仅管理员可见" /></el-form-item>
         <el-form-item label="重置密码"><el-input v-model="editForm.password" type="password" show-password maxlength="128" autocomplete="new-password" placeholder="不修改密码请留空" /></el-form-item>
+        <el-form-item label="模块权限">
+          <el-checkbox-group v-model="editForm.modules">
+            <el-checkbox v-for="m in MODULE_OPTIONS" :key="m.key" :value="m.key">{{ m.label }}</el-checkbox>
+          </el-checkbox-group>
+          <p class="perm-hint">未勾选的模块，该用户登录后看不到入口，直接输地址也会被拦回首页</p>
+        </el-form-item>
+        <el-form-item v-if="editForm.modules.includes('store')" label="店铺管理内的模块">
+          <el-checkbox-group v-model="editForm.store_modules">
+            <el-checkbox v-for="m in STORE_MODULE_OPTIONS" :key="m.key" :value="m.key">{{ m.label }}</el-checkbox>
+          </el-checkbox-group>
+          <p class="perm-hint">只勾「商品查询」时，该用户只能看看商品，不能创建商品</p>
+        </el-form-item>
       </el-form>
       <template #footer><el-button @click="editDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" :disabled="editForm.username.trim().length < 3 || (!!editForm.password && editForm.password.length < 8)" @click="saveUser">保存</el-button></template>
     </el-dialog>
@@ -287,10 +408,40 @@ onMounted(load)
       </el-form>
       <template #footer><el-button @click="bulkDialogVisible = false">取消</el-button><el-button type="primary" :loading="bulkSaving" :disabled="!canBulkEdit" @click="saveBulkEdit">应用到所选用户</el-button></template>
     </el-dialog>
+
+
   </section>
 </template>
 
 <style scoped>
+.credential-password {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+.acct-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.acct-sub {
+  color: var(--muted, #6b7280);
+  font-size: 12px;
+}
+
+.binding-error {
+  color: var(--danger, #dc2626);
+  font-size: 12px;
+}
+
+.credential-note {
+  margin: 10px 0 0;
+  color: var(--muted, #6b7280);
+  font-size: 12px;
+}
+
 .user-toolbar,
 .row-actions {
   display: flex;
@@ -305,6 +456,10 @@ onMounted(load)
 
 .users-hint {
   margin: 12px 0;
+}
+
+.store-filter {
+  width: 168px;
 }
 
 .user-date {
@@ -327,5 +482,10 @@ onMounted(load)
   .user-toolbar {
     justify-content: flex-start;
   }
+}
+.perm-hint {
+  margin: 4px 0 0;
+  color: var(--muted, #9ca3af);
+  font-size: 12px;
 }
 </style>

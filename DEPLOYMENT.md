@@ -193,6 +193,41 @@ chmod +x scripts/enable-updater.sh
 - 如果整个项目被 `docker compose down` 停掉，或只执行了不带 `--profile ops` 的 `up -d`，边车可能不再运行，重跑启用脚本即可恢复；
 - 不需要该功能时：把 `.env.docker` 中的 `UPDATER_TOKEN` 留空并重启后端，后台会提示未启用；再执行 `docker compose --env-file .env.docker --profile ops rm -sf updater` 移除边车容器。
 
+## 7.5 店铺管理模块（可选）
+
+店铺管理（商品查询 / 客服自助工具）需要一个额外的 bridge 容器：它是内网的 Node 服务，把 Temu 卖家后台
+协议包装成 HTTP，**不发布端口、不对公网暴露**。
+
+```bash
+# 1) 生成令牌并写入 .env.docker（与后端共用）
+echo "BRIDGE_TOKEN=$(openssl rand -hex 32)" >> .env.docker
+#    可选：开启「记住密码」，需要单独的 32 字节 base64 密钥（不要放进备份）
+# echo "CREDENTIAL_KEY=$(openssl rand -base64 32)" >> .env.docker
+
+# 2) 启动 bridge（profile: stores）
+docker compose --env-file .env.docker --profile stores up -d --build bridge
+
+# 3) 重启后端，让 STORE_BRIDGE_TOKEN / CREDENTIAL_KEY 生效
+docker compose --env-file .env.docker up -d backend
+
+# 4) 后台「用户管理」给需要的运营开通「店铺管理」
+```
+
+排障：
+
+```bash
+docker compose --env-file .env.docker logs -f --tail=200 bridge
+docker compose --env-file .env.docker exec bridge node -e "require('http').get('http://127.0.0.1:8898/ping',r=>console.log(r.statusCode))"
+```
+
+注意事项：
+
+- `BRIDGE_TOKEN` 不设置时 bridge 会拒绝启动；后端对应接口返回 503「店铺管理服务未配置」，其余功能不受影响；
+- 会话文件落在 `bridge_data` 卷，用户「退出登录」或管理员收回权限时会立即删除；
+- 同一 Temu 账号全系统只能有一个活跃会话，重复登录会互相顶号；用户在浏览器登录同一账号也会让服务端掉线；
+- 登录连续失败会触发 Temu 的图形验证码（`54001`），冷却 20~25 分钟，期间不要反复重试（会刷新冷却）；
+- 关闭某用户的店铺管理权限会强制退出其店铺会话，请提前通知运营。
+
 ## 8. 日志与状态
 
 ```bash

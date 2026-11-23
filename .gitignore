@@ -21,3 +21,16 @@ __pycache__/
 .env.docker
 backups/
 .reasonix/
+
+# bridge（店铺管理模块）：会话文件与缓存一律不入库
+bridge/runtime/session_*.json
+bridge/runtime/glo_session*.json
+bridge/runtime/site_table.json
+bridge/runtime/region_sessions.json
+bridge/test/.smoke-data/
+bridge/node_modules/
+
+
+# bridge 运行时产物：Temu 会话 cookie、反爬签名脚本、站点缓存
+# ⚠️ session_*.json 是登录凭证，绝不能入库
+bridge/runtime/

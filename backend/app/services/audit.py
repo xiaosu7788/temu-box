@@ -37,8 +37,24 @@ def record(
         logger.exception("Failed to write audit log: %s", action)
 
 
-def query(page: int = 1, page_size: int = 30, action: str = "", actor_id: Optional[int] = None, keyword: str = "") -> dict:
-    return list_audit_logs(page=page, page_size=page_size, action=action, actor_id=actor_id, keyword=keyword)
+def query(
+    page: int = 1,
+    page_size: int = 30,
+    action: str = "",
+    actor_id: Optional[int] = None,
+    keyword: str = "",
+    start=None,
+    end=None,
+) -> dict:
+    return list_audit_logs(
+        page=page,
+        page_size=page_size,
+        action=action,
+        actor_id=actor_id,
+        keyword=keyword,
+        start=start,
+        end=end,
+    )
 
 
 def actions() -> list[str]:

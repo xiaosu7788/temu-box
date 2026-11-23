@@ -112,6 +112,10 @@ class AdminUserUpdateRequest(BaseModel):
     password: Optional[str] = Field(default=None, min_length=8, max_length=128)
     display_name: Optional[str] = Field(default=None, max_length=120)
     note: Optional[str] = Field(default=None, max_length=500)
+    store_access: Optional[bool] = None
+    modules: Optional[list[str]] = None
+    store_modules: Optional[list[str]] = None
+
 
 
 class AdminUserBulkUpdateRequest(BaseModel):
@@ -119,6 +123,67 @@ class AdminUserBulkUpdateRequest(BaseModel):
     display_name: Optional[str] = Field(default=None, max_length=120)
     note: Optional[str] = Field(default=None, max_length=500)
     status: Optional[str] = Field(default=None, max_length=20)
+    store_access: Optional[bool] = None
+
+
+class StoreLoginRequest(BaseModel):
+    """登录自己的 Temu 店铺。
+
+    use_remembered=True 时服务端直接用「记住密码」里的凭据，密码不需要经过前端。
+    """
+
+    account: Optional[str] = Field(default=None, max_length=160)
+    password: Optional[str] = Field(default=None, max_length=128)
+    mall_id: Optional[str] = Field(default=None, max_length=64)
+    remember: bool = False
+    use_remembered: bool = False
+    # 触发风控（54001）时用户收到的验证码
+    verify_code: Optional[str] = Field(default=None, max_length=16)
+    # 用「店铺账号库」里这一条登录（切换店铺时前端只传 id，密码不经过浏览器）
+    account_id: Optional[int] = None
+
+
+class StoreKefuQueryRequest(BaseModel):
+    """客服工具的只读查询（提交前确认商品身份）。"""
+
+    type: str = Field(min_length=2, max_length=8)
+    id: str = Field(min_length=1, max_length=64)
+    tool_id: Optional[str] = Field(default=None, max_length=32)
+
+
+class StoreKefuActionRequest(BaseModel):
+    """创建一次客服写操作预览（下架 / 发布 / 刷新 / 异常查询）。
+
+    创建时会一次性完成「查商品 + 拦截检查 + 组装报文」并落库；
+    真正发送要再调 `POST /api/store/kefu/actions/{id}/confirm`。
+    """
+
+    tool_id: Optional[str] = Field(default=None, max_length=32)
+    tool_name: Optional[str] = Field(default=None, max_length=80)
+    data_type: Optional[str] = Field(default=None, max_length=8)
+    data_id: str = Field(min_length=1, max_length=64)
+    reason_code: Optional[int] = None
+    reason_detail: Optional[str] = Field(default=None, max_length=200)
+    parent_msg_id: Optional[str] = Field(default=None, max_length=32)
+
+
+class StoreKefuQueryBatchRequest(BaseModel):
+    """批量只读查询：一串编号换商品详情（只读，可反复执行）。"""
+
+    type: str = Field(min_length=2, max_length=8)
+    ids: str = Field(min_length=1, max_length=8000)
+    tool_id: Optional[str] = Field(default=None, max_length=32)
+
+
+class StoreKefuBatchRequest(BaseModel):
+    """批量执行客服工具（多行/逗号分隔的编号，最多 50 个）。"""
+
+    tool_id: Optional[str] = Field(default=None, max_length=32)
+    tool_name: Optional[str] = Field(default=None, max_length=80)
+    data_type: Optional[str] = Field(default=None, max_length=8)
+    ids: str = Field(min_length=1, max_length=8000)
+    reason_code: Optional[int] = None
+    reason_detail: Optional[str] = Field(default=None, max_length=200)
 
 
 class AdminUserBulkDeleteRequest(BaseModel):
@@ -153,6 +218,9 @@ class SettingsPayload(BaseModel):
 
 
 class SystemSettingsPayload(BaseModel):
+    """系统设置。字段必须覆盖界面全部项，否则 Pydantic 会丢弃多余字段，
+    导致这些设置（尤其店铺相关的 4 项）无论怎么改都存不进去。"""
+
     task_workers: int = Field(ge=1, le=16)
     task_queue_limit: int = Field(ge=1, le=1000)
     activity_workers: int = Field(ge=1, le=16)
@@ -160,6 +228,11 @@ class SystemSettingsPayload(BaseModel):
     cleanup_enabled: bool = True
     cleanup_retention_days: int = Field(ge=1, le=3650)
     audit_retention_days: int = Field(ge=7, le=3650)
+    # 店铺模块
+    kefu_writes_enabled: bool = True
+    kefu_auto_retry_enabled: bool = True
+    store_login_log_retention_days: int = Field(ge=7, le=3650)
+    kefu_action_retention_days: int = Field(ge=7, le=3650)
 
 class RegionCreateRequest(BaseModel):
     code: str = Field(min_length=2, max_length=16)

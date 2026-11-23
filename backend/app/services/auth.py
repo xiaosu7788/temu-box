@@ -66,7 +66,15 @@ def session_user_id(token: Optional[str]) -> Optional[int]:
 
 
 def public_user(user: dict) -> dict:
-    return {key: user[key] for key in ("id", "username", "display_name", "role", "status", "created_at", "approved_at")}
+    data = {
+        key: user[key]
+        for key in ("id", "username", "display_name", "role", "status", "store_access", "created_at", "approved_at")
+        if key in user
+    }
+    # 管理员始终拥有店铺管理入口（与 services.auth.store_user 的放行规则保持一致）
+    if data.get("role") == "admin":
+        data["store_access"] = True
+    return data
 
 
 def current_user(request: Request) -> dict:
@@ -82,6 +90,14 @@ def admin_user(request: Request) -> dict:
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="只有管理员可以执行此操作")
     return user
+
+
+def store_user(request: Request) -> dict:
+    """店铺管理模块准入：管理员始终放行，普通用户需管理员开通 store_access。"""
+    user = current_user(request)
+    if user["role"] == "admin" or user.get("store_access"):
+        return user
+    raise HTTPException(status_code=403, detail="未开通店铺管理模块，请联系管理员")
 
 
 def login_user(username: str, password: str) -> dict:

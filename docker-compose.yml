@@ -45,6 +45,9 @@ services:
       # 一键热更新：后端以管理员身份代理调用 compose ops profile 里的运维边车
       UPDATER_URL: ${UPDATER_URL:-http://updater:8899}
       UPDATER_TOKEN: ${UPDATER_TOKEN:-}
+      # 店铺管理模块：bridge 内网地址（留空 = 该模块返回 503 未配置）
+      STORE_BRIDGE_URL: ${STORE_BRIDGE_URL:-http://bridge:8898}
+      STORE_BRIDGE_TOKEN: ${BRIDGE_TOKEN:-}
     volumes:
       - ./data:/app/data
     extra_hosts:
@@ -66,6 +69,27 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+  # 店铺管理桥接：temu-ops 多账号会话池，只在内网提供服务，不 publish 端口。
+  # 启用方式：docker compose --profile stores up -d bridge
+  # bridge 需要 BRIDGE_TOKEN（与 backend 的 STORE_BRIDGE_TOKEN 保持一致）。
+  bridge:
+    profiles: ["stores"]
+    image: temubox-bridge:local
+    build:
+      context: ./bridge
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: 8898
+      HOST: 0.0.0.0
+      BRIDGE_TOKEN: ${BRIDGE_TOKEN:-}
+      TEMU_OPS_DATA: /data
+      LOG: ${BRIDGE_LOG:-0}
+      LOGIN_MIN_INTERVAL_MS: ${BRIDGE_LOGIN_MIN_INTERVAL_MS:-3000}
+      LOGIN_WINDOW_MAX: ${BRIDGE_LOGIN_WINDOW_MAX:-5}
+    volumes:
+      - bridge_data:/data
 
   # 运维边车：把「拉代码 → 拉镜像 → 重启 → 健康检查」交给后台页面执行。
   # 只在显式启用 ops profile 时启动：docker compose --profile ops up -d updater
@@ -101,3 +125,4 @@ services:
 volumes:
   postgres_data:
   updater_state:
+  bridge_data:

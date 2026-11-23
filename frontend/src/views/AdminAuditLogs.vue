@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { Refresh, Search } from '@element-plus/icons-vue'
-import { getAdminAuditLogs } from '../api'
-import { notifyError } from '../feedback'
+import { deleteAdminAuditLogs, getAdminAuditLogs } from '../api'
+import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { AuditLogItem } from '../types'
 
 const loading = ref(false)
@@ -13,6 +13,9 @@ const page = ref(1)
 const pageSize = ref(30)
 const actionFilter = ref('')
 const keyword = ref('')
+const range = ref<[string, string] | null>(null)
+const picked = ref<Array<{ id: number }>>([])
+const deleting = ref(false)
 
 const ACTION_LABELS: Record<string, string> = {
   'auth.register': '用户注册',
@@ -81,6 +84,29 @@ function search() {
   load()
 }
 
+function resetFilters() {
+  keyword.value = ''
+  range.value = null
+  void load()
+}
+
+async function removePicked() {
+  if (!picked.value.length) return
+  const ok = await confirmAction(`删除选中的 ${picked.value.length} 条审计日志？不可恢复。`, '批量删除')
+  if (!ok) return
+  deleting.value = true
+  try {
+    await deleteAdminAuditLogs(picked.value.map((x) => x.id))
+    notifySuccess(`已删除 ${picked.value.length} 条`)
+    picked.value = []
+    await load()
+  } catch (error) {
+    notifyError(error)
+  } finally {
+    deleting.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -96,13 +122,33 @@ onMounted(load)
         <el-select v-model="actionFilter" placeholder="全部操作" clearable style="width: 200px" @change="search">
           <el-option v-for="item in actions" :key="item" :label="actionLabel(item)" :value="item" />
         </el-select>
-        <el-input v-model="keyword" placeholder="搜索用户名 / 对象 / 详情" clearable style="width: 260px" @keyup.enter="search" @clear="search">
+        <el-date-picker
+        v-model="range"
+        type="datetimerange"
+        value-format="YYYY-MM-DDTHH:mm:ss"
+        start-placeholder="开始时间"
+        end-placeholder="结束时间"
+        class="time-filter"
+        @change="load()"
+      />
+      <el-input v-model="keyword" placeholder="搜索用户名 / 对象 / 详情" clearable style="width: 260px" @keyup.enter="search" @clear="search">
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
         <el-button type="primary" :icon="Search" @click="search">查询</el-button>
+        <el-button @click="resetFilters">重置</el-button>
+        <el-button type="danger" plain :disabled="!picked.length" :loading="deleting" @click="removePicked">
+          删除选中（{{ picked.length }}）
+        </el-button>
       </div>
 
-      <el-table v-loading="loading" :data="items" stripe>
+      <el-table
+        v-loading="loading"
+        :data="items"
+        row-key="id"
+        stripe
+        @selection-change="(v: Array<{ id: number }>) => (picked = v)"
+      >
+        <el-table-column type="selection" width="44" />
         <el-table-column prop="created_at" label="时间" width="200">
           <template #default="scope"><span class="mono">{{ scope.row.created_at?.replace('T', ' ').slice(0, 19) }}</span></template>
         </el-table-column>
@@ -137,5 +183,12 @@ onMounted(load)
 .pagination {
   display: flex;
   justify-content: flex-end;
+}
+.time-filter {
+  width: 340px;
+}
+
+.batch-del {
+  margin-bottom: 10px;
 }
 </style>

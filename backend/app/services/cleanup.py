@@ -17,6 +17,8 @@ from app.database import (
     list_all_activity_jobs,
     load_task_records,
     prune_audit_logs,
+    prune_temu_kefu_actions,
+    prune_temu_login_logs,
 )
 from app.services import system
 from app.services.activity_tasks import activity_task_manager
@@ -118,13 +120,24 @@ def run_once() -> dict:
     now = datetime.now()
     cutoff = now - timedelta(days=settings["cleanup_retention_days"])
     cutoff_utc = datetime.now(timezone.utc) - timedelta(days=settings["cleanup_retention_days"])
+    utc_now = datetime.now(timezone.utc)
     result = {
         "removed_task_dirs": _cleanup_tasks(cutoff),
         "removed_activity_dirs": _cleanup_activities(cutoff_utc),
-        "pruned_audit_logs": prune_audit_logs(datetime.now(timezone.utc) - timedelta(days=settings["audit_retention_days"])),
+        "pruned_audit_logs": prune_audit_logs(utc_now - timedelta(days=settings["audit_retention_days"])),
+        "pruned_store_login_logs": prune_temu_login_logs(
+            utc_now - timedelta(days=settings.get("store_login_log_retention_days", 90))
+        ),
+        "pruned_kefu_actions": prune_temu_kefu_actions(
+            utc_now - timedelta(days=settings.get("kefu_action_retention_days", 180))
+        ),
         "retention_days": settings["cleanup_retention_days"],
     }
-    if any(result[key] for key in ("removed_task_dirs", "removed_activity_dirs", "pruned_audit_logs")):
+    cleaned = (
+        "removed_task_dirs", "removed_activity_dirs", "pruned_audit_logs",
+        "pruned_store_login_logs", "pruned_kefu_actions",
+    )
+    if any(result[key] for key in cleaned):
         logger.info("Cleanup finished: %s", json.dumps(result, ensure_ascii=False))
     return result
 

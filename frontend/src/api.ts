@@ -1,10 +1,27 @@
 import axios from 'axios'
-import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem, AppSettings, AuditLogPage, BulkActivityResult, CategoryPage, CategorySummary, CleanupResult, HalfHeadcostItem, InventoryCategory, InventoryDiffItem, InventoryPreview, InventoryStatus, MonitoringSnapshot, RegionProfile, RegionSummary, SkuResult, SystemSettings, SystemSettingsInfo, TaskItem, User, UpdateJobResponse, UpdateStartResponse, UpdateStatusResponse, VersionInfo, WeightHeadcostItem } from './types'
+import type { ActivityIdProfitRule, ActivitySkuPreview, ActivitySkuPreviewItem, ActivitySkuRules, ActivityTaskItem, AdminStoreSession, AppSettings, AuditLogPage, BulkActivityResult, CategoryPage, CategorySummary, CleanupResult, HalfHeadcostItem, InventoryCategory, InventoryDiffItem, InventoryPreview, InventoryStatus, MonitoringSnapshot, ProductCategoryChildren, ProductCategoryPathInfo, ProductConstants, ProductRegions, ProductSizeSpecConfig, ProductSizeTemplate, ProductCategorySuggest, ProductBatchState, ProductCreateForm, ProductCreateResult, ProductDescribeResult, ProductMaterialImage, ProductPreviewResult, ProductStoreEnv, ProductTemplateInfo, RegionProfile, RegionSummary, SkuResult, AdminUserStoreAccounts, AdminUserStoreBinding, StoreAccount, StoreGoodsDetail, StoreGoodsFilters, StoreGoodsLifecycle, StoreGoodsPage, StoreKefuAction, StoreKefuActionPayload, StoreKefuBatchPayload, StoreKefuBatchView, StoreKefuCard, StoreKefuMessage, StoreKefuQueryBatchResult, StoreKefuQueryResult, StoreKefuTool, StoreLoginLog, StoreSession, StoreSite, SystemSettings, SystemSettingsInfo, TaskItem, User, UpdateJobResponse, UpdateStartResponse, UpdateStatusResponse, VersionInfo, WeightHeadcostItem } from './types'
 
 const http = axios.create({
   baseURL: '/api',
   timeout: 15 * 1000,
 })
+
+// 店铺接口返回 401 = 会话已失效：通知 storeState 立刻回落到登录卡
+http.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status
+    const url = String(error?.config?.url || '')
+    // 登录/退出接口本身不参与（登录失败的 401 是凭据问题）
+    if (status === 401 && url.startsWith('/store/') && !url.startsWith('/store/session')) {
+      const detail = error?.response?.data?.detail
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('store:session-invalid', { detail }))
+      }
+    }
+    return Promise.reject(error)
+  },
+)
 
 const uploadHttp = axios.create({
   baseURL: '/api',
@@ -32,6 +49,668 @@ export function errorMessage(error: unknown): string {
 
 export async function getMe() {
   const { data } = await http.get<User>('/auth/me')
+  return data
+}
+
+// ==================== 店铺管理（每用户登录自己的店铺） ====================
+
+export async function getStoreSession() {
+  const { data } = await http.get<StoreSession>('/store/session')
+  return data
+}
+
+export async function loginStore(payload: {
+  account?: string
+  account_id?: number
+  password?: string
+  mall_id?: string
+  remember?: boolean; verify_code?: string
+  use_remembered?: boolean
+}) {
+  // 登录要跑 anti-content + 换码，实测 0.2~3.4s 偶发更慢，单独放宽超时
+  const { data } = await http.post<StoreSession>('/store/session/login', payload, { timeout: 130 * 1000 })
+  return data
+}
+
+export async function sendStoreLoginCode(payload: { account: string; contact_type?: number }) {
+  const { data } = await http.post<{ sent: boolean; contactType: number }>(
+    '/store/session/send-code',
+    payload,
+    { timeout: 60 * 1000 },
+  )
+  return data
+}
+
+export async function logoutStore() {
+  const { data } = await http.post<StoreSession>('/store/session/logout')
+  return data
+}
+
+export async function refreshStoreSession() {
+  const { data } = await http.post<StoreSession>('/store/session/refresh')
+  return data
+}
+
+export async function forgetStorePassword() {
+  const { data } = await http.delete<{ cleared: boolean }>('/store/session/remember')
+  return data
+}
+
+// ==================== 商品创建 ====================
+export async function suggestProductCategory(name: string) {
+  const { data } = await http.post<ProductCategorySuggest>(
+    '/store/products/category/suggest',
+    { name },
+    { timeout: 50 * 1000 },
+  )
+  return data
+}
+
+export async function searchProductCategories(keyword: string, isEn = false) {
+  const { data } = await http.post<ProductCategorySuggest>(
+    '/store/products/category/search',
+    { keyword, is_en: isEn },
+    { timeout: 50 * 1000 },
+  )
+  return data
+}
+
+export async function getCategoryConfig(leafCatId: number, siteId = 100) {
+  const { data } = await http.get<{
+    config: Record<string, unknown>
+    english_name_required: boolean
+    title_max_length: number
+    spec_max_length: number
+    sensitive_types: number[]
+    extra_requirements: string[]
+  }>('/store/products/category/config', {
+    params: { leaf_cat_id: leafCatId, site_id: siteId },
+    timeout: 40 * 1000,
+  })
+  return data
+}
+
+export async function getProductConstants() {
+  const { data } = await http.get<ProductConstants>('/store/products/constants', {
+    timeout: 30 * 1000,
+  })
+  return data
+}
+
+export async function getProductRegions(refresh = false) {
+  const { data } = await http.get<ProductRegions>('/store/products/regions', {
+    params: { refresh },
+    timeout: 40 * 1000,
+  })
+  return data
+}
+
+export async function validateSizeTemplate(
+  catId: number,
+  ids: number[],
+  generalSizeType = 0,
+  sizeValues: string[] = [],
+) {
+  const { data } = await http.get<{
+    ok: boolean
+    bad: number[]
+    typeBad?: number[]
+    sizeBad?: { businessId: number; missing: string[]; sizes: string[] }[]
+    available: ProductSizeTemplate[]
+    suggestion: number | null
+    reason: string
+  }>('/store/products/size-template/validate', {
+    params: {
+      cat_id: catId,
+      ids: ids.join(','),
+      general_size_type: generalSizeType || undefined,
+      size_values: sizeValues.length ? sizeValues.join(',') : undefined,
+    },
+    timeout: 60 * 1000,
+  })
+  return data
+}
+
+export async function getSizeTemplates(catId: number, siteId?: number) {
+  const { data } = await http.get<{
+    total: number
+    group_id?: number | null
+    list: ProductSizeTemplate[]
+  }>('/store/products/size-templates', {
+    // site_id 决定按哪个尺码组过滤（站点 100 → US 组），不传会拿到不能用的模板
+    params: { cat_id: catId, site_id: siteId || undefined },
+    timeout: 40 * 1000,
+  })
+  return data
+}
+
+export async function getSizeSpecConfig(catId: number) {
+  const { data } = await http.get<ProductSizeSpecConfig>('/store/products/size-spec-config', {
+    params: { cat_id: catId },
+    timeout: 40 * 1000,
+  })
+  return data
+}
+
+export async function getCategoryHints() {
+  const { data } = await http.get<ProductCategorySuggest>('/store/products/category/hints', {
+    timeout: 40 * 1000,
+  })
+  return data
+}
+
+export async function getProductWarehouses(siteId?: number) {
+  const { data } = await http.get<{
+    total: number
+    items: Array<{ warehouseId: string; warehouseName: string; siteIds: number[]; siteNames: string[] }>
+  }>('/store/products/warehouses', {
+    params: siteId ? { site_id: siteId } : undefined,
+    timeout: 40 * 1000,
+  })
+  return data.items
+}
+
+export async function getCategoryChildren(parentCatId = 0) {
+  const { data } = await http.get<ProductCategoryChildren>('/store/products/category/children', {
+    params: { parent_cat_id: parentCatId },
+    timeout: 40 * 1000,
+  })
+  return data
+}
+
+export async function getCategoryPath(catIds: number[]) {
+  const { data } = await http.post<{ total: number; list: ProductCategoryPathInfo[] }>(
+    '/store/products/category/path',
+    { cat_ids: catIds },
+    { timeout: 40 * 1000 },
+  )
+  return data
+}
+
+export async function getProductTemplate(catId: number, refresh = false) {
+  const { data } = await http.get<ProductTemplateInfo>('/store/products/template', {
+    params: { cat_id: catId, refresh },
+    timeout: 40 * 1000,
+  })
+  return data
+}
+
+export async function describeProduct(catId: number, selected: Record<string, string | number>) {
+  const { data } = await http.post<ProductDescribeResult>(
+    '/store/products/describe',
+    { cat_id: catId, selected },
+    { timeout: 40 * 1000 },
+  )
+  return data
+}
+
+export async function getProductSites(refresh = false) {
+  const { data } = await http.get<{ items: Array<Record<string, unknown>> }>('/store/products/sites', {
+    params: { refresh },
+    timeout: 40 * 1000,
+  })
+  return data.items
+}
+
+export async function getProductEnv(siteId?: number, refresh = false) {
+  const { data } = await http.get<ProductStoreEnv>('/store/products/env', {
+    params: { site_id: siteId, refresh },
+    timeout: 40 * 1000,
+  })
+  return data
+}
+
+export async function getProductImages(params: {
+  carousel?: boolean
+  page_no?: number
+  page_size?: number
+  name?: string
+  proportion?: string
+  type?: number
+  folder_id?: number
+}) {
+  const { data } = await http.get<{ total?: number; list?: ProductMaterialImage[] }>('/store/products/images', {
+    params: {
+      carousel: params.carousel ? true : undefined,
+      page_no: params.page_no,
+      page_size: params.page_size,
+      name: params.name || undefined,
+      proportion: params.proportion || undefined,
+      type: params.type,
+      folder_id: params.folder_id,
+    },
+    timeout: 50 * 1000,
+  })
+  return data
+}
+
+export async function previewProduct(form: ProductCreateForm) {
+  const { data } = await http.post<ProductPreviewResult>('/store/products/preview', { form }, { timeout: 90 * 1000 })
+  return data
+}
+
+export async function createProduct(form: ProductCreateForm, dryRun = true) {
+  const { data } = await http.post<ProductCreateResult>(
+    '/store/products/create',
+    { form, dry_run: dryRun },
+    { timeout: 200 * 1000 },
+  )
+  return data
+}
+
+export interface MaterialFolderNode {
+  id: number
+  name: string
+  children: MaterialFolderNode[]
+}
+
+export interface ProductFormTemplateItem {
+  id: number
+  name: string
+  note: string
+  updated_at: string | null
+  field_count: number
+}
+
+export async function listFormTemplates() {
+  const { data } = await http.get<{ total: number; items: ProductFormTemplateItem[] }>(
+    '/store/products/form-templates',
+    { timeout: 30 * 1000 },
+  )
+  return data
+}
+
+export async function getFormTemplate(id: number) {
+  const { data } = await http.get<{ id: number; name: string; note: string; values: Record<string, unknown> }>(
+    `/store/products/form-templates/${id}`,
+    { timeout: 30 * 1000 },
+  )
+  return data
+}
+
+export async function saveFormTemplate(name: string, note: string, form: unknown) {
+  const { data } = await http.post<{ id: number; name: string; updated: boolean }>(
+    '/store/products/form-templates',
+    { name, note, form },
+    { timeout: 30 * 1000 },
+  )
+  return data
+}
+
+export async function updateFormTemplate(
+  id: number,
+  payload: { name?: string; note?: string; form?: unknown },
+) {
+  const { data } = await http.patch<{ id: number; name: string; note: string; form_updated: boolean }>(
+    `/store/products/form-templates/${id}`,
+    payload,
+    { timeout: 30 * 1000 },
+  )
+  return data
+}
+
+export async function deleteFormTemplate(id: number) {
+  const { data } = await http.delete<{ ok: boolean }>(`/store/products/form-templates/${id}`, {
+    timeout: 30 * 1000,
+  })
+  return data
+}
+
+export async function getMaterialFolders() {
+  const { data } = await http.get<{ root: MaterialFolderNode | null }>('/store/products/folders', {
+    timeout: 40 * 1000,
+  })
+  return data
+}
+
+export async function removeMaterial(imgIds: number[], videoIds: number[] = []) {
+  const { data } = await http.post<{ ok: boolean; msg: string; count: number }>(
+    '/store/products/material/remove',
+    { img_ids: imgIds, video_ids: videoIds },
+    { timeout: 60 * 1000 },
+  )
+  return data
+}
+
+export async function compressMaterial(urls: string[]) {
+  const { data } = await http.post<{ compressMap: Record<string, string> }>(
+    '/store/products/material/compress',
+    { urls },
+    { timeout: 120 * 1000 },
+  )
+  return data
+}
+
+export async function cropMaterial(url: string, cutConfig: { width: number; height: number; dx?: number; dy?: number }) {
+  const { data } = await http.post<{ url: string; width: number; height: number; size: number }>(
+    '/store/products/material/crop',
+    { url, cut_config: cutConfig },
+    { timeout: 60 * 1000 },
+  )
+  return data
+}
+
+export async function uploadProductVideo(contentBase64: string, fileName: string) {
+  const { data } = await http.post<{
+    url: string
+    videoUrl: string
+    coverUrl: string
+    materialId: number | null
+    vid: string
+    width: number
+    height: number
+    split: boolean
+    parts: number
+  }>('/store/products/upload-video', { content_base64: contentBase64, file_name: fileName }, {
+    timeout: 300 * 1000,
+  })
+  return data
+}
+
+export async function uploadProductImage(
+  contentBase64: string,
+  fileName: string,
+  crop?: { width: number; height: number },
+) {
+  const { data } = await http.post<{ imgUrl: string; materialId: number }>(
+    '/store/products/upload',
+    {
+      content_base64: contentBase64,
+      file_name: fileName,
+      crop_width: crop?.width || 0,
+      crop_height: crop?.height || 0,
+    },
+    { timeout: 150 * 1000 },
+  )
+  return data
+}
+
+export async function getProductBatchStatus() {
+  const { data } = await http.get<ProductBatchState>('/store/products/batch')
+  return data
+}
+
+export async function startProductBatch(items: Array<Record<string, unknown>>, dryRun = true) {
+  const { data } = await http.post<ProductBatchState>(
+    '/store/products/batch',
+    { items, dry_run: dryRun },
+    { timeout: 60 * 1000 },
+  )
+  return data
+}
+
+export async function cancelProductBatch() {
+  const { data } = await http.post<ProductBatchState>('/store/products/batch/cancel')
+  return data
+}
+
+export async function getStoreAccounts() {
+  const { data } = await http.get<{ items: StoreAccount[] }>('/store/accounts')
+  return data.items
+}
+
+export async function addStoreAccount(payload: { account: string; password: string; label?: string }) {
+  const { data } = await http.post<StoreAccount>('/store/accounts', payload)
+  return data
+}
+
+export async function deleteStoreAccount(accountId: number) {
+  const { data } = await http.delete<{ deleted: boolean }>(`/store/accounts/${accountId}`)
+  return data
+}
+
+export async function getAdminUserStoreAccounts(userId: number, withPassword = false) {
+  const { data } = await http.get<AdminUserStoreAccounts>(`/admin/users/${userId}/store-accounts`, {
+    params: withPassword ? { with_password: true } : undefined,
+  })
+  return data
+}
+
+export async function getAdminUserStoreBinding(userId: number) {
+  const { data } = await http.get<AdminUserStoreBinding>(`/admin/users/${userId}/store-binding`)
+  return data
+}
+
+export async function getAdminUserStoreCredential(userId: number) {
+  const { data } = await http.get<{ account: string; password: string; updated_at: string | null }>(
+    `/admin/users/${userId}/store-credential`,
+    { timeout: 20 * 1000 },
+  )
+  return data
+}
+
+export interface AdminStoreUserItem {
+  user_id: number
+  username: string
+  display_name: string
+  is_admin: boolean
+  store_access: boolean
+  template_count: number
+  stats: { total_ok: number; today_ok: number; week_ok: number; failed: number }
+  store: {
+    account_masked: string
+    status: string
+    mall_name: string
+    login_at: string | null
+    expires_at: string | null
+    last_seen_at: string | null
+    remember: boolean
+    last_error: string
+  }
+}
+
+export async function getAdminStoreUsers() {
+  const { data } = await http.get<{ items: AdminStoreUserItem[]; total: number }>('/admin/store-users')
+  return data
+}
+
+export async function getAdminStoreUserTemplates(userId: number) {
+  const { data } = await http.get<{ total: number; items: ProductFormTemplateItem[] }>(
+    `/admin/store-users/${userId}/templates`,
+  )
+  return data
+}
+
+export async function deleteAdminStoreUserTemplate(userId: number, templateId: number) {
+  const { data } = await http.delete<{ ok: boolean }>(
+    `/admin/store-users/${userId}/templates/${templateId}`,
+  )
+  return data
+}
+
+export async function getAdminStoreSessions() {
+  const { data } = await http.get<{ items: AdminStoreSession[] }>('/admin/store-sessions')
+  return data.items
+}
+
+export async function revokeAdminStoreSession(userId: number) {
+  const { data } = await http.delete<{ revoked: boolean }>(`/admin/store-sessions/${userId}`)
+  return data
+}
+
+export async function getAdminStoreLogs(
+  params: {
+    limit?: number
+    action?: string
+    user_id?: number
+    keyword?: string
+    start?: string
+    end?: string
+  } = {},
+) {
+  const { data } = await http.get<{ items: StoreLoginLog[] }>('/admin/store-logs', { params })
+  return data.items
+}
+
+export async function deleteAdminStoreLogs(ids: number[]) {
+  const { data } = await http.delete<{ deleted: number }>('/admin/store-logs', { data: { ids } })
+  return data
+}
+
+export async function getAdminKefuActions(
+  params: { limit?: number; stage?: string; keyword?: string; start?: string; end?: string } = {},
+) {
+  const { data } = await http.get<{ items: StoreKefuAction[] }>('/admin/kefu-actions', { params })
+  return data.items
+}
+
+export async function deleteAdminKefuActions(ids: string[]) {
+  const { data } = await http.delete<{ deleted: number }>('/admin/kefu-actions', { data: { ids } })
+  return data
+}
+
+export async function getStoreSites(force = false) {
+  const { data } = await http.get<{ items: StoreSite[] }>('/store/sites', {
+    params: force ? { force: 'true' } : undefined,
+    timeout: 60 * 1000,
+  })
+  return data.items
+}
+
+export interface StoreGoodsQuery {
+  page?: number
+  page_size?: number
+  site?: string
+  keyword?: string
+  /** name（商品名模糊）/ spu / skc / sku / extcode（SKC 货号） */
+  search_type?: string
+  /** 兼容旧字段：0 未发布 / 1 已加入站点 */
+  site_status?: number
+  /** 生命周期状态：9 待选品 / 10 待处理 / 12 已加入站点 / 13 待价格校验 */
+  select_status?: number
+  /** 时间类型：1 创建 / 4 价格确认 / 6 加入站点 / 7 下架 */
+  time_type?: number
+  time_begin?: number
+  time_end?: number
+  /** 逗号分隔的枚举列表 */
+  price_review_status?: string
+  sample_qc_status?: string
+  todo_types?: string
+  punish_status?: string
+  limit_status?: string
+  remove_status?: number
+  force?: boolean
+}
+
+export async function getStoreGoods(params: StoreGoodsQuery = {}) {
+  // 一次一页（服务端筛选）：平台连续 8~10 次请求/分钟会 40001
+  const { data } = await http.get<StoreGoodsPage>('/store/goods', { params, timeout: 60 * 1000 })
+  return data
+}
+
+export async function getStoreGoodsFilters() {
+  const { data } = await http.get<StoreGoodsFilters>('/store/goods/filters', { timeout: 40 * 1000 })
+  return data
+}
+
+export async function getProductLifecycle(productId: string) {
+  const { data } = await http.get<StoreGoodsLifecycle>(`/store/goods/${productId}/lifecycle`, {
+    timeout: 60 * 1000,
+  })
+  return data
+}
+
+export async function getStoreGoodsDetail(productId: string) {
+  const { data } = await http.get<StoreGoodsDetail>(`/store/goods/${productId}`, { timeout: 60 * 1000 })
+  return data
+}
+
+// ==================== 客服自助工具（只读） ====================
+
+export async function getStoreKefuTools(force = false) {
+  const { data } = await http.get<{ items: StoreKefuTool[] }>('/store/kefu/tools', {
+    params: force ? { force: 'true' } : undefined,
+    timeout: 45 * 1000,
+  })
+  return data.items
+}
+
+export async function getStoreKefuCard(toolId?: string, maxPages = 10) {
+  // 卡片会被聊天记录挤出最近 50 条，服务端会按 toolId 精确找并自动向前翻页
+  const { data } = await http.get<StoreKefuCard>('/store/kefu/card', {
+    params: { tool_id: toolId || undefined, max_pages: maxPages },
+    timeout: 90 * 1000,
+  })
+  return data
+}
+
+export async function getStoreKefuCards(maxPages = 10) {
+  const { data } = await http.get<{ items: Array<{ tool_id: string; msg_id: string; option_title: string | null }> }>(
+    '/store/kefu/cards',
+    { params: { max_pages: maxPages }, timeout: 90 * 1000 },
+  )
+  return data.items
+}
+
+export async function getStoreKefuMessages(limit = 50) {
+  const { data } = await http.get<{ total: number; items: StoreKefuMessage[]; limit: number }>(
+    '/store/kefu/messages',
+    { params: { limit }, timeout: 45 * 1000 },
+  )
+  return data
+}
+
+export async function queryStoreKefuProduct(payload: { type: string; id: string; tool_id?: string }) {
+  const { data } = await http.post<StoreKefuQueryResult>('/store/kefu/query', payload, { timeout: 45 * 1000 })
+  return data
+}
+
+// ==================== 客服写操作（预览 → 确认 → 回执） ====================
+
+export async function createStoreKefuAction(payload: StoreKefuActionPayload) {
+  // 创建预览要在服务端完成「查商品 + 拦截检查」，给足超时
+  const { data } = await http.post<StoreKefuAction>('/store/kefu/actions', payload, { timeout: 90 * 1000 })
+  return data
+}
+
+export async function confirmStoreKefuAction(actionId: string) {
+  const { data } = await http.post<StoreKefuAction>(`/store/kefu/actions/${actionId}/confirm`, undefined, {
+    timeout: 90 * 1000,
+  })
+  return data
+}
+
+export async function getStoreKefuActions(limit = 30, stage?: string) {
+  const { data } = await http.get<{ items: StoreKefuAction[] }>('/store/kefu/actions', {
+    params: { limit, stage: stage || undefined },
+  })
+  return data.items
+}
+
+export async function getStoreKefuAction(actionId: string) {
+  const { data } = await http.get<StoreKefuAction>(`/store/kefu/actions/${actionId}`)
+  return data
+}
+
+export async function fetchStoreKefuReply(actionId: string) {
+  const { data } = await http.post<StoreKefuAction>(`/store/kefu/actions/${actionId}/reply`, undefined, {
+    timeout: 45 * 1000,
+  })
+  return data
+}
+
+// ==================== 客服批量执行 ====================
+
+export async function queryStoreKefuProductBatch(payload: { type: string; ids: string; tool_id?: string }) {
+  // 串行查询，50 个编号可能要十几秒
+  const { data } = await http.post<StoreKefuQueryBatchResult>('/store/kefu/query-batch', payload, {
+    timeout: 150 * 1000,
+  })
+  return data
+}
+
+export async function createStoreKefuBatch(payload: StoreKefuBatchPayload) {
+  const { data } = await http.post<StoreKefuBatchView>('/store/kefu/batches', payload, { timeout: 60 * 1000 })
+  return data
+}
+
+export async function getStoreKefuBatch(batchId: string) {
+  const { data } = await http.get<StoreKefuBatchView>(`/store/kefu/batches/${batchId}`)
+  return data
+}
+
+export async function cancelStoreKefuBatch(batchId: string) {
+  const { data } = await http.post<StoreKefuBatchView>(`/store/kefu/batches/${batchId}/cancel`)
   return data
 }
 
@@ -402,13 +1081,13 @@ export async function updateUserStatus(id: number, status: AdminUserStatusAction
   return data
 }
 
-export async function updateAdminUser(id: number, payload: { username?: string; display_name?: string; note?: string; password?: string }) {
+export async function updateAdminUser(id: number, payload: { username?: string; display_name?: string; note?: string; password?: string; store_access?: boolean; modules?: string[]; store_modules?: string[] }) {
   const { data } = await http.patch<User>(`/admin/users/${id}`, payload)
   return data
 }
 
-export async function bulkUpdateAdminUsers(payload: { user_ids: number[]; display_name?: string; note?: string; status?: 'approved' | 'rejected' }) {
-  const { data } = await http.patch<{ items: User[]; updated: number }>('/admin/users/bulk', payload)
+export async function bulkUpdateAdminUsers(payload: { user_ids: number[]; display_name?: string; note?: string; status?: 'approved' | 'rejected'; store_access?: boolean }) {
+  const { data } = await http.patch<{ items: User[]; updated: number; store_sessions_revoked?: number }>('/admin/users/bulk', payload)
   return data
 }
 
@@ -499,8 +1178,20 @@ export async function saveAdminSystemSettings(settings: SystemSettings) {
   return data
 }
 
-export async function getAdminAuditLogs(params: { page: number; page_size: number; action?: string; keyword?: string }) {
+export async function getAdminAuditLogs(params: {
+  page: number
+  page_size: number
+  action?: string
+  keyword?: string
+  start?: string
+  end?: string
+}) {
   const { data } = await http.get<AuditLogPage>('/admin/audit-logs', { params })
+  return data
+}
+
+export async function deleteAdminAuditLogs(ids: number[]) {
+  const { data } = await http.delete<{ deleted: number }>('/admin/audit-logs', { data: { ids } })
   return data
 }
 

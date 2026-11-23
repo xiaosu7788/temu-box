@@ -20,7 +20,14 @@ const form = reactive<SystemSettings>({
   cleanup_enabled: true,
   cleanup_retention_days: 30,
   audit_retention_days: 180,
+  kefu_writes_enabled: true,
+  kefu_auto_retry_enabled: true,
+  store_login_log_retention_days: 90,
+  kefu_action_retention_days: 180,
 })
+
+/** 设置分组：通用（任务/清理）与店铺（写操作/日志审计） */
+const activeTab = ref<'general' | 'store'>('general')
 
 async function load() {
   loading.value = true
@@ -102,45 +109,77 @@ onMounted(load)
         </div>
       </div>
 
-      <el-form v-loading="loading" label-width="160px" class="system-form">
-        <h3>后台任务并发与队列</h3>
-        <el-form-item label="订单任务并发数">
-          <el-input-number v-model="form.task_workers" :min="1" :max="16" />
-          <span class="form-hint">同时处理的订单计算任务数</span>
-        </el-form-item>
-        <el-form-item label="订单任务队列上限">
-          <el-input-number v-model="form.task_queue_limit" :min="1" :max="1000" />
-          <span class="form-hint">排队+运行中的任务总数上限，超出后拒绝新任务</span>
-        </el-form-item>
-        <el-form-item label="活动任务并发数">
-          <el-input-number v-model="form.activity_workers" :min="1" :max="16" />
-          <span class="form-hint">同时处理的批量报名活动任务数</span>
-        </el-form-item>
-        <el-form-item label="活动任务队列上限">
-          <el-input-number v-model="form.activity_queue_limit" :min="1" :max="1000" />
-          <span class="form-hint">排队+运行中的活动任务总数上限</span>
-        </el-form-item>
-        <p class="pool-status">当前订单任务池：{{ poolLine(pools?.orders) }}</p>
-        <p class="pool-status">当前活动任务池：{{ poolLine(pools?.activities) }}</p>
+      <el-tabs v-model="activeTab" class="system-tabs">
+        <el-tab-pane label="通用设置" name="general">
+          <el-form v-loading="loading" label-width="160px" class="system-form">
+            <h3>后台任务并发与队列</h3>
+            <el-form-item label="订单任务并发数">
+              <el-input-number v-model="form.task_workers" :min="1" :max="16" />
+              <span class="form-hint">同时处理的订单计算任务数</span>
+            </el-form-item>
+            <el-form-item label="订单任务队列上限">
+              <el-input-number v-model="form.task_queue_limit" :min="1" :max="1000" />
+              <span class="form-hint">排队+运行中的任务总数上限，超出后拒绝新任务</span>
+            </el-form-item>
+            <el-form-item label="活动任务并发数">
+              <el-input-number v-model="form.activity_workers" :min="1" :max="16" />
+              <span class="form-hint">同时处理的批量报名活动任务数</span>
+            </el-form-item>
+            <el-form-item label="活动任务队列上限">
+              <el-input-number v-model="form.activity_queue_limit" :min="1" :max="1000" />
+              <span class="form-hint">排队+运行中的活动任务总数上限</span>
+            </el-form-item>
+            <p class="pool-status">当前订单任务池：{{ poolLine(pools?.orders) }}</p>
+            <p class="pool-status">当前活动任务池：{{ poolLine(pools?.activities) }}</p>
 
-        <h3>自动清理</h3>
-        <el-form-item label="启用自动清理">
-          <el-switch v-model="form.cleanup_enabled" />
-          <span class="form-hint">定期删除超过保留期限的任务文件、任务记录和审计日志</span>
-        </el-form-item>
-        <el-form-item label="文件保留天数">
-          <el-input-number v-model="form.cleanup_retention_days" :min="1" :max="3650" />
-          <span class="form-hint">订单任务和活动任务的文件与记录保留天数</span>
-        </el-form-item>
-        <el-form-item label="审计日志保留天数">
-          <el-input-number v-model="form.audit_retention_days" :min="7" :max="3650" />
-          <span class="form-hint">超过保留期限的审计日志将被删除</span>
-        </el-form-item>
-        <p class="pool-status" v-if="cleanupInfo">
-          检查周期：每 {{ Math.round(cleanupInfo.interval_seconds / 3600) }} 小时 ·
-          上次执行：{{ cleanupInfo.last_run_at || '尚未执行' }}
-        </p>
-      </el-form>
+            <h3>自动清理</h3>
+            <el-form-item label="启用自动清理">
+              <el-switch v-model="form.cleanup_enabled" />
+              <span class="form-hint">定期删除超过保留期限的任务文件、任务记录与审计日志</span>
+            </el-form-item>
+            <el-form-item label="文件保留天数">
+              <el-input-number v-model="form.cleanup_retention_days" :min="1" :max="3650" />
+              <span class="form-hint">订单任务和活动任务的文件与记录保留天数</span>
+            </el-form-item>
+            <el-form-item label="审计日志保留天数">
+              <el-input-number v-model="form.audit_retention_days" :min="7" :max="3650" />
+              <span class="form-hint">超过保留期限的审计日志将被删除</span>
+            </el-form-item>
+            <p class="pool-status" v-if="cleanupInfo">
+              检查周期：每 {{ Math.round(cleanupInfo.interval_seconds / 3600) }} 小时 ·
+              上次执行：{{ cleanupInfo.last_run_at || '尚未执行' }}
+            </p>
+          </el-form>
+        </el-tab-pane>
+
+        <el-tab-pane label="店铺设置" name="store">
+          <el-form v-loading="loading" label-width="160px" class="system-form">
+            <h3>客服写操作</h3>
+            <el-form-item label="写操作总开关">
+              <el-switch v-model="form.kefu_writes_enabled" active-text="允许提交" inactive-text="只读（熔断）" />
+              <span class="form-hint">关闭后所有用户的店铺客服只能预览，不能提交下架 / 发布 / 价格刷新</span>
+            </el-form-item>
+            <el-form-item label="失败自动重试">
+              <el-switch v-model="form.kefu_auto_retry_enabled" active-text="开启" inactive-text="关闭" />
+              <span class="form-hint">平台「系统忙碌」按 2/7/15 分钟退避重试，最多 3 次；关闭后只能手动重试</span>
+            </el-form-item>
+
+            <h3>日志与审计清理</h3>
+            <el-form-item label="登录日志保留">
+              <el-input-number v-model="form.store_login_log_retention_days" :min="7" :max="3650" />
+              <span class="form-hint">超过天数的店铺登录 / 失效 / 冷却事件会被自动删除</span>
+            </el-form-item>
+            <el-form-item label="客服审计保留">
+              <el-input-number v-model="form.kefu_action_retention_days" :min="7" :max="3650" />
+              <span class="form-hint">超过天数的客服写操作记录（含回执）会被自动删除</span>
+            </el-form-item>
+            <p class="pool-status">
+              这两项跟随「通用设置 → 启用自动清理」的开关与检查周期执行；
+              <span v-if="cleanupInfo">上次执行：{{ cleanupInfo.last_run_at || '尚未执行' }}</span>
+            </p>
+          </el-form>
+        </el-tab-pane>
+      </el-tabs>
     </section>
   </div>
 </template>

@@ -3,16 +3,19 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi.responses import JSONResponse
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from openpyxl import load_workbook
 
 from app.config import (
+    AUTH_SECRET_IS_DEFAULT,
     ADMIN_PASSWORD,
     ADMIN_USERNAME,
     CLEANUP_INTERVAL_SECONDS,
@@ -25,6 +28,7 @@ from app.config import (
     ensure_directories,
 )
 from app.database import (
+    get_temu_session,
     create_user,
     database_status,
     create_inventory_item,
@@ -34,7 +38,12 @@ from app.database import (
     ensure_admin_user,
     get_user,
     get_user_by_username,
+    get_temu_credential,
     list_users,
+    delete_audit_logs,
+    delete_kefu_actions,
+    delete_temu_login_logs,
+    list_temu_login_logs,
     update_user_credentials,
     update_user_status,
     bulk_delete_users,
@@ -46,9 +55,10 @@ from app.database import (
     delete_inventory_category_def,
     save_activity_skc_rules,
 )
-from app.schemas import ActivitySkuRulesPayload, AdminUserBulkDeleteRequest, AdminUserBulkUpdateRequest, AdminUserUpdateRequest, CategoryCreateRequest, CategoryUpdateRequest, HalfHeadcostCreateRequest, HalfHeadcostUpdateRequest, InventoryApplyRequest, InventoryCategoryCreateRequest, InventoryCategoryUpdateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest, SystemSettingsPayload, WeightHeadcostCreateRequest, WeightHeadcostUpdateRequest
-from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, validate_username
-from app.services import audit, system, updater
+from app.schemas import ActivitySkuRulesPayload, AdminUserBulkDeleteRequest, AdminUserBulkUpdateRequest, AdminUserUpdateRequest, CategoryCreateRequest, CategoryUpdateRequest, HalfHeadcostCreateRequest, HalfHeadcostUpdateRequest, InventoryApplyRequest, InventoryCategoryCreateRequest, InventoryCategoryUpdateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest, LoginRequest, RegionCreateRequest, RegionUpdateRequest, RegisterRequest, SettingsPayload, SkuQueryRequest, StoreKefuActionRequest, StoreKefuBatchRequest, StoreKefuQueryBatchRequest, StoreKefuQueryRequest, StoreLoginRequest, SystemSettingsPayload, WeightHeadcostCreateRequest, WeightHeadcostUpdateRequest
+from app.services.auth import admin_user, current_user, hash_password, login_user, make_session, public_user, store_user, validate_username
+from app.services import audit, permissions, credential_cipher, product_create, product_templates, store_accounts, store_goods, store_kefu, store_kefu_actions, store_kefu_batch, store_kefu_retry, store_session, system, updater
+from app.services.store_session import StoreError
 from app.services.categories import category_allowed_pieces, category_skc_rules, create_category, delete_category, get_category, list_categories, TEMPLATE_TYPES, update_category
 from app.services.cleanup import cleanup_scheduler, purge_all, run_once as run_cleanup_once
 from app.services.half_headcost import delete_entry, entry_exists, load_entries, merge_upload, save_entry
@@ -69,6 +79,13 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 
+logger = logging.getLogger("temubox.store")
+
+if AUTH_SECRET_IS_DEFAULT:
+    logger.warning(
+        "AUTH_SECRET 仍是默认值，会话 cookie 可被伪造；请在 .env 或环境变量里设置一个随机密钥"
+    )
+
 app = FastAPI(
     title="Temu-Box API",
     version=app_version(),
@@ -83,6 +100,70 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ==================== 模块权限守卫 ====================
+# 前端隐藏菜单只挡住普通操作；这里才是真正的边界：
+# 没有对应模块权限时，直接调 API 也返回 403。
+_STORE_WRITE_HINTS = ("/create", "/preview", "/batch", "/upload", "/material")
+
+
+def _module_rule(path: str, method: str) -> Optional[tuple[str, Optional[str]]]:
+    """路径 → (一级模块, 店铺二级模块)。None 表示不拦。"""
+    if not path.startswith("/api/"):
+        return None
+    # 公共接口：登录、健康检查、自身信息、模块清单
+    if path.startswith(("/api/auth/", "/api/health", "/api/permissions", "/api/version", "/api/status", "/api/categories")):
+        return None
+    if path.startswith("/api/admin/"):
+        return None  # 由 admin_user 依赖负责
+    if path.startswith("/api/store/"):
+        sub = path[len("/api/store/"):]
+        if sub.startswith("kefu"):
+            return ("store", "kefu")
+        if sub.startswith("actions"):
+            return ("store", "actions")
+        if sub.startswith("goods"):
+            return ("store", "goods")
+        if sub.startswith("products"):
+            # 查询/模板/素材走 goods，创建/预览/批量/上传走 create
+            if method in ("POST", "PUT", "PATCH", "DELETE") or any(h in path for h in _STORE_WRITE_HINTS):
+                return ("store", "create")
+            return ("store", "goods")
+        return ("store", None)
+    if path.startswith("/api/inventory"):
+        return ("inventory", None)
+    if path.startswith("/api/activities"):
+        return ("activities", None)
+    if path.startswith("/api/tasks"):
+        return ("tasks", None)
+    return None
+
+
+@app.middleware("http")
+async def module_guard(request: Request, call_next):
+    rule = _module_rule(request.url.path, request.method)
+    if rule is None:
+        return await call_next(request)
+
+    try:
+        user = current_user(request)
+    except HTTPException:
+        # 未登录交给原接口返回 401，这里不抢答
+        return await call_next(request)
+
+    module, sub_module = rule
+    if not permissions.has_module(user, module):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": f"没有「{permissions.label_of(module)}」模块权限，请联系管理员开通"},
+        )
+    if sub_module and not permissions.has_store_module(user, sub_module):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": f"没有店铺管理里的「{permissions.label_of(sub_module)}」权限，请联系管理员开通"},
+        )
+    return await call_next(request)
+
+
 
 @app.on_event("startup")
 def bootstrap_admin() -> None:
@@ -91,6 +172,9 @@ def bootstrap_admin() -> None:
     elif not get_user_by_username(ADMIN_USERNAME):
         logging.getLogger("temubox.auth").warning("ADMIN_PASSWORD 未配置，管理员账号尚未创建")
     cleanup_scheduler.start()
+    # 线程只能 start 一次：多个 TestClient / 多次 startup 时保持幂等
+    if not store_kefu_retry.scheduler.is_alive():
+        store_kefu_retry.scheduler.start()
 
 
 def resolve_inventory_category(category: Optional[str]) -> str:
@@ -172,7 +256,7 @@ def logout(response: Response):
 
 @app.get("/api/auth/me")
 def me(user: dict = Depends(current_user)):
-    return public_user(user)
+    return {**public_user(user), **permissions.apply_to_form(user)}
 
 
 @app.get("/api/status")
@@ -189,6 +273,907 @@ def status(user: dict = Depends(current_user)):
 @app.get("/api/categories")
 def public_categories(region_code: Optional[str] = Query(None, max_length=16), _user: dict = Depends(current_user)):
     return {"items": list_categories(region_code=region_code)}
+
+
+# ==================== 店铺管理（每个用户登录自己的店铺） ====================
+
+def _store_http_error(exc: StoreError) -> HTTPException:
+    headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+    # 记下具体原因，400 只回给前端 detail，日志里看不到会很难排查
+    logger.warning("store error [%s/%s]: %s", exc.code or "-", exc.status, exc.message)
+    return HTTPException(status_code=exc.status, detail=exc.message, headers=headers)
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else ""
+
+
+@app.get("/api/store/session")
+def store_session_view(user: dict = Depends(store_user)):
+    return store_session.view(user["id"])
+
+
+@app.post("/api/store/session/send-code")
+def store_session_send_code(payload: dict, user: dict = Depends(store_user)):
+    """发登录验证码。触发风控（54001）时前端用来弹「获取验证码」。"""
+    account = str(payload.get("account") or "").strip()
+    if not account:
+        session = get_temu_session(user["id"]) or {}
+        account = str(session.get("account") or "")
+    if not account:
+        raise HTTPException(status_code=400, detail="请先填写账号")
+    try:
+        return temu_bridge.send_login_code(account, payload.get("contact_type"))
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+    except Exception as exc:  # noqa: BLE001 - bridge 侧错误统一转 502
+        raise HTTPException(status_code=502, detail=f"发码失败：{exc}") from None
+
+
+@app.post("/api/store/session/login")
+def store_session_login(payload: StoreLoginRequest, request: Request, user: dict = Depends(store_user)):
+    try:
+        data = store_session.login(
+            user,
+            account=payload.account or "",
+            password=payload.password or "",
+            mall_id=payload.mall_id,
+            remember=payload.remember,
+            use_remembered=payload.use_remembered,
+            account_id=payload.account_id,
+            verify_code=payload.verify_code,
+            ip=_client_ip(request),
+        )
+    except StoreError as exc:
+        audit.record(
+            user,
+            "store.login_failed",
+            "temu_session",
+            store_session.mask_account(payload.account or ""),
+            exc.message,
+            request,
+        )
+        raise _store_http_error(exc) from None
+    # 新会话的卡片 msgId 与旧会话无关，清掉缓存重新唤醒
+    store_kefu.invalidate_card_cache()
+    store_goods.invalidate_cache()
+    audit.record(
+        user,
+        "store.login",
+        "temu_session",
+        data.get("account_masked", ""),
+        f"登录店铺：{data.get('mall_name') or ''}",
+        request,
+    )
+    return data
+
+
+@app.post("/api/store/session/logout")
+def store_session_logout(request: Request, user: dict = Depends(store_user)):
+    data = store_session.logout(user, ip=_client_ip(request))
+    # 换会话/退出后旧卡片 msgId 不可再用
+    store_kefu.invalidate_card_cache()
+    store_goods.invalidate_cache()
+    audit.record(user, "store.logout", "temu_session", data.get("account_masked", ""), "退出店铺登录", request)
+    return data
+
+
+@app.get("/api/store/accounts")
+def store_list_accounts(user: dict = Depends(store_user)):
+    """当前用户保存的店铺账号列表（不含密码）。"""
+    try:
+        return {"items": store_accounts.list_for_user(user["id"])}
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/accounts")
+async def store_add_account(payload: dict, request: Request, user: dict = Depends(store_user)):
+    """新增/更新一个店铺账号密码（默认调用方已勾选保存）。"""
+    try:
+        item = store_accounts.encrypt_and_save(
+            user["id"],
+            account=str(payload.get("account") or ""),
+            password=str(payload.get("password") or ""),
+            label=str(payload.get("label") or ""),
+            mall_name=str(payload.get("mall_name") or ""),
+        )
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+    audit.record(user, "store.account_save", "temu_store_account", item["account_masked"], "保存店铺账号", request)
+    return item
+
+
+@app.delete("/api/store/accounts/{account_id}")
+def store_delete_account(account_id: int, request: Request, user: dict = Depends(store_user)):
+    try:
+        ok = store_accounts.remove(user["id"], account_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+    if not ok:
+        raise HTTPException(status_code=404, detail="店铺账号不存在")
+    audit.record(user, "store.account_delete", "temu_store_account", str(account_id), "删除店铺账号", request)
+    return {"deleted": True}
+
+
+@app.post("/api/store/session/refresh")
+def store_session_refresh(request: Request, user: dict = Depends(store_user)):
+    return store_session.refresh(user, ip=_client_ip(request))
+
+
+@app.delete("/api/store/session/remember")
+def store_session_forget_password(request: Request, user: dict = Depends(store_user)):
+    cleared = store_session.clear_remembered(user["id"])
+    audit.record(user, "store.forget_password", "temu_session", user["username"], "清除已保存的店铺密码", request)
+    return {"cleared": bool(cleared)}
+
+
+@app.get("/api/store/sites")
+def store_sites(force: bool = Query(False), user: dict = Depends(store_user)):
+    """104 个站点表（默认带缓存，force=true 强制刷新）。"""
+    try:
+        return {"items": store_goods.sites(user["id"], force=force)}
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/goods")
+def store_goods_list(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    site: Optional[str] = Query(None, max_length=32),
+    keyword: Optional[str] = Query(None, max_length=120),
+    # 0 = 未发布到任何站点，1 = 已加入站点（由生命周期 selectStatus=12 推导）
+    site_status: Optional[int] = Query(None, ge=0, le=1),
+    # 生命周期状态：9 待选品 / 10 待处理 / 12 已加入站点 / 13 待价格校验
+    select_status: Optional[int] = Query(None),
+    # 搜索类型：auto（数字→SKC，其它→商品名）/ name / spu / skc / sku / extcode
+    search_type: Optional[str] = Query(None, max_length=16),
+    # 时间范围（1 创建 / 4 价格确认 / 6 加入站点 / 7 下架）
+    time_type: Optional[int] = Query(None),
+    time_begin: Optional[int] = Query(None),
+    time_end: Optional[int] = Query(None),
+    # 状态类筛选：逗号分隔的枚举列表
+    price_review_status: Optional[str] = Query(None, max_length=64),
+    sample_qc_status: Optional[str] = Query(None, max_length=64),
+    todo_types: Optional[str] = Query(None, max_length=64),
+    punish_status: Optional[str] = Query(None, max_length=64),
+    limit_status: Optional[str] = Query(None, max_length=64),
+    remove_status: Optional[int] = Query(None),
+    force: bool = Query(False),
+    user: dict = Depends(store_user),
+):
+    """商品列表（行粒度 = SKC，数据来自「上新生命周期管理」接口并走服务端筛选）。
+
+    一次只取一页（平台连续 8~10 次请求/分钟会 40001），异常时回退商品列表接口。
+    """
+    def _ints(raw: Optional[str]) -> Optional[list[int]]:
+        if not raw:
+            return None
+        values = [part.strip() for part in raw.split(",") if part.strip()]
+        return [int(v) for v in values if v.lstrip("-").isdigit()] or None
+
+    try:
+        return store_goods.list_goods(
+            user["id"],
+            page=page,
+            page_size=page_size,
+            site_id=site,
+            keyword=keyword,
+            search_type=search_type,
+            site_status=site_status,
+            select_status=select_status,
+            time_type=time_type,
+            time_begin=time_begin,
+            time_end=time_end,
+            price_review_status=_ints(price_review_status),
+            sample_qc_status=_ints(sample_qc_status),
+            todo_types=_ints(todo_types),
+            punish_status=_ints(punish_status),
+            limit_status=_ints(limit_status),
+            remove_status=remove_status,
+            force=force,
+        )
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+# ==================== 商品创建 ====================
+@app.post("/api/store/products/category/suggest")
+def store_product_category_suggest(payload: dict, user: dict = Depends(store_user)):
+    """按商品名推荐 Temu 类目路径（填 catPath 用）。"""
+    try:
+        return product_create.category_suggest(user["id"], str(payload.get("name") or ""))
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/constants")
+def store_product_constants(user: dict = Depends(store_user)):
+    """固定枚举：敏感类型 / SKU 分类。"""
+    try:
+        return product_create.constants(user["id"])
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/regions")
+def store_product_regions(refresh: bool = Query(False), user: dict = Depends(store_user)):
+    """产地 / 制造地点候选值。"""
+    try:
+        return product_create.regions(user["id"], refresh=refresh)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/size-templates")
+def store_product_size_templates(
+    cat_id: int = Query(..., ge=1),
+    site_id: int = Query(0),
+    group_id: int = Query(0),
+    user: dict = Depends(store_user),
+):
+    """尺码表模板列表（businessId → sizeTemplateIds）。按站点尺码组过滤。"""
+    try:
+        return product_create.size_templates(user["id"], cat_id, site_id, group_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/size-spec-config")
+def store_product_size_spec_config(cat_id: int = Query(..., ge=1), user: dict = Depends(store_user)):
+    """尺码体系映射（站点 → 尺码组）。"""
+    try:
+        return product_create.size_spec_config(user["id"], cat_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/category/config")
+def store_product_category_config(
+    leaf_cat_id: int = Query(..., ge=1),
+    site_id: int = Query(100, ge=1),
+    user: dict = Depends(store_user),
+):
+    """类目配置：必填项、标题长度上限、敏感属性。"""
+    try:
+        return product_create.category_config(user["id"], leaf_cat_id, site_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/products/category/search")
+def store_product_category_search(payload: dict, user: dict = Depends(store_user)):
+    """类目关键字搜索（多条模糊）。"""
+    try:
+        return product_create.category_search(
+            user["id"],
+            str(payload.get("keyword") or ""),
+            is_en=bool(payload.get("is_en")),
+        )
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/category/hints")
+def store_product_category_hints(user: dict = Depends(store_user)):
+    """常用推荐类目。"""
+    try:
+        return product_create.category_hints(user["id"])
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/warehouses")
+def store_product_warehouses(site_id: Optional[int] = Query(None), user: dict = Depends(store_user)):
+    """发货仓列表（含名称与覆盖站点）。"""
+    try:
+        return product_create.warehouses(user["id"], site_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/category/children")
+def store_product_category_children(
+    parent_cat_id: int = Query(0, ge=0),
+    user: dict = Depends(store_user),
+):
+    """逐级类目树（parent_cat_id=0 取一级）。"""
+    try:
+        return product_create.category_children(user["id"], parent_cat_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/products/category/path")
+def store_product_category_path(payload: dict, user: dict = Depends(store_user)):
+    """catId 列表反查完整类目路径。"""
+    try:
+        return product_create.category_path(user["id"], payload.get("cat_ids") or [])
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/template")
+def store_product_template(
+    cat_id: int = Query(..., ge=1),
+    refresh: bool = Query(False),
+    user: dict = Depends(store_user),
+):
+    """类目模板（属性定义 + 概要），前端据此渲染表单。"""
+    try:
+        return product_create.category_template(user["id"], cat_id, refresh=refresh)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/products/describe")
+def store_product_describe(payload: dict, user: dict = Depends(store_user)):
+    """按已选属性返回应显示字段 / 缺失项 / 颜色尺码选项。"""
+    try:
+        return product_create.describe(user["id"], int(payload.get("cat_id") or 0), payload.get("selected") or {})
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/sites")
+def store_product_sites(refresh: bool = Query(False), user: dict = Depends(store_user)):
+    try:
+        return product_create.sites(user["id"], refresh=refresh)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/env")
+def store_product_env(
+    site_id: Optional[int] = Query(None),
+    refresh: bool = Query(False),
+    user: dict = Depends(store_user),
+):
+    """店铺环境：可用仓库 + 运费模板（创建商品必需）。"""
+    try:
+        return product_create.store_env(user["id"], site_id, refresh=refresh)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/size-template/validate")
+def store_product_validate_size_template(
+    cat_id: int = Query(..., ge=1),
+    ids: str = Query(""),
+    general_size_type: int = Query(0),
+    size_values: str = Query(""),
+    user: dict = Depends(store_user),
+):
+    """预检尺码模板：类目不符 / 类型不符 / 尺码覆盖不到。"""
+    try:
+        return product_create.validate_size_template(
+            user["id"],
+            cat_id,
+            [x for x in ids.split(",") if x.strip()],
+            general_size_type,
+            [x for x in size_values.split(",") if x.strip()],
+        )
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/form-templates")
+def store_form_templates(user: dict = Depends(store_user)):
+    """我的表单模板列表（只返回当前店铺的）。"""
+    try:
+        session = get_temu_session(user["id"]) or {}
+        return product_templates.list_templates(user["id"], shop=str(session.get("account") or ""))
+    except Exception as exc:  # noqa: BLE001 - 不能把 500 扔给前端而没有任何线索
+        logger.exception("列表单模板失败")
+        raise HTTPException(status_code=500, detail=f"列表单模板失败：{exc}") from None
+
+
+@app.get("/api/store/products/form-templates/{template_id}")
+def store_form_template_detail(template_id: int, user: dict = Depends(store_user)):
+    """取模板内容（只返回可复用字段）。"""
+    try:
+        session = get_temu_session(user["id"]) or {}
+        return product_templates.get_template(
+            user["id"], template_id, shop=str(session.get("account") or "")
+        )
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/products/form-templates")
+def store_form_template_save(payload: dict, user: dict = Depends(store_user)):
+    """把当前填好的表单存成模板（同名则覆盖）。"""
+    try:
+        session = get_temu_session(user["id"]) or {}
+        return product_templates.save_template(
+            user["id"],
+            str(payload.get("name") or ""),
+            str(payload.get("note") or ""),
+            payload.get("form") or {},
+            shop=str(session.get("account") or ""),
+        )
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.patch("/api/store/products/form-templates/{template_id}")
+def store_form_template_update(template_id: int, payload: dict, user: dict = Depends(store_user)):
+    """改模板名称/备注；传 form 时同时用新参数覆盖内容。"""
+    try:
+        return product_templates.update_template(
+            user["id"],
+            template_id,
+            name=payload.get("name"),
+            note=payload.get("note"),
+            form=payload.get("form"),
+        )
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.delete("/api/store/products/form-templates/{template_id}")
+def store_form_template_delete(template_id: int, user: dict = Depends(store_user)):
+    try:
+        return product_templates.delete_template(user["id"], template_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/folders")
+def store_product_folders(user: dict = Depends(store_user)):
+    """素材文件夹树。"""
+    try:
+        return product_create.material_folders(user["id"])
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/products/material/remove")
+def store_product_material_remove(payload: dict, user: dict = Depends(store_user)):
+    """删除素材（批量下架）。"""
+    try:
+        return product_create.remove_material(
+            user["id"],
+            payload.get("img_ids") or [],
+            payload.get("video_ids") or [],
+        )
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/images")
+def store_product_images(
+    carousel: bool = Query(False),
+    page_no: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=50),
+    name: Optional[str] = Query(None, max_length=80),
+    proportion: Optional[str] = Query(None, max_length=16),
+    # 0=视频 1=图片，不传=图片
+    type: Optional[int] = Query(None, ge=0, le=1),
+    folder_id: int = Query(0, ge=0),
+    user: dict = Depends(store_user),
+):
+    """素材库（创建商品只能从素材库取图/视频）。"""
+    try:
+        return product_create.images(
+            user["id"],
+            carousel=carousel,
+            page_no=page_no,
+            page_size=page_size,
+            name=name,
+            proportion=proportion,
+            material_type=type,
+            folder_id=folder_id,
+        )
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/products/preview")
+def store_product_preview(payload: dict, user: dict = Depends(store_user)):
+    """校验表单 + 组装请求体（不创建）。"""
+    try:
+        return product_create.preview(user["id"], payload.get("form") or payload)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/products/create")
+def store_product_create(payload: dict, request: Request, user: dict = Depends(store_user)):
+    """创建商品。dry_run 默认 True（只到 draft/save）。"""
+    dry_run = payload.get("dry_run")
+    dry_run = True if dry_run is None else bool(dry_run)
+    try:
+        result = product_create.create(user["id"], payload.get("form") or payload, dry_run=dry_run)
+    except StoreError as exc:
+        audit.record(user, "store.product_create_failed", "temu_product", str(payload.get("form", {}).get("name", ""))[:80], exc.message, request)
+        raise _store_http_error(exc) from None
+    audit.record(
+        user,
+        "store.product_create",
+        "temu_product",
+        str(result.get("product_id") or result.get("draft_id") or ""),
+        f"{'预览' if dry_run else '创建'}：{result.get('form', {}).get('name', '')}",
+        request,
+    )
+    return result
+
+
+@app.post("/api/store/products/material/compress")
+def store_product_material_compress(payload: dict, user: dict = Depends(store_user)):
+    """压缩图片（超尺寸时用）。"""
+    try:
+        return product_create.compress_images(user["id"], payload.get("urls") or [])
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/products/material/crop")
+def store_product_material_crop(payload: dict, user: dict = Depends(store_user)):
+    """服务端裁剪：把 CDN 图按 cutConfig 裁成新图。"""
+    try:
+        return product_create.crop_image(
+            user["id"], str(payload.get("url") or ""), payload.get("cut_config") or {}
+        )
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/products/upload-video")
+def store_product_upload_video(payload: dict, user: dict = Depends(store_user)):
+    """上传视频到素材中心（≤30MB，MP4，内部会等转码完成）。"""
+    try:
+        return product_create.upload_video(
+            user["id"],
+            str(payload.get("content_base64") or ""),
+            str(payload.get("file_name") or "upload.mp4"),
+        )
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/products/upload")
+def store_product_upload(payload: dict, user: dict = Depends(store_user)):
+    """上传图片到素材库（base64，≤2MB）。"""
+    try:
+        return product_create.upload_image(
+            user["id"],
+            str(payload.get("content_base64") or ""),
+            str(payload.get("file_name") or "upload.jpg"),
+            int(payload.get("crop_width") or 0),
+            int(payload.get("crop_height") or 0),
+        )
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/batch")
+def store_product_batch_status(user: dict = Depends(store_user)):
+    return product_create.batch_status(user["id"])
+
+
+@app.post("/api/store/products/batch")
+def store_product_batch_start(payload: dict, request: Request, user: dict = Depends(store_user)):
+    """启动批量创建（后台串行执行，每项间隔 20 秒）。"""
+    dry_run = payload.get("dry_run")
+    dry_run = True if dry_run is None else bool(dry_run)
+    try:
+        state = product_create.start_batch(user["id"], payload.get("items") or [], dry_run=dry_run)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+    audit.record(
+        user,
+        "store.product_batch_start",
+        "temu_product",
+        str(state.get("total")),
+        f"批量{'预览' if dry_run else '创建'} {state.get('total')} 个商品",
+        request,
+    )
+    return state
+
+
+@app.post("/api/store/products/batch/cancel")
+def store_product_batch_cancel(user: dict = Depends(store_user)):
+    return product_create.cancel_batch(user["id"])
+
+
+@app.get("/api/store/goods/filters")
+def store_goods_filters(user: dict = Depends(store_user)):
+    """生命周期快捷筛选计数 + 待办计数（给筛选下拉显示数量）。"""
+    try:
+        return store_goods.quick_filters(user["id"])
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/goods/{product_id}/lifecycle")
+def store_goods_lifecycle(product_id: str, user: dict = Depends(store_user)):
+    """该商品各 SKC 的生命周期阶段与时间轴（详情抽屉用）。"""
+    try:
+        return store_goods.product_lifecycle(user["id"], product_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/goods/{product_id}")
+def store_goods_detail(product_id: str, user: dict = Depends(store_user)):
+    """商品详情（queryForImage：轮播图 / 多语言 / SKC-SKU 结构）。"""
+    try:
+        return store_goods.goods_detail(user["id"], product_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+# ==================== 客服自助工具（只读；写操作在 P3 的 action 事务里） ====================
+
+@app.get("/api/store/kefu/tools")
+def store_kefu_tools(force: bool = Query(False), user: dict = Depends(store_user)):
+    """4 个自助工具定义（toolId 由服务端下发，默认缓存 30 分钟）。"""
+    try:
+        return {"items": store_kefu.tools(user["id"], force=force)}
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/kefu/card")
+def store_kefu_card(
+    tool_id: Optional[str] = Query(None, max_length=32),
+    max_pages: int = Query(10, ge=1, le=50),
+    user: dict = Depends(store_user),
+):
+    """工具卡片（下架原因枚举的来源）。会按 toolId 精确找并自动向前翻页。"""
+    try:
+        return store_kefu.card(user["id"], tool_id=tool_id, max_pages=max_pages)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/kefu/cards")
+def store_kefu_cards(
+    max_pages: int = Query(10, ge=1, le=50),
+    user: dict = Depends(store_user),
+):
+    """每个工具的最新卡片（可用于预热 parentMsgId / 排障）。"""
+    try:
+        return {"items": store_kefu.cards(user["id"], max_pages=max_pages)}
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/kefu/messages")
+def store_kefu_messages(limit: int = Query(50, ge=1, le=50), user: dict = Depends(store_user)):
+    """客服会话消息（服务端上限 50 条，已剥离 HTML）。"""
+    try:
+        return store_kefu.messages(user["id"], limit=limit)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/kefu/query")
+def store_kefu_query(payload: StoreKefuQueryRequest, user: dict = Depends(store_user)):
+    """只读查商品（SKC / SKU / SPU），提交前确认商品身份用。"""
+    try:
+        return store_kefu.query_product(user["id"], payload.type, payload.id, payload.tool_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+# ==================== 客服写操作：预览 → 确认 → 回执 ====================
+
+@app.post("/api/store/kefu/query-batch")
+def store_kefu_query_batch(payload: StoreKefuQueryBatchRequest, user: dict = Depends(store_user)):
+    """批量只读查询：一串编号换成商品详情（可反复执行，不产生任何副作用）。"""
+    try:
+        return store_kefu.query_batch(user["id"], payload.type, payload.ids, payload.tool_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/kefu/batches", status_code=202)
+def store_kefu_batch_create(payload: StoreKefuBatchRequest, request: Request, user: dict = Depends(store_user)):
+    """批量执行客服工具：入队后在后台线程串行「查商品 → 拦截 → 提交 → 回执」。"""
+    try:
+        data = store_kefu_batch.start_batch(
+            user,
+            tool_id=payload.tool_id or "",
+            tool_name=payload.tool_name or "",
+            data_type=payload.data_type or "",
+            ids=payload.ids,
+            reason_code=payload.reason_code,
+            reason_detail=payload.reason_detail or "",
+        )
+    except StoreError as exc:
+        audit.record(user, "store.kefu_batch_failed", "temu_kefu_batch", payload.tool_id or "", exc.message, request)
+        raise _store_http_error(exc) from None
+    batch = data["batch"]
+    audit.record(
+        user,
+        "store.kefu_batch",
+        "temu_kefu_batch",
+        batch["id"],
+        f"{batch['tool_name']} · {batch['data_type_name']} · {batch['total']} 个编号",
+        request,
+    )
+    return data
+
+
+@app.get("/api/store/kefu/batches")
+def store_kefu_batch_list(limit: int = Query(20, ge=1, le=50), user: dict = Depends(store_user)):
+    return {"items": store_kefu_batch.list_batches(user, limit=limit)}
+
+
+@app.get("/api/store/kefu/batches/{batch_id}")
+def store_kefu_batch_get(batch_id: str, user: dict = Depends(store_user)):
+    """批量进度：整批状态 + 每个编号的阶段/回执。"""
+    try:
+        return store_kefu_batch.batch_view(user, batch_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/kefu/batches/{batch_id}/cancel")
+def store_kefu_batch_cancel(batch_id: str, request: Request, user: dict = Depends(store_user)):
+    """停止剩余未执行的编号（已发送的无法撤回）。"""
+    try:
+        data = store_kefu_batch.cancel_batch(user, batch_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+    audit.record(user, "store.kefu_batch_cancel", "temu_kefu_batch", batch_id, "取消批量任务", request)
+    return data
+
+
+@app.post("/api/store/kefu/actions", status_code=201)
+def store_kefu_action_create(payload: StoreKefuActionRequest, request: Request, user: dict = Depends(store_user)):
+    """创建写操作预览：一次完成查商品 + 拦截检查 + 组装报文（**不发送**）。"""
+    try:
+        action = store_kefu_actions.create_action(
+            user,
+            tool_id=payload.tool_id or "",
+            tool_name=payload.tool_name or "",
+            data_type=payload.data_type or "",
+            data_id=payload.data_id,
+            reason_code=payload.reason_code,
+            reason_detail=payload.reason_detail or "",
+            parent_msg_id=payload.parent_msg_id,
+        )
+    except StoreError as exc:
+        audit.record(
+            user,
+            "store.kefu_preview_failed",
+            "temu_kefu_action",
+            payload.data_id,
+            f"{payload.tool_id or payload.tool_name or ''}：{exc.message}",
+            request,
+        )
+        raise _store_http_error(exc) from None
+    audit.record(
+        user,
+        "store.kefu_preview",
+        "temu_kefu_action",
+        action["id"],
+        f"{action['tool_name']} {action['data_type_name']} {action['data_id']}",
+        request,
+    )
+    return action
+
+
+@app.post("/api/store/kefu/actions/{action_id}/confirm")
+def store_kefu_action_confirm(action_id: str, request: Request, user: dict = Depends(store_user)):
+    """确认发送（幂等：同一 action 只会真正发一次消息）。"""
+    try:
+        action = store_kefu_actions.confirm_action(user, action_id)
+    except StoreError as exc:
+        audit.record(user, "store.kefu_submit_failed", "temu_kefu_action", action_id, exc.message, request)
+        raise _store_http_error(exc) from None
+    audit.record(
+        user,
+        "store.kefu_submit",
+        "temu_kefu_action",
+        action_id,
+        f"{action['tool_name']} {action['data_type_name']} {action['data_id']}",
+        request,
+    )
+    return action
+
+
+@app.get("/api/store/kefu/actions")
+def store_kefu_action_list(
+    limit: int = Query(30, ge=1, le=100),
+    stage: Optional[str] = Query(None, max_length=20),
+    user: dict = Depends(store_user),
+):
+    return {"items": store_kefu_actions.list_actions(user, limit=limit, stage=stage)}
+
+
+@app.get("/api/store/kefu/actions/{action_id}")
+def store_kefu_action_get(action_id: str, user: dict = Depends(store_user)):
+    try:
+        return store_kefu_actions.get_action(user, action_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.post("/api/store/kefu/actions/{action_id}/reply")
+def store_kefu_action_reply(action_id: str, user: dict = Depends(store_user)):
+    """拉机器人回执（前端在提交后每 3 秒轮询，最多 5 次）。"""
+    try:
+        return store_kefu_actions.fetch_reply(user, action_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/admin/kefu-actions")
+def admin_kefu_actions(
+    limit: int = Query(100, ge=1, le=200),
+    stage: Optional[str] = Query(None, max_length=20),
+    keyword: str = Query("", max_length=80),
+    start: Optional[str] = Query(None, max_length=32),
+    end: Optional[str] = Query(None, max_length=32),
+    _admin: dict = Depends(admin_user),
+):
+    """跨用户的客服写操作审计。支持关键字（账号/工具/商品）与时间范围。"""
+    def _parse(v):
+        if not v:
+            return None
+        try:
+            return datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    return {
+        "items": store_kefu_actions.list_all_actions(
+            limit=limit,
+            stage=stage,
+            keyword=keyword,
+            start=_parse(start),
+            end=_parse(end),
+        )
+    }
+
+
+@app.delete("/api/admin/kefu-actions")
+def admin_kefu_actions_delete(payload: dict, _admin: dict = Depends(admin_user)):
+    """批量删除客服操作审计记录。"""
+    return {"deleted": delete_kefu_actions(payload.get("ids") or [])}
+
+
+@app.get("/api/admin/store-logs")
+def admin_store_logs(
+    limit: int = Query(100, ge=1, le=500),
+    action: Optional[str] = Query(None, max_length=32),
+    user_id: Optional[int] = Query(None),
+    keyword: str = Query("", max_length=80),
+    start: Optional[str] = Query(None, max_length=32),
+    end: Optional[str] = Query(None, max_length=32),
+    _admin: dict = Depends(admin_user),
+):
+    """店铺登录/退出/失效事件（含 54001 冷却记录）。支持关键字与时间范围筛选。"""
+    def _parse(v):
+        if not v:
+            return None
+        try:
+            return datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    return {
+        "items": list_temu_login_logs(
+            limit=limit,
+            user_id=user_id,
+            action=action,
+            keyword=keyword,
+            start=_parse(start),
+            end=_parse(end),
+        )
+    }
+
+
+@app.delete("/api/admin/store-logs")
+def admin_store_logs_delete(payload: dict, _admin: dict = Depends(admin_user)):
+    """批量删除登录日志。"""
+    ids = payload.get("ids") or []
+    return {"deleted": delete_temu_login_logs(ids)}
 
 
 @app.get("/api/regions")
@@ -1038,9 +2023,122 @@ def admin_download_activity(job_id: str, _admin: dict = Depends(admin_user)):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+@app.get("/api/admin/store-users")
+def admin_store_users(_admin: dict = Depends(admin_user)):
+    """后台店铺管理：开通店铺的用户 + 建品统计 + 模板数 + 会话状态。"""
+    return product_templates.admin_user_overview()
+
+
+@app.get("/api/admin/store-users/{user_id}/templates")
+def admin_store_user_templates(user_id: int, _admin: dict = Depends(admin_user)):
+    """某用户保存的表单模板（后台只读查看 + 删除）。"""
+    return product_templates.admin_user_templates(user_id)
+
+
+@app.delete("/api/admin/store-users/{user_id}/templates/{template_id}")
+def admin_store_user_template_delete(user_id: int, template_id: int, _admin: dict = Depends(admin_user)):
+    """管理员删除某用户的模板。"""
+    try:
+        return product_templates.delete_template(user_id, template_id)
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
+@app.get("/api/admin/store-sessions")
+def admin_store_sessions(_admin: dict = Depends(admin_user)):
+    """店铺会话总览（账号一律脱敏；用于排障与强制下线）。"""
+    return {"items": store_session.list_all()}
+
+
+@app.delete("/api/admin/store-sessions/{user_id}")
+def admin_revoke_store_session(user_id: int, request: Request, _admin: dict = Depends(admin_user)):
+    target = get_user(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    revoked = store_session.revoke(user_id, reason="admin_revoked", ip=_client_ip(request))
+    audit.record(_admin, "store.revoke", "user", target["username"], "管理员强制退出店铺会话", request)
+    return {"revoked": bool(revoked)}
+
+
+@app.get("/api/permissions")
+def permission_catalog(_user: dict = Depends(current_user)):
+    """模块清单（前端渲染菜单/权限勾选用）。"""
+    return permissions.catalog()
+
+
 @app.get("/api/admin/users")
 def admin_users(_admin: dict = Depends(admin_user)):
     return {"items": list_users()}
+
+
+@app.get("/api/admin/users/{user_id}/store-accounts")
+def admin_view_store_accounts(
+    user_id: int,
+    request: Request,
+    with_password: bool = Query(False),
+    admin: dict = Depends(admin_user),
+):
+    """管理员查看某个用户保存的所有店铺。
+
+    `with_password=true` 时一并解密密码（明文，会写审计）；默认只给脱敏账号。
+    """
+    if not get_user(user_id):
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if with_password and not credential_cipher.enabled():
+        raise HTTPException(status_code=409, detail="未配置 CREDENTIAL_KEY，无法解密店铺密码")
+    items = store_accounts.list_for_user(user_id, with_password=with_password)
+    binding = store_session.user_binding(user_id)
+    active = binding.get("account_masked") if binding.get("bound") else ""
+    for item in items:
+        item["active"] = bool(active) and item["account_masked"] == active
+    if with_password:
+        audit.record(
+            admin,
+            "store.view_accounts",
+            "temu_store_account",
+            f"user#{user_id}",
+            f"查看 {len(items)} 个店铺账号密码",
+            request,
+        )
+    return {"items": items, "active_account_masked": active}
+
+
+@app.get("/api/admin/users/{user_id}/store-binding")
+def admin_view_store_binding(user_id: int, admin: dict = Depends(admin_user)):
+    """管理员查看某个用户已绑定的店铺信息（账号脱敏，不含密码）。"""
+    if not get_user(user_id):
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return store_session.user_binding(user_id)
+
+
+@app.get("/api/admin/users/{user_id}/store-credential")
+def admin_view_store_credential(user_id: int, request: Request, admin: dict = Depends(admin_user)):
+    """管理员查看某个用户保存的店铺账号密码（明文，操作会写审计）。"""
+    target = get_user(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if not credential_cipher.enabled():
+        raise HTTPException(status_code=409, detail="未配置 CREDENTIAL_KEY，无法解密已保存的店铺密码")
+    record = get_temu_credential(user_id)
+    if not record or not record.get("ciphertext"):
+        raise HTTPException(status_code=404, detail="该用户尚未保存店铺账号密码")
+    try:
+        password = credential_cipher.decrypt(record["ciphertext"])
+    except Exception:  # noqa: BLE001 - 密钥更换/密文损坏
+        raise HTTPException(status_code=500, detail="密码解密失败（CREDENTIAL_KEY 可能已更换）") from None
+    audit.record(
+        admin,
+        "store.view_credential",
+        "temu_credential",
+        record["account"],
+        "管理员查看店铺账号密码",
+        request,
+    )
+    return {
+        "account": record["account"],
+        "password": password,
+        "updated_at": record["updated_at"],
+    }
 
 
 @app.post("/api/admin/users/{user_id}/approve")
@@ -1072,7 +2170,7 @@ def disable_user(user_id: int, request: Request, _admin: dict = Depends(admin_us
 @app.patch("/api/admin/users/bulk")
 def admin_bulk_update_users(payload: AdminUserBulkUpdateRequest, request: Request, _admin: dict = Depends(admin_user)):
     fields = payload.model_fields_set
-    if not fields.intersection({"display_name", "note", "status"}):
+    if not fields.intersection({"display_name", "note", "status", "store_access"}):
         raise HTTPException(status_code=400, detail="请至少选择一个要批量修改的字段")
     try:
         items = bulk_update_users(
@@ -1080,11 +2178,18 @@ def admin_bulk_update_users(payload: AdminUserBulkUpdateRequest, request: Reques
             display_name=(payload.display_name or "").strip() if "display_name" in fields else None,
             note=(payload.note or "").strip() if "note" in fields else None,
             status=payload.status if "status" in fields else None,
+            store_access=payload.store_access if "store_access" in fields else None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # 收回模块权限时必须同时销毁店铺会话：否则会话仍占着该 Temu 账号，别处无法登录
+    revoked = 0
+    if "store_access" in fields and payload.store_access is False:
+        for item in items:
+            if store_session.revoke(item["id"], reason="access_revoked", ip=_client_ip(request)):
+                revoked += 1
     audit.record(_admin, "user.bulk_update", "user", "bulk", f"批量更新 {len(items)} 个用户", request)
-    return {"items": items, "updated": len(items)}
+    return {"items": items, "updated": len(items), "store_sessions_revoked": revoked}
 
 
 @app.post("/api/admin/users/bulk-delete")
@@ -1112,19 +2217,40 @@ def admin_update_user(user_id: int, payload: AdminUserUpdateRequest, request: Re
         existing = get_user_by_username(username)
         if existing and existing["id"] != user_id:
             raise HTTPException(status_code=409, detail="用户名已存在")
+    store_access = payload.store_access if "store_access" in fields else None
+    # 模块权限：只传了的才改，未传保持原样
+    modules = payload.modules if "modules" in fields else None
+    store_modules = payload.store_modules if "store_modules" in fields else None
     user = update_user_credentials(
         user_id,
         username=username if payload.username is not None else None,
         password_hash=hash_password(payload.password) if payload.password else None,
         display_name=(payload.display_name or "").strip() if "display_name" in fields else None,
         note=(payload.note or "").strip() if "note" in fields else None,
+        store_access=store_access,
+        modules=modules,
+        store_modules=store_modules,
     )
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
-    changed = [name for name in ("username", "display_name", "note") if name in fields]
+    # 关闭店铺管理模块 → 立刻销毁该用户的店铺会话（释放被占用的 Temu 账号）
+    revoked = False
+    if store_access is False:
+        revoked = store_session.revoke(user_id, reason="access_revoked", ip=_client_ip(request))
+    changed = [name for name in ("username", "display_name", "note", "store_access") if name in fields]
     if payload.password:
         changed.append("password")
     audit.record(_admin, "user.update", "user", user["username"], f"修改用户账号（{', '.join(changed) or '无字段变化'}）", request)
+    if store_access is not None:
+        audit.record(
+            _admin,
+            "user.store_access",
+            "user",
+            user["username"],
+            f"{'开通' if store_access else '关闭'}店铺管理模块"
+            + ("（已强制退出店铺会话）" if revoked else ""),
+            request,
+        )
     return user
 
 
@@ -1317,9 +2443,33 @@ def admin_audit_logs(
     action: str = Query("", max_length=64),
     actor_id: Optional[int] = Query(None),
     keyword: str = Query("", max_length=80),
+    start: Optional[str] = Query(None, max_length=32),
+    end: Optional[str] = Query(None, max_length=32),
     _admin: dict = Depends(admin_user),
 ):
-    return audit.query(page=page, page_size=page_size, action=action.strip(), actor_id=actor_id, keyword=keyword.strip()) | {"actions": audit.actions()}
+    def _parse(v):
+        if not v:
+            return None
+        try:
+            return datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    return audit.query(
+        page=page,
+        page_size=page_size,
+        action=action.strip(),
+        actor_id=actor_id,
+        keyword=keyword.strip(),
+        start=_parse(start),
+        end=_parse(end),
+    ) | {"actions": audit.actions()}
+
+
+@app.delete("/api/admin/audit-logs")
+def admin_audit_logs_delete(payload: dict, _admin: dict = Depends(admin_user)):
+    """批量删除审计日志。"""
+    return {"deleted": delete_audit_logs(payload.get("ids") or [])}
 
 
 @app.get("/api/admin/monitoring")

@@ -3,7 +3,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
+  ArrowRight,
   Box,
+  ChatLineSquare,
   Clock,
   Document,
   Goods,
@@ -13,10 +15,13 @@ import {
   PriceTag,
   Setting,
   SetUp,
+  Shop,
+  Tickets,
   Tools,
   Upload,
   UserFilled,
 } from '@element-plus/icons-vue'
+import type { Component } from 'vue'
 import type { User } from '../types'
 import { getVersion } from '../api'
 import VersionDialog from './VersionDialog.vue'
@@ -42,7 +47,13 @@ onMounted(async () => {
   }
 })
 
-const navItems = [
+type NavLeaf = { path: string; label: string; icon: Component }
+type NavGroup = { key: string; label: string; icon: Component; children: NavLeaf[] }
+type NavEntry = NavLeaf | NavGroup
+
+const isGroup = (item: NavEntry): item is NavGroup => 'children' in item
+
+const navItems: NavEntry[] = [
   { path: '/admin/monitoring', label: '系统监控', icon: Monitor },
   { path: '/admin/users', label: '用户管理', icon: UserFilled },
   { path: '/admin/regions', label: '区域设置', icon: Location },
@@ -51,9 +62,30 @@ const navItems = [
   { path: '/admin/activity-settings', label: '批量报活动设置', icon: PriceTag },
   { path: '/admin/inventory', label: '库存管理', icon: Box },
   { path: '/admin/tasks', label: '任务记录', icon: Clock },
+  {
+    key: 'store',
+    label: '店铺管理',
+    icon: Shop,
+    children: [
+      { path: '/admin/store-users', label: '用户管理', icon: UserFilled },
+      { path: '/admin/store-center', label: '日志与审计', icon: Tickets },
+    ],
+  },
   { path: '/admin/system', label: '系统设置', icon: Tools },
-  { path: '/admin/audit-logs', label: '审计日志', icon: Document },
 ]
+
+/** 可展开分组：默认带上当前路由所在的分组 */
+const expandedGroups = ref<string[]>(['store'])
+
+function toggleGroup(key: string) {
+  expandedGroups.value = expandedGroups.value.includes(key)
+    ? expandedGroups.value.filter((item) => item !== key)
+    : [...expandedGroups.value, key]
+}
+
+function groupActive(group: NavGroup): boolean {
+  return group.children.some((child) => route.path === child.path)
+}
 
 function navigate(path: string) {
   router.push(path)
@@ -77,17 +109,45 @@ function backToWorkspace() {
         </div>
       </div>
       <nav class="nav-list admin-nav-list">
-        <button
-          v-for="item in navItems"
-          :key="item.path"
-          class="nav-item"
-          :class="{ active: route.path === item.path }"
-          type="button"
-          @click="navigate(item.path)"
-        >
-          <el-icon><component :is="item.icon" /></el-icon>
-          <span>{{ item.label }}</span>
-        </button>
+        <template v-for="item in navItems" :key="isGroup(item) ? item.key : item.path">
+          <template v-if="isGroup(item)">
+            <button
+              class="nav-item nav-item--group"
+              :class="{ active: groupActive(item) }"
+              type="button"
+              @click="toggleGroup(item.key)"
+            >
+              <el-icon><component :is="item.icon" /></el-icon>
+              <span>{{ item.label }}</span>
+              <el-icon class="nav-arrow" :class="{ open: expandedGroups.includes(item.key) }">
+                <ArrowRight />
+              </el-icon>
+            </button>
+            <div v-show="expandedGroups.includes(item.key)" class="nav-children">
+              <button
+                v-for="child in item.children"
+                :key="child.path"
+                class="nav-child"
+                :class="{ active: route.path === child.path }"
+                type="button"
+                @click="navigate(child.path)"
+              >
+                <el-icon><component :is="child.icon" /></el-icon>
+                <span>{{ child.label }}</span>
+              </button>
+            </div>
+          </template>
+          <button
+            v-else
+            class="nav-item"
+            :class="{ active: route.path === item.path }"
+            type="button"
+            @click="navigate(item.path)"
+          >
+            <el-icon><component :is="item.icon" /></el-icon>
+            <span>{{ item.label }}</span>
+          </button>
+        </template>
       </nav>
       <div class="sidebar-footer">
         <button class="nav-item admin-back" type="button" @click="backToWorkspace">
