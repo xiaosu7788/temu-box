@@ -776,7 +776,7 @@ def do_update(job: Job) -> None:
     job.begin(5)
     profiles, services = compose_scope()
     job.add(f"维护服务：{'、'.join(services)}（updater 不在其中，不会重建自己）")
-    if stream(job, compose("up", "-d", *services, profiles=profiles), timeout=UP_TIMEOUT) != 0:
+    if stream(job, compose("up", "-d", "--force-recreate", *services, profiles=profiles), timeout=UP_TIMEOUT) != 0:
         job.fail("重建服务失败，可在本页点击回滚", before=before["short"], after=after["short"])
         return
     # 6 健康检查
@@ -836,7 +836,7 @@ def do_rollback(job: Job) -> None:
     job.begin(4)
     profiles, services = compose_scope()
     job.add(f"维护服务：{'、'.join(services)}")
-    if stream(job, compose("up", "-d", *services, profiles=profiles), timeout=UP_TIMEOUT) != 0:
+    if stream(job, compose("up", "-d", "--force-recreate", *services, profiles=profiles), timeout=UP_TIMEOUT) != 0:
         job.fail("重建服务失败，请在服务器上人工处理", target=target[:7])
         return
     # 5 健康检查
