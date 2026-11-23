@@ -42,9 +42,11 @@ jobs:
             dockerfile: docker/frontend.Dockerfile
             context: .
           # bridge 的 Dockerfile 以 bridge/ 为根（COPY package.json ./），
-          # 所以 context 必须是子目录；dockerfile 路径相对 context，不能再带 bridge/ 前缀
+          # 所以 context 必须是子目录。
+          # 注意：build-push-action 的 file 是相对「工作区根」而不是 context，
+          # 所以这里仍要写 bridge/Dockerfile（写成 Dockerfile 会找仓库根的 Dockerfile 而失败）
           - service: bridge
-            dockerfile: Dockerfile
+            dockerfile: bridge/Dockerfile
             context: ./bridge
     steps:
       - name: 检出代码
