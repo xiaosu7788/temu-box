@@ -86,6 +86,26 @@ def upgrade() -> None:
         )
     _add_index(bind, "ix_product_batch_states_updated_at", "product_batch_states", ["updated_at"])
 
+    # ---------- temu_store_accounts（记住密码） ----------
+    if not inspector.has_table("temu_store_accounts"):
+        op.create_table(
+            "temu_store_accounts",
+            sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+            sa.Column("user_id", sa.Integer(), nullable=False),
+            sa.Column("account", sa.String(160), nullable=False, server_default=""),
+            sa.Column("account_hash", sa.String(40), nullable=False, server_default=""),
+            sa.Column("account_masked", sa.String(120), nullable=False, server_default=""),
+            sa.Column("label", sa.String(120), nullable=False, server_default=""),
+            sa.Column("mall_name", sa.String(120), nullable=False, server_default=""),
+            sa.Column("ciphertext", sa.Text(), nullable=False, server_default=""),
+            sa.Column("key_version", sa.Integer(), nullable=False, server_default="1"),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
+        )
+    _add_index(bind, "ix_temu_store_accounts_user_id", "temu_store_accounts", ["user_id"])
+    _add_index(bind, "ix_temu_store_accounts_account_hash", "temu_store_accounts", ["account_hash"])
+
     # ---------- product_create_logs ----------
     if not inspector.has_table("product_create_logs"):
         op.create_table(
