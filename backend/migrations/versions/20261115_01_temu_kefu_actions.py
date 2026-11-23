@@ -20,7 +20,7 @@ def upgrade() -> None:
     op.create_table(
         "temu_kefu_actions",
         sa.Column("id", sa.String(64), primary_key=True),
-        sa.Column("user_id", sa.Integer(), nullable=True, index=True),
+        sa.Column("user_id", sa.Integer(), nullable=True),
         sa.Column("account_masked", sa.String(120), nullable=False, server_default=""),
         sa.Column("tool_id", sa.String(32), nullable=False, server_default=""),
         sa.Column("tool_name", sa.String(80), nullable=False, server_default=""),
@@ -29,7 +29,7 @@ def upgrade() -> None:
         sa.Column("data_id", sa.String(64), nullable=False, server_default=""),
         sa.Column("reason_code", sa.Integer(), nullable=True),
         sa.Column("reason_detail", sa.String(255), nullable=False, server_default=""),
-        sa.Column("stage", sa.String(20), nullable=False, server_default="preview", index=True),
+        sa.Column("stage", sa.String(20), nullable=False, server_default="preview"),
         sa.Column("preview", sa.Text(), nullable=True),
         sa.Column("product_snapshot", sa.Text(), nullable=True),
         sa.Column("parent_msg_id", sa.String(32), nullable=False, server_default=""),
@@ -40,7 +40,7 @@ def upgrade() -> None:
         sa.Column("msg_id", sa.String(32), nullable=False, server_default=""),
         sa.Column("robot_reply", sa.Text(), nullable=True),
         sa.Column("error", sa.String(255), nullable=False, server_default=""),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, index=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
     )

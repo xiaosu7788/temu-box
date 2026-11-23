@@ -61,7 +61,7 @@ def upgrade() -> None:
         op.create_table(
             "temu_login_logs",
             sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-            sa.Column("user_id", sa.Integer(), nullable=True, index=True),
+            sa.Column("user_id", sa.Integer(), nullable=True),
             sa.Column("account_masked", sa.String(120), nullable=False, server_default=""),
             sa.Column("action", sa.String(32), nullable=False, server_default=""),
             sa.Column("code", sa.String(40), nullable=False, server_default=""),
