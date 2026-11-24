@@ -111,7 +111,10 @@ class GloClient {
    * @param {string} [account] 指定账号时按哈希精确取，避免多账号互相串号
    */
   static loadKjCookies(account) {
-    const dir = path.join(__dirname, '..', 'runtime');
+    // ⚠️ bridge 补丁：kj_local 写的是 TEMU_OPS_DATA（容器里是 /data），
+    //    这里原来硬编码 __dirname/../runtime，容器内等于 /app/runtime，
+    //    读完永远是空 → obtainCode 报 40001。两边必须用同一个目录。
+    const dir = DATA_DIR;   // 与 kj_local 写会话的目录保持一致
     if (account) {
       // 与 kj_local.sessionFile 同一套哈希：sha1(account).slice(0,16)
       const h = require('crypto').createHash('sha1')
