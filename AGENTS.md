@@ -267,6 +267,11 @@ npx vue-tsc -b --force
 - 提交前跑后端 `pytest`；涉及前端必跑 `npm run build`。推送网络不稳定时允许带重试，推送后可用 GitHub API
   核对远程 HEAD。
 - 不要提交运行时文件：`.env`、`data/*`、`dist/`、`node_modules/`、`.venv/`。
+- **线上改动只走一条路**：本地改 → `git commit && git push` → 等 CI 构建镜像 → 服务器
+  `git pull` + `docker compose pull` + `up -d --force-recreate`。
+  **不要**在服务器上用 `docker exec ... sed -i` 热改容器内文件，也不要用 `sed -i` 直接改服务器上的源码——
+  这类改动不进 git、不可追溯，下次 `--force-recreate` 还会被镜像覆盖，排查时会误判线上到底跑的哪份代码。
+  唯一例外是 `.env.docker` 这类不入库的配置（仍需说明追加了什么）。
 
 ### 版本号与更新日志
 - `VERSION`（语义化版本，如 `0.6.0`）是版本号唯一来源；`CHANGELOG.md` 记录每个版本改了什么，分「新增 / 优化 / 修复」。
