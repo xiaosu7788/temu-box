@@ -1084,6 +1084,19 @@ async function confirmEditTemplate() {
       sizeTemplateId: editTplSizeTplId.value || undefined,
       generalSizeType: SIZE_TYPE_TO_GST[editTplSizeType.value] || undefined,
     }
+    // 体积、重量在模板里存两套：平台单位（毫米/毫克）和用户输入单位（cm/g）。
+    // 编辑弹窗改的是 input*，保存时必须按它重算平台单位，否则存进去的还是旧值。
+    const vol: any = nextForm.volume
+    if (vol && vol.inputLen !== undefined) {
+      vol.len = Math.round(Number(vol.inputLen) * 10)
+      vol.width = Math.round(Number(vol.inputWidth) * 10)
+      vol.height = Math.round(Number(vol.inputHeight) * 10)
+    }
+    const wt: any = nextForm.weight
+    if (wt && wt.inputValue !== undefined) {
+      wt.value = Math.round(Number(wt.inputValue) * 1000)
+    }
+
     await updateFormTemplate(editTplId.value, {
       name: editTplName.value.trim(),
       note: editTplNote.value.trim(),
@@ -1414,7 +1427,7 @@ onMounted(async () => {
           </div>
         </el-form-item>
         <el-form-item label="重量（g）">
-          <el-input-number v-model="editTplValues.weight.value" :min="1" :max="999999" class="pcreate__weightnum" controls-position="right" />
+          <el-input-number v-model="editTplValues.weight.inputValue" :min="1" :max="999999" class="pcreate__weightnum" controls-position="right" />
         </el-form-item>
       </el-form>
 

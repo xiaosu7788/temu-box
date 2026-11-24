@@ -406,6 +406,17 @@ async function saveCardEditor() {
   next.catPath = editCatPath.value
   next.sizeTemplateId = next.sizeTemplateId || undefined
   next.generalSizeType = SIZE_TYPE_TO_GST[editSizeType.value] || undefined
+  // 体积/重量在模板里存两套单位，编辑改的是 input*，保存必须重算平台单位
+  const vol: any = next.volume
+  if (vol && vol.inputLen !== undefined) {
+    vol.len = Math.round(Number(vol.inputLen) * 10)
+    vol.width = Math.round(Number(vol.inputWidth) * 10)
+    vol.height = Math.round(Number(vol.inputHeight) * 10)
+  }
+  const wt: any = next.weight
+  if (wt && wt.inputValue !== undefined) {
+    wt.value = Math.round(Number(wt.inputValue) * 1000)
+  }
   card.templateValues = next
   if (next.siteId) card.siteId = Number(next.siteId)
   if (next.freightTemplateId) card.freightTemplateId = String(next.freightTemplateId)
@@ -824,15 +835,15 @@ onUnmounted(stopPolling)
           <el-form-item label="体积（cm）">
             <div class="batch__row">
               <span class="batch__meta">最长边</span>
-              <el-input-number v-model="editCardRaw.volume.len" :min="1" :max="999" controls-position="right" />
+              <el-input-number v-model="editCardRaw.volume.inputLen" :min="1" :max="999" controls-position="right" />
               <span class="batch__meta">次长边</span>
-              <el-input-number v-model="editCardRaw.volume.width" :min="1" :max="999" controls-position="right" />
+              <el-input-number v-model="editCardRaw.volume.inputWidth" :min="1" :max="999" controls-position="right" />
               <span class="batch__meta">最短边</span>
-              <el-input-number v-model="editCardRaw.volume.height" :min="1" :max="999" controls-position="right" />
+              <el-input-number v-model="editCardRaw.volume.inputHeight" :min="1" :max="999" controls-position="right" />
             </div>
           </el-form-item>
           <el-form-item label="重量（g）">
-            <el-input-number v-model="editCardRaw.weight.value" :min="1" :max="999999" controls-position="right" />
+            <el-input-number v-model="editCardRaw.weight.inputValue" :min="1" :max="999999" controls-position="right" />
           </el-form-item>
         </el-form>
 
