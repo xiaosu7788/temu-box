@@ -84,6 +84,7 @@ const SHIPMENT_OPTIONS = ['1个工作日', '2个工作日', '3个工作日', '5�
 
 const pickerVisible = ref(false)
 const pickerCarousel = ref(true)
+const pickerKind = ref<'carousel' | 'material' | 'detail'>('carousel')
 const pickerSelection = ref<string[]>([])
 let pickerTarget: { index: number; field: 'images' | 'materialImgUrl' | 'decorationImages' } | null = null
 
@@ -92,6 +93,9 @@ function openPicker(index: number, field: 'images' | 'materialImgUrl' | 'decorat
   if (!card) return
   pickerTarget = { index, field }
   pickerCarousel.value = field !== 'materialImgUrl'
+  // 详情图文的规格与轮播图不同（480×480 / 3MB / 0.5~2），不能复用 carousel 的 3:4 判据
+  pickerKind.value =
+    field === 'decorationImages' ? 'detail' : field === 'materialImgUrl' ? 'material' : 'carousel'
   pickerSelection.value = field === 'materialImgUrl'
     ? (card.materialImgUrl ? [card.materialImgUrl] : [])
     : [...(field === 'images' ? card.images : card.decorationImages)]
@@ -906,6 +910,7 @@ onUnmounted(stopPolling)
     <MaterialPicker
       v-model="pickerVisible"
       :carousel="pickerCarousel"
+      :kind="pickerKind"
       :selected="pickerSelection"
       @confirm="onPick"
     />

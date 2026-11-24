@@ -13,6 +13,13 @@ const props = defineProps<{
   modelValue: boolean
   /** carousel = 轮播图（3:4，可多选）；否则素材图（1:1，单选） */
   carousel?: boolean
+  /**
+   * 校验口径，优先级高于 carousel：
+   *   carousel 轮播 3:4 / 5MB / 短边≥600
+   *   material 素材 1:1 / 5MB / 短边≥600
+   *   detail   详情图文 480×480 / 3MB / 宽高比 0.5~2（官网 goodsLayerDecorationReqs）
+   */
+  kind?: 'carousel' | 'material' | 'detail'
   /** 已选中的 URL */
   selected?: string[]
 }>()
@@ -165,12 +172,23 @@ const MAX_IMAGE_SIZE = 5 * MB
  * 与上游 temu-ops 1.3.10 `lib/material.js` 的 UPLOAD_LIMITS 保持一致：
  * 官网前端 beforeUpload 的三道校验（体积 / 短边 / 比例）。
  */
+/**
+ * 与上游 temu-ops lib/material.js 的 UPLOAD_LIMITS 保持一致。
+ *
+ * ⚠️ 比例容差是「像素」不是百分比（官网 _cdn_9255 的 tn()）：
+ *      Math.abs(height - width / ratio) <= (ratio === 3/4 ? 10 : 0)
+ *    即 3:4 允许 ±10 像素，1:1 必须严格相等。
+ *    之前写成 ±10%（ratioTolerance: 0.1）会把 800×801 判成合格，实际提交会被平台拒绝。
+ */
 const UPLOAD_LIMITS = {
   maxImageSize: MAX_IMAGE_SIZE,
   minImageSide: 600,
-  ratioTolerance: 0.1,
-  carouselRatio: 3 / 4,
-  materialRatio: 1,
+  ratioFloat: 10, // 仅 3:4 使用
+  ratioFloatOther: 0,
+  carousel: { ratio: [3, 4], label: '3:4' },
+  material: { ratio: [1, 1], label: '1:1' },
+  // 详情图文（goodsLayerDecorationReqs）的固定规格：480×480、3MB、宽高比 0.5~2
+  detail: { minWidth: 480, minHeight: 480, maxSize: 3 * 1024 * 1024, ratioRange: [0.5, 2], label: '1:2~2:1' },
 }
 
 interface ImageCheck {
@@ -178,15 +196,41 @@ interface ImageCheck {
   reasons: string[]
 }
 
+/** 当前弹窗按哪种规格校验（kind 优先，回退到 carousel 布尔） */
+const pickKind = computed<'carousel' | 'material' | 'detail'>(() => {
+  if (props.kind) return props.kind
+  return props.carousel ? 'carousel' : 'material'
+})
+
 /** 提交前自检：尺寸/比例/体积，返回不通过的原因 */
 function validateImage(
   img: { width?: number; height?: number; size?: number; name?: string },
-  kind: 'carousel' | 'material',
+  kind: 'carousel' | 'material' | 'detail',
 ): ImageCheck {
   const reasons: string[] = []
   const w = Number(img.width) || 0
   const h = Number(img.height) || 0
   const size = Number(img.size) || 0
+
+  if (kind === 'detail') {
+    const spec = UPLOAD_LIMITS.detail
+    if (size > spec.maxSize) reasons.push(`${(size / MB).toFixed(2)}MB 超过 3MB`)
+    if (w && h) {
+      if (w < spec.minWidth || h < spec.minHeight) {
+        reasons.push(`尺寸 ${w}×${h} 小于 ${spec.minWidth}×${spec.minHeight}`)
+      }
+      const ratio = w / h
+      if (ratio < spec.ratioRange[0] || ratio > spec.ratioRange[1]) {
+        reasons.push(`宽高比 ${ratio.toFixed(2)} 超出 ${spec.label}`)
+      }
+    } else {
+      reasons.push('读不到图片尺寸')
+    }
+    return { ok: reasons.length === 0, reasons }
+  }
+
+  const spec = kind === 'carousel' ? UPLOAD_LIMITS.carousel : UPLOAD_LIMITS.material
+  const tol = kind === 'carousel' ? UPLOAD_LIMITS.ratioFloat : UPLOAD_LIMITS.ratioFloatOther
 
   if (size > UPLOAD_LIMITS.maxImageSize) {
     reasons.push(`${(size / MB).toFixed(2)}MB 超过 5MB`)
@@ -196,10 +240,11 @@ function validateImage(
     if (short < UPLOAD_LIMITS.minImageSide) {
       reasons.push(`短边 ${short}px 小于 ${UPLOAD_LIMITS.minImageSide}px`)
     }
-    const target = kind === 'carousel' ? UPLOAD_LIMITS.carouselRatio : UPLOAD_LIMITS.materialRatio
-    const actual = w / h
-    if (Math.abs(actual - target) / target > UPLOAD_LIMITS.ratioTolerance) {
-      reasons.push(`比例 ${w}×${h} 不是 ${kind === 'carousel' ? '3:4' : '1:1'}`)
+    // 官网判据：|height - width / ratio| <= 容差（像素）
+    const [rw, rh] = spec.ratio
+    const expectedH = (w / rw) * rh
+    if (Math.abs(h - expectedH) > tol) {
+      reasons.push(`比例 ${w}×${h} 不是 ${spec.label}（像素容差 ±${tol}）`)
     }
   } else {
     reasons.push('读不到图片尺寸')
@@ -514,7 +559,7 @@ async function compressAndPick(item: ProductMaterialImage) {
 
 /** 已选图里按规格不合格的（用 uploads 缓存里的宽高信息） */
 function badPicked(): Array<{ url: string; reasons: string[] }> {
-  const kind = props.carousel ? 'carousel' : 'material'
+  const kind = pickKind.value
   const out: Array<{ url: string; reasons: string[] }> = []
   for (const url of picked.value) {
     const meta = list.value.find((x: ProductMaterialImage) => x.imgUrl === url)
@@ -537,7 +582,9 @@ async function applySelection() {
       .join('\n')
     const more = bad.length > 3 ? `\n… 另有 ${bad.length - 3} 张` : ''
     const ok = await confirmAction(
-      `${bad.length} 张图不满足${props.carousel ? '轮播图 3:4' : '素材图 1:1'}规格：\n${detail}${more}\n\n仍然使用吗？（提交商品时可能被平台拒绝）`,
+      `${bad.length} 张图不满足${
+        pickKind.value === 'detail' ? '详情图文' : pickKind.value === 'carousel' ? '轮播图 3:4' : '素材图 1:1'
+      }规格：\n${detail}${more}\n\n仍然使用吗？（提交商品时可能被平台拒绝）`,
       '图片规格不通过',
     )
     if (!ok) return

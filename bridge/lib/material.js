@@ -204,49 +204,135 @@ const MATERIAL_SPEC = {
 };
 
 /**
- * 图片上传的真实限制（官网前端 beforeUpload 逐条复刻）
+ * 图片规格（官网校验函数 L() 的等价实现）
  *
- * 来源 _pm_5719.d7002540.chunk.js（商品图片 / 素材图上传）：
- *   file.size > 5242880                        → 「图片大小不能超过 5MB」
- *   naturalWidth < 600 || naturalHeight < 600  → 「图片尺寸不能小于 600×600」
- *   比例不在 [3:4 ±10%] / [1:1 ±10%] 内         → 「比例不符合 …」
+ * 官网判据来自 _mat_4332 的 L(item, spec)：
+ *   spec = { maxSize(MB), minWidth, minHeight, maxWidth, maxHeight,
+ *            ratios: [[3,4]] / [[1,1]], ratiosFloat(像素容差),
+ *            widthHeightTuples: [{width,height}], minWidthHeightRatio: [a,b], accepts: [".jpg"] }
  *
- * 注意：2MB 只出现在「包装要求图」(_pm_6004 maxFileSize:2097152)，与商品图无关。
+ * ⚠️ 比例容差是「像素」不是百分比（官网 ratiosFloat 默认 0）。
+ * ⚠️ 超体积官网是「先调 /material/render/compress 压缩再校验」，不是直接拒绝。
  */
 const UPLOAD_LIMITS = {
+  // 商品页本地图的硬门槛（_pm_5719 beforeUpload 实测常量）
   maxImageSize: 5242880,      // 5 MB
   minImageSide: 600,          // 短边 ≥600px
-  ratioTolerance: 0.1,        // ±10%（官网 ratioRange=10）
-  carousel: { proportion: '3:4', ratio: 3 / 4, recommended: '1340x1785' },
-  material: { proportion: '1:1', ratio: 1, recommended: '800x800' },
+
+  // 比例容差：官网 _cdn_9255 的 tn() 实现 ——
+  //   Math.abs(height - width / ratio) <= (ratio === 3/4 ? 10 : 0)
+  // 即 **3:4 容差 10 像素，其它比例 0 像素**（不是统一值，也不是百分比）。
+  ratioFloat: 10,             // 仅 3:4 使用
+  ratioFloatOther: 0,
+
+  carousel: { proportion: "3:4", ratio: [3, 4], recommended: "1340x1785" },
+  material: { proportion: "1:1", ratio: [1, 1], recommended: "800x800" },
+
+  // 详情图（limitRule === oP.GoodsDetail）的固定规格，来自 _cdn_9255：
+  //   kt=480 It=480 Tt=3145728 At=0.5 St=2
+  goodsDetail: {
+    minWidth: 480,
+    minHeight: 480,
+    maxSize: 3,               // MB（官网 Tt=3145728 字节）
+    ratioRange: [0.5, 2],     // width/height 必须在 0.5 ~ 2 之间（1:2 ~ 2:1）
+  },
+
+  // 官网支持的比例标签（Ct 映射）
+  proportions: { "1:1": [1, 1], "1:3": [1, 3], "2:1": [2, 1], "3:4": [3, 4], "4:1": [4, 1] },
 };
 
+/** 按 URL 后缀判断格式是否在白名单里（对应官网 accepts 检查） */
+function _extOk(url, accepts) {
+  if (!url || !accepts || !accepts.length) return true;
+  const clean = String(url).split(/[?#]/)[0].toLowerCase();
+  return accepts.some((x) => clean.endsWith(String(x).toLowerCase()));
+}
+
 /**
- * 上传前自检（不联网，纯计算）
- * @param {object} o { width, height, size, kind: "carousel"|"material", tolerance }
- * @returns {{ ok: boolean, reasons: string[] }}
+ * 上传前自检（离线，复刻官网 L()）
+ *
+ * @param {object} o
+ *   width / height / size(字节) / url        被检测的图
+ *   kind      "carousel"(3:4) | "material"(1:1)，给默认 spec
+ *   spec      完整 spec，优先级高于 kind
+ *              { maxSize(MB), minWidth, minHeight, maxWidth, maxHeight,
+ *                ratios, ratiosFloat, widthHeightTuples, minWidthHeightRatio, accepts }
+ * @returns {{ ok:boolean, reasons:string[] }}
  */
 function validateImage(o = {}) {
-  const kind = o.kind === 'material' ? UPLOAD_LIMITS.material : UPLOAD_LIMITS.carousel;
   const w = Number(o.width) || 0;
   const h = Number(o.height) || 0;
   const size = Number(o.size) || 0;
-  const tol = typeof o.tolerance === "number" ? o.tolerance : UPLOAD_LIMITS.ratioTolerance;
   const reasons = [];
 
-  if (size && size > UPLOAD_LIMITS.maxImageSize) {
-    reasons.push("图片 " + (size / 1048576).toFixed(2) + "MB 超过上限 " + (UPLOAD_LIMITS.maxImageSize / 1048576) + "MB");
+  const spec = o.spec || (o.kind === "material"
+    ? { ratios: [UPLOAD_LIMITS.material.ratio] }
+    : o.kind === "carousel"
+      ? { ratios: [UPLOAD_LIMITS.carousel.ratio] }
+      : null);
+
+  // ① 格式白名单
+  if (spec && spec.accepts && !_extOk(o.url, spec.accepts)) {
+    reasons.push("格式需为 " + spec.accepts.join("、"));
   }
-  if (w && h && (w < UPLOAD_LIMITS.minImageSide || h < UPLOAD_LIMITS.minImageSide)) {
-    reasons.push("尺寸 " + w + "x" + h + " 小于最小 " + UPLOAD_LIMITS.minImageSide + "x" + UPLOAD_LIMITS.minImageSide);
+
+  // ② 体积（maxSize 单位 MB；不给 spec 时用 5MB 硬门槛）
+  const maxMB = spec && spec.maxSize != null ? Number(spec.maxSize) : UPLOAD_LIMITS.maxImageSize / 1048576;
+  if (size && size > maxMB * 1048576) {
+    reasons.push("体积 " + (size / 1048576).toFixed(2) + "MB 超过上限 " + maxMB + "MB");
   }
-  if (w && h) {
-    const ratio = w / h;
-    if (Math.abs(ratio - kind.ratio) / kind.ratio > tol) {
-      reasons.push("比例 " + ratio.toFixed(3) + "（" + w + "x" + h + "）不符合 " + kind.proportion +
-        "，容差 ±" + Math.round(tol * 100) + "%（推荐 " + kind.recommended + "）");
+
+  // ③ 宽高上下限
+  const minW = spec && spec.minWidth != null ? Number(spec.minWidth) : UPLOAD_LIMITS.minImageSide;
+  const minH = spec && spec.minHeight != null ? Number(spec.minHeight) : UPLOAD_LIMITS.minImageSide;
+  if (w && minW && w < minW) reasons.push("宽度 " + w + " 小于最小 " + minW);
+  if (h && minH && h < minH) reasons.push("高度 " + h + " 小于最小 " + minH);
+  if (spec && spec.maxWidth && w && w > spec.maxWidth) reasons.push("宽度 " + w + " 超过最大 " + spec.maxWidth);
+  if (spec && spec.maxHeight && h && h > spec.maxHeight) reasons.push("高度 " + h + " 超过最大 " + spec.maxHeight);
+
+  // ④ 比例（像素容差：3:4 用 10px，其它用 0）
+  if (spec && spec.ratios && w && h) {
+    const list = Array.isArray(spec.ratios[0]) ? spec.ratios : [spec.ratios];
+    const okAny = list.some((r) => {
+      const ratio = r[0] / r[1];
+      const tol = spec.ratiosFloat != null
+        ? Number(spec.ratiosFloat)
+        : (Math.abs(ratio - 3 / 4) < 1e-9 ? UPLOAD_LIMITS.ratioFloat : UPLOAD_LIMITS.ratioFloatOther);
+      return Math.abs(w / ratio - h) <= tol;
+    });
+    if (!okAny) {
+      reasons.push("比例 " + w + "x" + h + " 不符合 " +
+        list.map((r) => r[0] + ":" + r[1]).join("、") +
+        "（像素容差：3:4 ±" + UPLOAD_LIMITS.ratioFloat + "，其它 ±0）");
     }
   }
+
+  // ④' 宽高比区间（详情图：0.5 ~ 2）
+  if (spec && Array.isArray(spec.ratioRange) && spec.ratioRange.length === 2 && w && h) {
+    const r = w / h;
+    const [lo, hi] = spec.ratioRange.map(Number);
+    if (r < lo || r > hi) {
+      reasons.push("宽高比 " + r.toFixed(3) + " 超出允许区间 " + lo + " ~ " + hi);
+    }
+  }
+
+  // ⑤ 精确尺寸白名单
+  if (spec && spec.widthHeightTuples && spec.widthHeightTuples.length && w && h) {
+    const hit = spec.widthHeightTuples.some((t) => Number(t.width) === w && Number(t.height) === h);
+    if (!hit) {
+      reasons.push("尺寸需为 " + spec.widthHeightTuples.map((t) => t.width + "x" + t.height).join(" 或 "));
+    }
+  }
+
+  // ⑥ 宽高比下限：width/height >= a/b
+  if (spec && Array.isArray(spec.minWidthHeightRatio) && spec.minWidthHeightRatio.length === 2 && w && h) {
+    const a = Number(spec.minWidthHeightRatio[0]);
+    const b = Number(spec.minWidthHeightRatio[1]);
+    if (a > 0 && b > 0 && w / h < a / b) {
+      reasons.push("宽高比 " + (w / h).toFixed(3) + " 低于下限 " + a + ":" + b);
+    }
+  }
+
   return { ok: reasons.length === 0, reasons };
 }
 
