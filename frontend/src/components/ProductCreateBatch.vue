@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   cancelProductBatch,
   getCategoryPath,
@@ -492,6 +492,26 @@ const progress = computed(() => {
   if (!total) return 0
   return Math.round(((batch.value.done || 0) / total) * 100)
 })
+
+const props = defineProps<{ active?: boolean }>()
+
+async function refreshTemplates() {
+  try {
+    const r = await listFormTemplates()
+    templates.value = r.items
+  } catch {
+    templates.value = []
+  }
+}
+
+// 在「手动创建」里保存/删除模板后切回来，必须重新拉一次，
+// 否则看到的是页面初次加载时的旧列表（用户会以为没保存成功）
+watch(
+  () => props.active,
+  (now) => {
+    if (now) void refreshTemplates()
+  },
+)
 
 onMounted(async () => {
   try {

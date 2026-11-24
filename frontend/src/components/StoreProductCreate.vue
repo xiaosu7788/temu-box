@@ -19,7 +19,7 @@ const materialCenterVisible = ref(false)
           <ProductCreateManual />
         </el-tab-pane>
         <el-tab-pane label="批量创建" name="batch">
-          <ProductCreateBatch />
+          <ProductCreateBatch :active="mode === 'batch'" />
         </el-tab-pane>
       </el-tabs>
       <el-button class="product-create__mc" @click="materialCenterVisible = true">素材中心</el-button>

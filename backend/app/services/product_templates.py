@@ -17,6 +17,8 @@ from app.services.store_session import StoreError, account_hash
 # 保存时完整存，回填时只取这些「与商品无关、可复用」的字段
 REUSABLE_KEYS = (
     "catPath",               # 必须复用：selected 的属性 key 依赖类目模板
+    "siteId",                # 经营站点（不同站点的仓库/尺码组不同）
+    "warehouseIds",          # 发货仓
     "selected",              # 类目属性（材质/风格/护理说明…）—— 核心
     "origin",                # 产地国家 + 省份
     "manufacturing",         # 制造地点
@@ -38,6 +40,9 @@ REUSABLE_KEYS = (
     "skuPrice",
     "stock",
     "sizeVids",              # 尺码勾选（用户只说要换颜色规格）
+    # 前端 buildForm 存的字段名是 sizeTemplateSourceId（蓝本 id，SDK 会据此建新表）；
+    # 只写 sizeTemplateId 会漏掉，编辑模板时下拉永远是空的
+    "sizeTemplateSourceId",
     "sizeTemplateId",
     "generalSizeType",
 )

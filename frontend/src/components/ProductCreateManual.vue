@@ -1005,7 +1005,9 @@ async function openEditTemplate(tpl: { id: number; name: string; note: string })
     editTplSizeStandard.value = ''
     editTplSizeType.value = ''
     editTplSizeTemplates.value = []
-    editTplSizeTplId.value = v.sizeTemplateId ? Number(v.sizeTemplateId) : null
+    // buildForm 存的是 sizeTemplateSourceId（蓝本 id），sizeTemplateId 是旧字段名
+    const srcTpl = v.sizeTemplateSourceId ?? v.sizeTemplateId
+    editTplSizeTplId.value = srcTpl ? Number(srcTpl) : null
     if (catId) {
       const [d, st] = await Promise.all([
         describeProduct(catId, { ...editTplSelected }),
@@ -1078,6 +1080,7 @@ async function confirmEditTemplate() {
       ...editTplValues.value,
       selected: { ...editTplSelected },
       sizeVids: [...(editTplValues.value.sizeVids || [])],
+      sizeTemplateSourceId: editTplSizeTplId.value || undefined,
       sizeTemplateId: editTplSizeTplId.value || undefined,
       generalSizeType: SIZE_TYPE_TO_GST[editTplSizeType.value] || undefined,
     }
@@ -1403,11 +1406,11 @@ onMounted(async () => {
         <el-form-item label="体积（cm）">
           <div class="pcreate__inline">
             <span class="pcreate__dimplabel">最长边</span>
-            <el-input-number v-model="editTplValues.volume.len" :min="1" :max="999" class="pcreate__dimnum" controls-position="right" />
+            <el-input-number v-model="editTplValues.volume.inputLen" :min="1" :max="999" class="pcreate__dimnum" controls-position="right" />
             <span class="pcreate__dimplabel">次长边</span>
-            <el-input-number v-model="editTplValues.volume.width" :min="1" :max="999" class="pcreate__dimnum" controls-position="right" />
+            <el-input-number v-model="editTplValues.volume.inputWidth" :min="1" :max="999" class="pcreate__dimnum" controls-position="right" />
             <span class="pcreate__dimplabel">最短边</span>
-            <el-input-number v-model="editTplValues.volume.height" :min="1" :max="999" class="pcreate__dimnum" controls-position="right" />
+            <el-input-number v-model="editTplValues.volume.inputHeight" :min="1" :max="999" class="pcreate__dimnum" controls-position="right" />
           </div>
         </el-form-item>
         <el-form-item label="重量（g）">
