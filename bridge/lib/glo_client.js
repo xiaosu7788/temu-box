@@ -125,8 +125,13 @@ class GloClient {
           const s = JSON.parse(fs.readFileSync(exact, 'utf8'));
           if (s && s.cookies) return s.cookies;
         }
-      } catch (e) { /* 读坏了就走下面的兜底 */ }
+      } catch (e) { /* 读坏了也不兜底，当作没有会话 */ }
+      // ⚠️ bridge 补丁（严重）：指定了账号就绝不能回退到「最新的 session 文件」。
+      //    回退会拿到别的账号的 cookie：登录看着成功，实际看的、操作的都是别人的店铺
+      //    （跨机器/跨账号串号的直接原因）。没有本账号的会话就该重新走密码登录。
+      return null;
     }
+    // 只有完全没指定账号（单账号/诊断场景）才回退取最新
     const files = fs.readdirSync(dir).filter(f => f.startsWith('session_') && f.endsWith('.json'));
     if (!files.length) return null;
     let best = null, bestAt = 0;
