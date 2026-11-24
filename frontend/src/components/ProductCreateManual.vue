@@ -24,6 +24,7 @@ import {
   validateSizeTemplate,
   searchProductCategories,
 } from '../api'
+import { normalizeVolumePayload, normalizeWeightPayload, volumeToPayload, weightToPayload } from '../unitConvert'
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '../feedback'
 import type {
   ProductCategoryPath,
@@ -453,22 +454,8 @@ function buildForm() {
       sizeTemplates.value.some((x) => Number(x.businessId) === Number(sizeTemplateId.value))
         ? sizeTemplateId.value
         : undefined,
-    volume: {
-      // 服务端存毫米，用户按 cm 输入
-      len: Math.round(volumeInput.len * 10),
-      width: Math.round(volumeInput.width * 10),
-      height: Math.round(volumeInput.height * 10),
-      inputLen: String(volumeInput.len),
-      inputWidth: String(volumeInput.width),
-      inputHeight: String(volumeInput.height),
-      inputUnit: 'cm',
-    },
-    weight: {
-      // 服务端存毫克，用户按 g 输入
-      value: Math.round(weightInput.value * 1000),
-      inputValue: String(weightInput.value),
-      inputUnit: 'g',
-    },
+    volume: volumeToPayload(volumeInput),
+    weight: weightToPayload({ value: weightInput.value }),
   }
 }
 
@@ -1084,18 +1071,9 @@ async function confirmEditTemplate() {
       sizeTemplateId: editTplSizeTplId.value || undefined,
       generalSizeType: SIZE_TYPE_TO_GST[editTplSizeType.value] || undefined,
     }
-    // 体积、重量在模板里存两套：平台单位（毫米/毫克）和用户输入单位（cm/g）。
-    // 编辑弹窗改的是 input*，保存时必须按它重算平台单位，否则存进去的还是旧值。
-    const vol: any = nextForm.volume
-    if (vol && vol.inputLen !== undefined) {
-      vol.len = Math.round(Number(vol.inputLen) * 10)
-      vol.width = Math.round(Number(vol.inputWidth) * 10)
-      vol.height = Math.round(Number(vol.inputHeight) * 10)
-    }
-    const wt: any = nextForm.weight
-    if (wt && wt.inputValue !== undefined) {
-      wt.value = Math.round(Number(wt.inputValue) * 1000)
-    }
+    // 编辑弹窗改的是 cm/g，保存前必须按它重算平台单位
+    if (nextForm.volume) nextForm.volume = normalizeVolumePayload(nextForm.volume as Record<string, unknown>)
+    if (nextForm.weight) nextForm.weight = normalizeWeightPayload(nextForm.weight as Record<string, unknown>)
 
     await updateFormTemplate(editTplId.value, {
       name: editTplName.value.trim(),

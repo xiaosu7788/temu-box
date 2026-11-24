@@ -15,6 +15,7 @@ import {
   describeProduct,
   startProductBatch,
 } from '../api'
+import { normalizeVolumePayload, normalizeWeightPayload } from '../unitConvert'
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '../feedback'
 import type { ProductBatchState } from '../types'
 import ColorPicker from './ColorPicker.vue'
@@ -406,17 +407,9 @@ async function saveCardEditor() {
   next.catPath = editCatPath.value
   next.sizeTemplateId = next.sizeTemplateId || undefined
   next.generalSizeType = SIZE_TYPE_TO_GST[editSizeType.value] || undefined
-  // 体积/重量在模板里存两套单位，编辑改的是 input*，保存必须重算平台单位
-  const vol: any = next.volume
-  if (vol && vol.inputLen !== undefined) {
-    vol.len = Math.round(Number(vol.inputLen) * 10)
-    vol.width = Math.round(Number(vol.inputWidth) * 10)
-    vol.height = Math.round(Number(vol.inputHeight) * 10)
-  }
-  const wt: any = next.weight
-  if (wt && wt.inputValue !== undefined) {
-    wt.value = Math.round(Number(wt.inputValue) * 1000)
-  }
+  // 编辑改的是 cm/g，保存前按它重算平台单位
+  if (next.volume) next.volume = normalizeVolumePayload(next.volume)
+  if (next.weight) next.weight = normalizeWeightPayload(next.weight)
   card.templateValues = next
   if (next.siteId) card.siteId = Number(next.siteId)
   if (next.freightTemplateId) card.freightTemplateId = String(next.freightTemplateId)
