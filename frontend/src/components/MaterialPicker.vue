@@ -33,7 +33,7 @@ const emit = defineEmits<{
 const loading = ref(false)
 const list = ref<ProductMaterialImage[]>([])
 const picked = ref<string[]>([])
-const query = reactive({ name: '', page: 1, size: 12 })
+const query = reactive({ name: '', page: 1, size: 20 })
 /** 仅展示可用（符合当前规格） */
 const onlyAvailable = ref(false)
 /** 素材类型：'' 全部 / 1 图片 / 2 视频 */

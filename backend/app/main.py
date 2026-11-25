@@ -677,6 +677,16 @@ def store_product_image_proxy(url: str = Query(..., max_length=2000), user: dict
     if parsed.scheme not in ("http", "https") or not host.endswith(allowed_suffix):
         raise HTTPException(status_code=400, detail="不允许的图片地址")
 
+    # 磁盘缓存：同一张图第二次直接读盘（裁剪器打开时要等它，跨区域拉 CDN 太慢）
+    import hashlib
+
+    cache_dir = Path(config.DATA_DIR) / "img_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha1(url.encode("utf-8")).hexdigest()
+    cache_file = cache_dir / key
+    if cache_file.is_file():
+        return Response(content=cache_file.read_bytes(), media_type="image/jpeg")
+
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://seller.kuajingmaihuo.com/"})
     try:
         with urllib.request.urlopen(request, timeout=20) as upstream:
@@ -687,6 +697,10 @@ def store_product_image_proxy(url: str = Query(..., max_length=2000), user: dict
 
     if len(data) > 12 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="图片过大")
+    try:
+        cache_file.write_bytes(data)
+    except OSError:
+        pass  # 缓存写失败不影响本次返回
     return Response(content=data, media_type=content_type)
 
 
