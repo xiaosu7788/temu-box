@@ -407,6 +407,18 @@ export async function uploadProductVideo(contentBase64: string, fileName: string
   return data
 }
 
+/**
+ * 素材图的同源代理地址。
+ * 浏览器 canvas 画跨域图会被污染（toDataURL 抛 SecurityError），
+ * 给 <img> 加 crossOrigin 又要求 CDN 带正确 CORS 头，缺一个整张图都加载不出来。
+ * 裁剪器统一走这个代理，拿到的就是自家域名下的字节。
+ */
+export function imageProxyUrl(url: string): string {
+  if (!url) return ''
+  const base = http.defaults.baseURL || ''
+  return `${base}/store/products/image-proxy?url=${encodeURIComponent(url)}`
+}
+
 export async function uploadProductImage(
   contentBase64: string,
   fileName: string,

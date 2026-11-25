@@ -11,6 +11,7 @@
 import Cropper from 'cropperjs'
 import 'cropperjs/dist/cropper.css'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { imageProxyUrl } from '../api'
 import { notifyError } from '../feedback'
 
 const props = defineProps<{
@@ -42,6 +43,13 @@ let cropper: Cropper | null = null
 
 const proportionKeys = computed(() => Object.keys(props.proportions || {}))
 
+/**
+ * 用同源代理加载原图。
+ * 直接给 CDN 图加 crossOrigin 会在 CDN 缺少 CORS 头时整张图都加载不出来
+ * （表现就是弹窗一直转圈、点确认时 canvas 为 null）。
+ */
+const proxySrc = computed(() => (props.src ? imageProxyUrl(props.src) : ''))
+
 function destroy() {
   if (cropper) {
     cropper.destroy()
@@ -50,7 +58,7 @@ function destroy() {
 }
 
 async function init() {
-  if (!props.src) return
+  if (!proxySrc.value) return
   loading.value = true
   destroy()
   await nextTick()
@@ -170,7 +178,7 @@ onBeforeUnmount(destroy)
   >
     <div v-loading="loading" class="cropper">
       <div class="cropper__stage">
-        <img ref="imgRef" :src="src" alt="" crossorigin="anonymous" />
+        <img ref="imgRef" :src="proxySrc" alt="" />
       </div>
 
       <div class="cropper__ratios">

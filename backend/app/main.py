@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import urllib.request
 import os
 from datetime import datetime
 from pathlib import Path
@@ -656,6 +657,37 @@ def store_product_validate_size_template(
         )
     except StoreError as exc:
         raise _store_http_error(exc) from None
+
+
+@app.get("/api/store/products/image-proxy")
+def store_product_image_proxy(url: str = Query(..., max_length=2000), user: dict = Depends(store_user)):
+    """同源转发素材图，供前端 canvas 裁剪使用。
+
+    浏览器的 canvas 一旦画出跨域图就会被污染，toDataURL 直接抛 SecurityError；
+    而给 <img> 加 crossOrigin 又要求 CDN 返回正确的 CORS 头，缺一个头整张图都加载不出来。
+    走同源代理一劳永逸：前端拿到的就是自家域名下的字节。
+
+    ⚠️ 只允许 Temu 的图片域名，避免变成任意 URL 的 SSRF 跳板。
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    allowed_suffix = (".kwcdn.com", ".temu.com", ".pddpic.com", ".alicdn.com")
+    if parsed.scheme not in ("http", "https") or not host.endswith(allowed_suffix):
+        raise HTTPException(status_code=400, detail="不允许的图片地址")
+
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://seller.kuajingmaihuo.com/"})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as upstream:
+            data = upstream.read(12 * 1024 * 1024 + 1)  # 超过 12MB 视为异常
+            content_type = upstream.headers.get("Content-Type", "image/jpeg")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"获取图片失败：{exc}") from None
+
+    if len(data) > 12 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="图片过大")
+    return Response(content=data, media_type=content_type)
 
 
 @app.get("/api/store/products/form-templates")
