@@ -876,6 +876,9 @@ def store_product_upload_many(payload: dict, user: dict = Depends(store_user)):
         )
     except StoreError as exc:
         raise _store_http_error(exc) from None
+    except Exception as exc:  # noqa: BLE001 - 批量上传涉及上游多步，兜住未预期的异常避免裸 500
+        logging.getLogger(__name__).exception("批量上传失败")
+        raise HTTPException(status_code=502, detail=f"批量上传失败：{exc}") from None
 
 
 @app.post("/api/store/products/upload")
