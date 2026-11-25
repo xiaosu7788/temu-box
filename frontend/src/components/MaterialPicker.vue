@@ -477,25 +477,32 @@ async function onUpload(file: { raw?: File }) {
   uploading.value = true
   try {
     const { width, height } = await readImageSize(raw)
-    // 与官网 beforeUpload 一致：不合格直接拒绝 + 说明原因，不做自动裁切
-    // （裁剪能力保留在卡片下方的「裁剪」按钮，由用户主动触发）
     const check = validateImage({ width, height, size: raw.size }, pickKind.value)
-    if (!check.ok) {
-      notifyError(new Error(`${pickKind.value === 'detail' ? '详情图文' : spec.value.label}规格不符：${check.reasons.join('；')}`))
-      return
-    }
     const base64 = await readBase64(raw)
     const result = await uploadProductImage(base64, raw.name)
-    // 上传成功：插到列表最前并选中
-    list.value = [{ imgUrl: result.imgUrl, id: result.materialId } as ProductMaterialImage, ...list.value]
-    if (multiple.value) {
-      picked.value = Array.from(new Set([...picked.value, result.imgUrl]))
-    } else {
-      picked.value = [result.imgUrl]
+    const uploaded: ProductMaterialImage = {
+      ...({} as ProductMaterialImage),
+      imgUrl: result.imgUrl,
+      id: result.materialId,
+      name: raw.name,
+      width,
+      height,
+      size: raw.size,
+      materialType: 1,
     }
-    if (raw.size > MAX_IMAGE_SIZE) {
-      notifyWarning('已上传，但这张图超过 5MB，用作商品图时会被要求压缩或裁切')
+    // 先落到素材库（原图保留），再按规格决定是直接选中还是进裁剪器
+    list.value = [uploaded, ...list.value]
+    if (!check.ok) {
+      notifyWarning(`${check.reasons.join('；')}，先裁剪一下`)
+      openCropper(uploaded)
+    } else if (raw.size > MAX_IMAGE_SIZE) {
+      notifyWarning('已上传，但这张图超过 5MB，用作商品图时会被要求压缩')
     } else {
+      if (multiple.value) {
+        if (picked.value.length < spec.value.maxCount) picked.value = [...picked.value, uploaded.imgUrl]
+      } else {
+        picked.value = [uploaded.imgUrl]
+      }
       notifySuccess('已上传到素材中心')
     }
   } catch (error) {
@@ -769,7 +776,7 @@ watch(
             type="primary"
             size="small"
             :loading="cropping === scope.row.imgUrl"
-            @click.stop="onCrop(scope.row)"
+            @click.stop="openCropper(scope.row)"
           >裁切</el-button>
           <el-button
             link
