@@ -443,6 +443,27 @@ async function load() {
 
 const uploading = ref(false)
 
+/* ---------- 批量上传队列 ----------
+   上游 material.upload() 只处理单文件（内部 5MB 分片、并发 2），
+   没有多文件接口，所以多选后的排队、进度、失败原因都由前端自己维护。 */
+interface UploadTask {
+  id: number
+  name: string
+  size: number
+  status: 'queued' | 'running' | 'ok' | 'fail'
+  error: string
+}
+const queue = ref<UploadTask[]>([])
+const queueVisible = ref(false)
+const queueRunning = ref(false)
+
+/** 队列 id → 原始 File（响应式代理会丢失 File，单独存 */
+const pendingFiles = new Map<number, File>()
+
+const queuePending = computed(() => queue.value.filter((x) => x.status === 'queued' || x.status === 'running').length)
+const queueDone = computed(() => queue.value.filter((x) => x.status === 'ok').length)
+const queueFailed = computed(() => queue.value.filter((x) => x.status === 'fail').length)
+
 /** 读图片实际尺寸（上传前按用途校验比例） */
 function readImageSize(file: File): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
@@ -473,20 +494,56 @@ function readBase64(file: File): Promise<string> {
 }
 
 /** 上传到素材中心：校验比例 → 传素材库 → 自动选中 */
-async function onUpload(file: { raw?: File }) {
+function onUpload(file: { raw?: File }) {
   const raw = file.raw
   if (!raw) return
   if (!/^image\/(jpeg|png|webp)$/i.test(raw.type)) {
-    notifyError(new Error('只支持 JPG / PNG / WebP'))
+    notifyError(new Error(`${raw.name}：只支持 JPG / PNG / WebP`))
     return
   }
   // 上传接口本身不限体积（5MB 是「用作商品图」的硬性规格）；
   // 这里只拦过大文件，避免 base64 传输把内存打爆。
   if (raw.size > 20 * MB) {
-    notifyError(new Error('图片超过 20MB，请先压缩'))
+    notifyError(new Error(`${raw.name}：图片超过 20MB，请先压缩`))
     return
   }
+  const id = Date.now() + Math.random()
+  pendingFiles.set(id, raw)
+  queue.value.push({ id, name: raw.name, size: raw.size, status: 'queued', error: '' })
+  if (queue.value.length > 1) queueVisible.value = true
+  void runQueue()
+}
+
+/** 串行跑队列：一次只传一张，避免把素材接口打限流 */
+async function runQueue() {
+  if (queueRunning.value) return
+  queueRunning.value = true
   uploading.value = true
+  try {
+    for (;;) {
+      const task = queue.value.find((x) => x.status === 'queued')
+      if (!task) break
+      task.status = 'running'
+      try {
+        await uploadOne(task)
+        task.status = 'ok'
+      } catch (error) {
+        task.status = 'fail'
+        task.error = (error as Error)?.message || '上传失败'
+      }
+    }
+  } finally {
+    queueRunning.value = false
+    uploading.value = false
+    void load()
+  }
+}
+
+async function uploadOne(task: UploadTask) {
+  const file = pendingFiles.get(task.id)
+  if (!file) throw new Error('文件已失效，请重新选择')
+  pendingFiles.delete(task.id)
+  const raw = file
   try {
     const { width, height } = await readImageSize(raw)
     const check = validateImage({ width, height, size: raw.size }, pickKind.value)
@@ -515,12 +572,10 @@ async function onUpload(file: { raw?: File }) {
       } else {
         picked.value = [uploaded.imgUrl]
       }
-      notifySuccess('已上传到素材中心')
     }
-  } catch (error) {
-    notifyError(error)
   } finally {
-    uploading.value = false
+    // 无论成功失败都要把 File 释放掉，避免长时间占用内存
+    pendingFiles.delete(task.id)
   }
 }
 
@@ -671,6 +726,34 @@ watch(
 </script>
 
 <template>
+  <el-dialog v-model="queueVisible" title="上传列表" width="720px" style="max-width: calc(100vw - 32px)" align-center>
+    <el-table :data="queue" size="small" max-height="420" empty-text="还没有上传记录">
+      <el-table-column prop="name" label="素材名称" min-width="220" show-overflow-tooltip />
+      <el-table-column label="类型" width="80">
+        <template #default>图片</template>
+      </el-table-column>
+      <el-table-column label="大小" width="100">
+        <template #default="{ row }">{{ (row.size / 1024).toFixed(0) }}KB</template>
+      </el-table-column>
+      <el-table-column label="素材状态" width="110">
+        <template #default="{ row }">
+          <span v-if="row.status === 'ok'" style="color: #16a34a">上传成功</span>
+          <span v-else-if="row.status === 'fail'" style="color: #dc2626">上传失败</span>
+          <span v-else-if="row.status === 'running'" style="color: #2563eb">上传中…</span>
+          <span v-else style="color: #9ca3af">排队中</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="error" label="失败原因" min-width="180" show-overflow-tooltip />
+    </el-table>
+    <template #footer>
+      <span class="queue-foot">
+        共 {{ queue.length }} 条 · 成功 {{ queueDone }} · 失败 {{ queueFailed }}
+      </span>
+      <el-button :disabled="queueRunning" @click="queue = []">清空记录</el-button>
+      <el-button type="primary" @click="queueVisible = false">关闭</el-button>
+    </template>
+  </el-dialog>
+
   <!-- 裁剪弹窗放在与「选图」弹窗平级的位置：
        嵌套在 el-dialog 内部时，内层容器宽度会塌成 0，Cropper 算不出 canvas -->
   <ImageCropper
@@ -721,6 +804,7 @@ watch(
       />
       <el-button :loading="loading" @click="query.page = 1; load()">搜索</el-button>
       <el-upload
+        multiple
         v-if="mediaType !== '0'"
         :auto-upload="false"
         :show-file-list="false"
@@ -738,6 +822,9 @@ watch(
       >
         <el-button type="primary" :loading="uploadingVideo" :icon="Upload">上传视频</el-button>
       </el-upload>
+        <el-badge :value="queuePending || undefined" :hidden="!queuePending" :type="queueFailed ? 'danger' : 'primary'" class="picker-head__badge">
+          <el-button size="small" @click="queueVisible = true">上传列表</el-button>
+        </el-badge>
       <el-checkbox v-model="onlyAvailable">仅展示可用</el-checkbox>
       <el-radio-group v-model="mediaType" size="small" @change="query.page = 1; load()">
         <el-radio-button value="">全部</el-radio-button>
