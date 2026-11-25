@@ -789,6 +789,12 @@ async function onUploadVideo(file: { raw?: File }) {
 }
 
 /** 某张图被选中的次数（官网允许同一张图占多个轮播位） */
+/** 该图在已选列表里的序号（1 基），未选返回 0。官网就是用这个序号标轮播位次 */
+function orderOf(url: string): number {
+  const i = picked.value.indexOf(url)
+  return i < 0 ? 0 : i + 1
+}
+
 function countOf(url: string): number {
   return picked.value.filter((x) => x === url).length
 }
@@ -1046,7 +1052,7 @@ watch(
       <el-table-column width="46">
         <template #default="scope">
           <el-checkbox
-            :model-value="countOf(scope.row.imgUrl) > 0"
+            :model-value="orderOf(scope.row.imgUrl) > 0"
             :disabled="!sizeOk(scope.row)"
             @change="toggle(scope.row)"
           />
@@ -1130,14 +1136,11 @@ watch(
             <span>需 ≥{{ spec.minW }}×{{ spec.minH }}</span>
           </span>
           <span v-else-if="isVideo(item)" class="picker-card__vid">▶ {{ durationText(item) }}</span>
-          <span v-if="!isVideo(item) && sizeOk(item)" class="picker-check" :class="{ 'picker-check--on': countOf(item.imgUrl) > 0 }">
-            <template v-if="countOf(item.imgUrl) > 0">
-              <svg v-if="countOf(item.imgUrl) === 1" viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-                <path d="M3 8.5l3.2 3.2L13 4.6" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-              <span v-else class="picker-check__count">{{ countOf(item.imgUrl) }}</span>
-            </template>
-          </span>
+          <span
+            v-if="!isVideo(item) && sizeOk(item)"
+            class="picker-check"
+            :class="{ 'picker-check--on': orderOf(item.imgUrl) > 0 }"
+          >{{ orderOf(item.imgUrl) || '' }}</span>
 
         </div>
         <div class="picker-card__meta">
@@ -1590,31 +1593,27 @@ watch(
 
 .picker-check {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 0;
+  right: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.9);
-  border: 1.5px solid #d0d5dd;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-  transition: background 0.12s, border-color 0.12s;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 0 4px 0 8px;
+  background: transparent;
+  color: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
   pointer-events: none;
+  transition: background 0.12s;
 }
 
 .picker-check--on {
   background: var(--primary, #2563eb);
-  border-color: var(--primary, #2563eb);
-}
-
-.picker-check__count {
   color: #fff;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
 }
 
 .picker-card--active .picker-card__img {
