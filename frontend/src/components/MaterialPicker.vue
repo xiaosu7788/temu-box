@@ -69,7 +69,9 @@ function sizeOk(item: ProductMaterialImage): boolean {
   if (isVideo(item)) return false   // 视频不能当轮播图/素材图
   // 接口没给宽高时无法判定，视为可用（否则整屏不可选）
   if (!item.width || !item.height) return true
-  return item.width >= spec.value.minW && item.height >= spec.value.minH
+  // 用与官网一致的判据（短边 ≥600 / 比例像素容差），
+  // 不能拿「推荐尺寸 1340×1785」当硬门槛——那会把 800×1000 这种合规图也标成不可用
+  return validateImage({ width: item.width, height: item.height, size: item.size }, pickKind.value).ok
 }
 
 /** 该图是否已在选中列表里（按 imgUrl 或 md5，防同图重复选中） */
@@ -255,11 +257,8 @@ function validateImage(
 /** 超 5MB 的素材：确认后压缩，用新 URL 参与提交 */
 async function maybeCompress(item: ProductMaterialImage): Promise<string | null> {
   if (!item.size || item.size <= MAX_IMAGE_SIZE) return item.imgUrl
-  const ok = await confirmAction(
-    `该图 ${sizeText(item)} 超过 5MB 上限，提交商品会失败。\n是否压缩后使用？压缩会生成一张新素材。`,
-    '压缩图片',
-  )
-  if (!ok) return null
+  // 官网行为：超体积先调 /material/render/compress 自动压，压完再校验，不是拒绝
+  notifyWarning(`该图 ${sizeText(item)} 超过 5MB，已自动压缩`)
   compressing.value = item.imgUrl
   try {
     const r = await compressMaterial([item.imgUrl])
@@ -417,32 +416,15 @@ async function onUpload(file: { raw?: File }) {
   uploading.value = true
   try {
     const { width, height } = await readImageSize(raw)
-    // 轮播图 3:4 ≥1340×1785；素材图 1:1 ≥800×800
-    const need = props.carousel
-      ? { minW: 1340, minH: 1785, label: '轮播图' }
-      : { minW: 800, minH: 800, label: '素材图' }
-    // 尺寸不足：裁切只能截取、不能放大，直接拒绝
-    if (width < need.minW || height < need.minH) {
-      notifyError(
-        new Error(`${need.label}尺寸不足：当前 ${width}×${height}，要求 ≥${need.minW}×${need.minH}`),
-      )
+    // 与官网 beforeUpload 一致：不合格直接拒绝 + 说明原因，不做自动裁切
+    // （裁剪能力保留在卡片下方的「裁剪」按钮，由用户主动触发）
+    const check = validateImage({ width, height, size: raw.size }, pickKind.value)
+    if (!check.ok) {
+      notifyError(new Error(`${pickKind.value === 'detail' ? '详情图文' : spec.value.label}规格不符：${check.reasons.join('；')}`))
       return
     }
-    // 尺寸够但比例不对：确认后在上传时按重心裁切（会截掉边缘）
-    const targetW = props.carousel ? 1340 : 800
-    const targetH = props.carousel ? 1785 : 800
-    const offRatio = Math.abs(width / height - targetW / targetH) / (targetW / targetH) > 0.02
-    let crop: { width: number; height: number } | undefined
-    if (offRatio) {
-      const ok = await confirmAction(
-        `当前 ${width}×${height}，比例与${need.label}要求（${props.carousel ? '3:4' : '1:1'}）不符。\n上传时将自动裁切为 ${targetW}×${targetH}（可能截掉边缘），是否继续？`,
-        '裁切上传',
-      )
-      if (!ok) return
-      crop = { width: targetW, height: targetH }
-    }
     const base64 = await readBase64(raw)
-    const result = await uploadProductImage(base64, raw.name, crop)
+    const result = await uploadProductImage(base64, raw.name)
     // 上传成功：插到列表最前并选中
     list.value = [{ imgUrl: result.imgUrl, id: result.materialId } as ProductMaterialImage, ...list.value]
     if (multiple.value) {
