@@ -59,6 +59,19 @@ async function init() {
     loading.value = false
     return
   }
+  // 等图片真正解码完再交给 Cropper：CDN 图 + crossOrigin 会走二次请求，
+  // 不等的话 ready 迟迟不触发，弹窗一直转圈，此时点确认 canvas 还是 null
+  if (!img.complete || !img.naturalWidth) {
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        img.removeEventListener('load', done)
+        img.removeEventListener('error', done)
+        resolve()
+      }
+      img.addEventListener('load', done, { once: true })
+      img.addEventListener('error', done, { once: true })
+    })
+  }
   try {
     const ratios = props.proportions || {}
     const label = props.initialProportion || proportionKeys.value[0] || ''
@@ -100,7 +113,10 @@ function close() {
 }
 
 async function confirmCrop() {
-  if (!cropper) return
+  if (!cropper) {
+    notifyError(new Error('裁剪器还没准备好，请稍等图片加载完成'))
+    return
+  }
   exporting.value = true
   try {
     const canvas = cropper.getCroppedCanvas({
@@ -126,14 +142,10 @@ async function confirmCrop() {
 
 watch(
   () => props.modelValue,
-  async (open) => {
-    if (open) {
-      await init()
-    } else {
-      destroy()
-    }
+  (open) => {
+    if (!open) destroy()
+    // 打开时由 el-dialog 的 @opened 触发 init：那时 DOM 才挂载完
   },
-  { immediate: true },
 )
 
 watch(
@@ -153,6 +165,7 @@ onBeforeUnmount(destroy)
     width="min(720px, calc(100vw - 32px))"
     :close-on-click-modal="false"
     destroy-on-close
+    @opened="init"
     @update:model-value="(v: boolean) => emit('update:modelValue', v)"
   >
     <div v-loading="loading" class="cropper">

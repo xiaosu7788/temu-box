@@ -148,6 +148,10 @@ function openCropper(item: ProductMaterialImage) {
     notifyError(new Error('这张素材没有尺寸信息，无法裁剪'))
     return
   }
+  // 提前把图塞进浏览器缓存，弹窗打开时 Cropper 能立刻拿到已解码的图
+  const pre = new Image()
+  pre.crossOrigin = 'anonymous'
+  pre.src = item.imgUrl
   cropTarget.value = item
   cropSrc.value = item.imgUrl
   cropVisible.value = true
