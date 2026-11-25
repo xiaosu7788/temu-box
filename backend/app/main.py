@@ -865,6 +865,19 @@ def store_product_upload_video(payload: dict, user: dict = Depends(store_user)):
         raise _store_http_error(exc) from None
 
 
+@app.post("/api/store/products/upload-many")
+def store_product_upload_many(payload: dict, user: dict = Depends(store_user)):
+    """批量上传图片到素材库（对齐官网 5 步流程，含 MD5 查重与并发上传）。"""
+    try:
+        return product_create.upload_images(
+            user["id"],
+            payload.get("files") or [],
+            int(payload.get("concurrency") or 4),
+        )
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
 @app.post("/api/store/products/upload")
 def store_product_upload(payload: dict, user: dict = Depends(store_user)):
     """上传图片到素材库（base64，≤2MB）。"""

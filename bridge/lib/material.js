@@ -452,6 +452,78 @@ class Material {
 
   // ==================== 上传 ====================
 
+  /**
+   * 批量上传（对齐官网素材中心的批量逻辑）
+   *
+   * 官网流程（_cdn_temu-sca-goods_9255）：
+   *   ① 逐个算 MD5（2MB 分片读取）
+   *   ② 一次批量查重 POST /material/queryByMd5 {materialType, md5IdList}
+   *   ③ alreadyExists=true → 直接复用（existId/existName），不重复上传
+   *   ④ 未命中的并发上传：store_image → material/create
+   *   ⑤ 上传后刷新列表 pageQuery
+   *
+   * @param {Array<{buf:Buffer, fileName:string}|Buffer>} items
+   * @param {object} opts { concurrency=4, folderId, skipCache, materialType }
+   * @returns {{ ok, uploaded, existList, failed }}
+   */
+  async uploadMany(items, opts = {}) {
+    const list = (items || []).map((x) =>
+      Buffer.isBuffer(x) ? { buf: x, fileName: opts.fileName || "upload.jpg" } : x
+    ).filter((x) => x && x.buf);
+
+    if (!list.length) return { ok: true, uploaded: [], existList: [], failed: [] };
+
+    const concurrency = Math.max(1, Number(opts.concurrency) || 4);
+    const materialType = opts.materialType != null ? opts.materialType : MATERIAL_TYPE.IMAGE;
+
+    // ① 算 MD5
+    const withMd5 = list.map((x) => ({
+      ...x,
+      md5: crypto.createHash("md5").update(x.buf).digest("hex"),
+    }));
+
+    // ② 一次批量查重
+    let hits = [];
+    if (!opts.skipCache) {
+      try {
+        hits = await this.queryByMd5(withMd5.map((x) => x.md5), materialType);
+      } catch (e) { hits = []; }
+    }
+    const hitMap = new Map();
+    for (const h of hits || []) {
+      if (h && h.materialMd5 && h.alreadyExists !== false) hitMap.set(h.materialMd5, h);
+    }
+
+    // ③ 分流
+    const existList = [];
+    const todo = [];
+    for (const x of withMd5) {
+      const hit = hitMap.get(x.md5);
+      if (hit) existList.push({ md5: x.md5, fileName: x.fileName, existId: hit.id, existName: hit.materialName, fromCache: true });
+      else todo.push(x);
+    }
+
+    // ④ 并发上传（失败不中断）
+    const uploaded = [];
+    const failed = [];
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < todo.length) {
+        const idx = cursor++;
+        const x = todo[idx];
+        try {
+          const up = await this.upload(x.buf, x.fileName, { ...opts, skipCache: true });
+          uploaded.push({ md5: x.md5, fileName: x.fileName, imgUrl: up.imgUrl, materialId: up.materialId });
+        } catch (e) {
+          failed.push({ md5: x.md5, fileName: x.fileName, error: e.message });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, todo.length) }, worker));
+
+    return { ok: failed.length === 0, uploaded, existList, failed };
+  }
+
   /** 取上传签名（素材库专用桶）*/
   async signature() {
     const r = await this.glo.api(

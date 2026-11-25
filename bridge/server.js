@@ -1343,6 +1343,42 @@ async function route(req, res, url) {
     });
   }
 
+  // 批量上传：对齐官网 5 步流程（算 MD5 → queryByMd5 查重 → 分流 → 并发上传）
+  // 上游 uploadMany 已封装，这里只做参数转换与鉴权
+  if (pathname === '/product/upload-many' && method === 'POST') {
+    const body = await readBody(req, 120 * 1024 * 1024);
+    const state = requireOps(str(body.account));
+    const files = Array.isArray(body.files) ? body.files : [];
+    if (!files.length) throw new TemuOpsError('product.uploadMany', 'ARGS', '需要 files');
+    const items = [];
+    for (const f of files) {
+      const content = str(f.contentBase64);
+      if (!content) continue;
+      const buf = Buffer.from(content, 'base64');
+      if (buf.length > 5 * 1024 * 1024) {
+        items.push({ fileName: str(f.fileName), error: '图片超过 5MB 限制' });
+        continue;
+      }
+      items.push({ buf, fileName: str(f.fileName) || 'upload.jpg' });
+    }
+    const over = items.filter((x) => x.error);
+    const valid = items.filter((x) => x.buf);
+    if (!valid.length) {
+      return ok(res, { uploaded: [], existList: [], failed: over });
+    }
+    return await withLock(state.key, async () => {
+      const mat = materialOf(state);
+      const r = await mat.uploadMany(valid, {
+        concurrency: Math.min(4, Math.max(1, Number(body.concurrency) || 4)),
+      });
+      return ok(res, {
+        uploaded: r.uploaded || [],
+        existList: r.existList || [],
+        failed: [...(r.failed || []), ...over],
+      });
+    });
+  }
+
   if (pathname === '/product/upload' && method === 'POST') {
     // 图片走 base64（膨胀 33%），默认 1MB 连 800KB 的图都传不了
     const body = await readBody(req, 28 * 1024 * 1024);

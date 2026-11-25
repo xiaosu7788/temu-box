@@ -419,6 +419,22 @@ export function imageProxyUrl(url: string): string {
   return `${base}/store/products/image-proxy?url=${encodeURIComponent(url)}`
 }
 
+/**
+ * 批量上传图片。对齐官网 5 步流程：批量算 MD5 → 一次 queryByMd5 查重 → 分流 → 并发上传。
+ * 返回 { uploaded, existList, failed }，其中 existList 是库里已有、可直接复用的素材。
+ */
+export async function uploadProductImages(
+  files: Array<{ content_base64: string; file_name: string }>,
+  concurrency = 4,
+) {
+  const { data } = await http.post<{
+    uploaded: Array<{ md5: string; fileName: string; imgUrl: string; materialId: number }>
+    existList: Array<{ md5: string; fileName: string; existId: number; existName: string }>
+    failed: Array<{ md5: string; fileName: string; error: string }>
+  }>('/store/products/upload-many', { files, concurrency }, { timeout: 600000 })
+  return data
+}
+
 export async function uploadProductImage(
   contentBase64: string,
   fileName: string,

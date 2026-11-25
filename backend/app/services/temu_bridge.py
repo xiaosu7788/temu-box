@@ -542,6 +542,23 @@ def product_upload(account: str, content_base64: str, file_name: str = "upload.j
     return request("POST", "/product/upload", body=body, timeout=120)
 
 
+def product_upload_many(account: str, files: list, concurrency: int = 4) -> dict:
+    """批量上传图片。
+
+    对齐官网 5 步流程：批量算 MD5 → 一次 queryByMd5 查重 → 分流 → 并发上传。
+    返回 { uploaded, existList, failed }：
+      uploaded  新上传的（含 imgUrl / materialId）
+      existList 库里已有、直接复用（含 existId）
+      failed    失败的（含 error）
+    """
+    return request(
+        "POST",
+        "/product/upload-many",
+        body={"account": account, "files": files, "concurrency": int(concurrency)},
+        timeout=600,
+    )
+
+
 def goods_lifecycle_filters(account: str) -> dict:
     """快捷筛选计数（生命周期 tab 上的数字）。"""
     return request("GET", "/goods/lifecycle/filters", params={"account": account}, timeout=30)

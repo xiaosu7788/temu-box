@@ -31,6 +31,7 @@ temu-ops 的上游 `ops_server.js` 是**单账号单例**（模块级 `const ops
 | 15 | `lib/kefu_offline.js` | `wakeTool` 发工具名**文本**（无效） | 改为 **QuickTool**：`sendMessage contentType=10` + `{desc,id:toolId,scene:1}`；新增 `connectSession()`（`responseChatWithCustomerSupportV2`），会话 off 时机器人不响应任何消息 |
 | 16 | `server.js` | 无 `/kefu/connect` | 新增 `POST /kefu/connect`（建立/恢复客服会话，拿 `receptionId`）；`/kefu/wake` 支持 `toolId`/`autoConnect` |
 | 17 | `lib/lifecycle.js` + `server.js` | 无上新生命周期接口 | 新增 `lib/lifecycle.js`（robin `searchForSemiSupplier` / 站点 / 快捷筛选 / 处罚 / 下架原因）与 `GET /goods/lifecycle[/all|/sites|/filters]`；商品查询改用该接口做数据源 |
+| 18 | `server.js` | 无 `/product/upload-many` | 新增批量上传路由，对齐官网 5 步流程（批量 MD5 → queryByMd5 查重 → 分流 → 并发 4）；上游 `material.uploadMany()` 已封装，这里只做参数转换 |
 
 ## 接口
 

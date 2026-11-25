@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { InfoFilled, Search, Upload } from '@element-plus/icons-vue'
-import { compressMaterial, cropMaterial, imageProxyUrl, getMaterialFolders, getProductImages, removeMaterial, uploadProductImage, uploadProductVideo, type MaterialFolderNode } from '../api'
+import { compressMaterial, cropMaterial, imageProxyUrl, uploadProductImages, getMaterialFolders, getProductImages, removeMaterial, uploadProductImage, uploadProductVideo, type MaterialFolderNode } from '../api'
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '../feedback'
 import type { ProductMaterialImage } from '../types'
 import ImageCropper from './ImageCropper.vue'
@@ -450,7 +450,7 @@ interface UploadTask {
   id: number
   name: string
   size: number
-  status: 'queued' | 'running' | 'ok' | 'fail'
+  status: 'queued' | 'running' | 'ok' | 'exist' | 'fail'
   error: string
 }
 const queue = ref<UploadTask[]>([])
@@ -517,21 +517,82 @@ function onUpload(file: { raw?: File }) {
 /** 串行跑队列：一次只传一张，避免把素材接口打限流 */
 async function runQueue() {
   if (queueRunning.value) return
+  const pending = queue.value.filter((x) => x.status === 'queued')
+  if (!pending.length) return
   queueRunning.value = true
   uploading.value = true
   try {
-    for (;;) {
-      const task = queue.value.find((x) => x.status === 'queued')
-      if (!task) break
-      task.status = 'running'
+    pending.forEach((x) => {
+      x.status = 'running'
+    })
+
+    // 先把所有文件读成 base64（浏览器侧，不阻塞网络）
+    const files: Array<{ content_base64: string; file_name: string; task: UploadTask }> = []
+    for (const task of pending) {
+      const raw = pendingFiles.get(task.id)
+      if (!raw) {
+        task.status = 'fail'
+        task.error = '文件已失效，请重新选择'
+        continue
+      }
       try {
-        await uploadOne(task)
-        task.status = 'ok'
+        files.push({ content_base64: await readBase64(raw), file_name: raw.name, task })
       } catch (error) {
         task.status = 'fail'
-        task.error = (error as Error)?.message || '上传失败'
+        task.error = (error as Error)?.message || '读取失败'
       }
     }
+    if (!files.length) return
+
+    // 一次交给后端：MD5 查重 + 并发上传（对齐官网 5 步流程）
+    const r = await uploadProductImages(
+      files.map((f) => ({ content_base64: f.content_base64, file_name: f.file_name })),
+    )
+
+    const byName = new Map<string, UploadTask>()
+    files.forEach((f) => byName.set(f.file_name, f.task))
+
+    for (const u of r.uploaded || []) {
+      const task = byName.get(u.fileName)
+      if (task) task.status = 'ok'
+      list.value = [
+        { imgUrl: u.imgUrl, id: u.materialId, name: u.fileName, materialType: 1 } as ProductMaterialImage,
+        ...list.value,
+      ]
+    }
+    for (const e of r.existList || []) {
+      const task = byName.get(e.fileName)
+      if (task) {
+        task.status = 'exist'
+        task.error = '库里已有同图，直接复用'
+      }
+    }
+    for (const f of r.failed || []) {
+      const task = byName.get(f.fileName)
+      if (task) {
+        task.status = 'fail'
+        task.error = f.error || '上传失败'
+      }
+    }
+    // 后端没回执的（极端情况）算失败，避免永远停在「上传中」
+    pending.forEach((x) => {
+      if (x.status === 'running') {
+        x.status = 'fail'
+        x.error = x.error || '未收到上传结果'
+      }
+    })
+
+    pending.forEach((x) => pendingFiles.delete(x.id))
+    const okCount = pending.filter((x) => x.status === 'ok' || x.status === 'exist').length
+    if (okCount) notifySuccess(`上传完成：成功 ${okCount} 张`)
+  } catch (error) {
+    pending.forEach((x) => {
+      if (x.status === 'running') {
+        x.status = 'fail'
+        x.error = (error as Error)?.message || '上传失败'
+      }
+    })
+    notifyError(error as Error)
   } finally {
     queueRunning.value = false
     uploading.value = false
@@ -738,6 +799,7 @@ watch(
       <el-table-column label="素材状态" width="110">
         <template #default="{ row }">
           <span v-if="row.status === 'ok'" style="color: #16a34a">上传成功</span>
+          <span v-else-if="row.status === 'exist'" style="color: #d97706">已存在（复用）</span>
           <span v-else-if="row.status === 'fail'" style="color: #dc2626">上传失败</span>
           <span v-else-if="row.status === 'running'" style="color: #2563eb">上传中…</span>
           <span v-else style="color: #9ca3af">排队中</span>

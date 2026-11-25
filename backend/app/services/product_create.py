@@ -593,6 +593,24 @@ def upload_image(
     return _bridge(temu_bridge.product_upload, account, content_base64, file_name, crop)
 
 
+def upload_images(user_id: int, files: list, concurrency: int = 4) -> dict:
+    """批量上传图片到素材库。
+
+    files: [{ content_base64, file_name }]
+    返回 { uploaded: [...], existList: [...], failed: [...] }
+    """
+    account = require_account(user_id)
+    items = []
+    for f in files or []:
+        content = str((f or {}).get("content_base64") or "")
+        if not content:
+            continue
+        items.append({"fileName": str((f or {}).get("file_name") or "upload.jpg"), "contentBase64": content})
+    if not items:
+        raise StoreError("请至少选择一张图片")
+    return _bridge(temu_bridge.product_upload_many, account, items, concurrency)
+
+
 # ==================== 批量创建 ====================
 _BATCH_LOCK = threading.Lock()
 _BATCH_STATE: dict[int, dict] = {}
