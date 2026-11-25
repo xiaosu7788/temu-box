@@ -771,6 +771,14 @@ function removeOne(url: string) {
 async function toggle(item: ProductMaterialImage) {
   const url = item.imgUrl
   if (!url) return
+
+  // 已选中 → 再点即取消（同一张图可能被点多次，一次去掉一张）
+  if (picked.value.includes(url)) {
+    const idx = picked.value.lastIndexOf(url)
+    picked.value = picked.value.filter((_, i) => i !== idx)
+    return
+  }
+
   if (!sizeOk(item)) {
     // 对齐官网：选中不合格的图直接进裁剪器，而不是拒绝
     const why = validateImage({ width: item.width, height: item.height, size: item.size }, pickKind.value)
@@ -785,7 +793,7 @@ async function toggle(item: ProductMaterialImage) {
     return
   }
 
-  // 多选模式：每点一次追加一张，同一张可重复（对齐官网）
+  // 多选模式：每次点击追加一张，同一张可重复
   if (picked.value.length >= spec.value.maxCount) {
     notifyError(new Error(`最多可选 ${spec.value.maxCount} 张`))
     return
@@ -1074,13 +1082,9 @@ watch(
         <div class="picker-card__img">
           <el-image
             :src="thumbUrl(item.imgUrl)"
-            :preview-src-list="[item.imgUrl]"
             :alt="item.name || ''"
             fit="cover"
-            preview-teleported
-            hide-on-click-modal
             class="picker-card__pic"
-            @click.stop
             @error="onThumbError(item)"
           />
           <span v-if="isVideo(item)" class="picker-card__badge">
@@ -1092,19 +1096,15 @@ watch(
             <span>需 ≥{{ spec.minW }}×{{ spec.minH }}</span>
           </span>
           <span v-else-if="isVideo(item)" class="picker-card__vid">▶ {{ durationText(item) }}</span>
-          <span
-            v-else-if="countOf(item.imgUrl) > 0"
-            class="picker-item__mark picker-item__mark--count"
-            title="再次点击卡片可继续添加；点这里移除一张"
-            @click.stop="removeOne(item.imgUrl)"
-          >✓ {{ countOf(item.imgUrl) }}</span>
-          <button
-            v-if="item.id"
-            type="button"
-            class="picker-card__del"
-            :disabled="removingId === item.id"
-            @click.stop="onRemove(item)"
-          >×</button>
+          <span v-if="!isVideo(item) && sizeOk(item)" class="picker-check" :class="{ 'picker-check--on': countOf(item.imgUrl) > 0 }">
+            <template v-if="countOf(item.imgUrl) > 0">
+              <svg v-if="countOf(item.imgUrl) === 1" viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+                <path d="M3 8.5l3.2 3.2L13 4.6" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <span v-else class="picker-check__count">{{ countOf(item.imgUrl) }}</span>
+            </template>
+          </span>
+
         </div>
         <div class="picker-card__meta">
           <span class="picker-card__name" :title="item.name">{{ item.name || '未命名' }}</span>
@@ -1554,17 +1554,38 @@ watch(
   font-size: 11px;
 }
 
-.picker-item__mark--count {
-  width: auto;
-  min-width: 22px;
-  padding: 0 5px;
-  font-size: 11px;
-  border-radius: 11px;
-  cursor: pointer;
+.picker-check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1.5px solid #d0d5dd;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: background 0.12s, border-color 0.12s;
+  pointer-events: none;
 }
 
-.picker-item__mark--count:hover {
-  background: #dc2626;
+.picker-check--on {
+  background: var(--primary, #2563eb);
+  border-color: var(--primary, #2563eb);
+}
+
+.picker-check__count {
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.picker-card--active .picker-card__img {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: -2px;
 }
 
 .picker-item__mark {

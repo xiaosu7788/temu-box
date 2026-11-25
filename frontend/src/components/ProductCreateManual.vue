@@ -1825,7 +1825,15 @@ onMounted(async () => {
         <el-form-item label="轮播图（3:4）" required>
           <div class="pcreate__images">
             <div v-for="(url, i) in form.images" :key="`${i}-${url}`" class="pcreate__thumb">
-              <img :src="url" alt="" />
+              <el-image
+                :src="url"
+                :preview-src-list="form.images"
+                :initial-index="i"
+                fit="cover"
+                preview-teleported
+                hide-on-click-modal
+                class="pcreate__thumb-img"
+              />
               <span class="pcreate__thumb-idx">{{ i + 1 }}</span>
               <button type="button" class="pcreate__thumb-x" @click="removeImageAt(i)">×</button>
             </div>
@@ -1839,7 +1847,14 @@ onMounted(async () => {
         <el-form-item label="素材图（1:1）">
           <div class="pcreate__images">
             <div v-if="form.materialImgUrl" class="pcreate__thumb pcreate__thumb--square">
-              <img :src="form.materialImgUrl" alt="" />
+              <el-image
+                :src="form.materialImgUrl"
+                :preview-src-list="[form.materialImgUrl]"
+                fit="cover"
+                preview-teleported
+                hide-on-click-modal
+                class="pcreate__thumb-img"
+              />
             </div>
             <button type="button" class="pcreate__add" @click="openPicker(false)">
               <el-icon><Picture /></el-icon>
@@ -1859,7 +1874,15 @@ onMounted(async () => {
         <el-form-item label="详情图文（3:4）">
           <div class="pcreate__images">
             <div v-for="(url, i) in decorationImages" :key="`${i}-${url}`" class="pcreate__thumb">
-              <img :src="url" alt="" />
+              <el-image
+                :src="url"
+                :preview-src-list="decorationImages"
+                :initial-index="i"
+                fit="cover"
+                preview-teleported
+                hide-on-click-modal
+                class="pcreate__thumb-img"
+              />
               <span class="pcreate__thumb-idx">{{ i + 1 }}</span>
               <button
                 type="button"
@@ -2652,6 +2675,13 @@ onMounted(async () => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.pcreate__thumb-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: zoom-in;
 }
 
 .pcreate__thumb {
