@@ -143,49 +143,64 @@ const cropProportions = computed<Record<string, number[]>>(() => {
 
 const cropInitialProportion = computed(() => (pickKind.value === 'carousel' ? '3:4' : '1:1'))
 
+/** 待裁剪队列：批量上传多张不合格时，一张裁完自动弹下一张 */
+const cropQueue = ref<ProductMaterialImage[]>([])
+
 function openCropper(item: ProductMaterialImage) {
   if (!item.width || !item.height) {
     notifyError(new Error('这张素材没有尺寸信息，无法裁剪'))
     return
   }
-  // 提前把图塞进浏览器缓存，弹窗打开时 Cropper 能立刻拿到已解码的图
-  // 用与裁剪器完全相同的代理地址，才能命中浏览器缓存，避免弹窗里再等一次
+  // 已经有裁剪器开着 → 排队，处理完当前这张再弹
+  if (cropVisible.value) {
+    cropQueue.value.push(item)
+    return
+  }
+  showCropper(item)
+}
+
+function showCropper(item: ProductMaterialImage) {
+  // 提前把图塞进浏览器缓存，弹窗打开时能立刻拿到已解码的图
   const pre = new Image()
-  pre.src = imageProxyUrl(item.imgUrl)
+  pre.src = item.imgUrl
   cropTarget.value = item
   cropSrc.value = item.imgUrl
   cropVisible.value = true
+  if (cropQueue.value.length) notifyWarning(`还有 ${cropQueue.value.length} 张待裁剪`)
 }
 
-/** 裁剪完成：base64 上传成新素材，插到列表最前并选中 */
+/** 当前这张处理完（裁完或取消），弹下一张 */
+function nextCrop() {
+  const next = cropQueue.value.shift()
+  if (next) showCropper(next)
+}
+
+// 裁剪器关闭后弹下一张（等 dialog 的关闭动画走完，避免闪烁）
+watch(cropVisible, (open) => {
+  if (open) return
+  if (!cropQueue.value.length) return
+  window.setTimeout(() => {
+    if (!cropVisible.value) nextCrop()
+  }, 260)
+})
+
+/** 裁剪完成：把结果交给上传队列，进度会显示在「上传列表」里 */
 async function onCropped(dataUrl: string, size: { width: number; height: number }) {
   const item = cropTarget.value
-  if (!item) return
   cropSaving.value = true
   try {
     const base64 = dataUrl.split(',')[1] || ''
-    const r = await uploadProductImage(base64, `${item.name || 'crop'}-crop.jpg`)
-    // 必须用裁剪后的真实宽高，否则列表会拿旧尺寸继续标「尺寸不符合要求」
-    const next: ProductMaterialImage = {
-      ...item,
-      imgUrl: r.imgUrl,
-      id: r.materialId,
-      width: size.width,
-      height: size.height,
-      size: Math.round((base64.length * 3) / 4),
-    }
-    list.value = [next, ...list.value]
-    if (multiple.value) {
-      if (picked.value.length < spec.value.maxCount) picked.value = [...picked.value, r.imgUrl]
-    } else {
-      picked.value = [r.imgUrl]
-    }
-    notifySuccess('已裁剪并生成新素材')
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
+    const file = new File([bytes], `${item?.name || 'crop'}-crop.jpg`, { type: 'image/jpeg' })
+    // 尺寸已经知道，直接带进队列，避免上传时再读一次
+    enqueueFile(file, { width: size.width, height: size.height })
+    notifySuccess('已裁剪，正在上传')
   } catch (error) {
     notifyError(error)
   } finally {
     cropSaving.value = false
     cropTarget.value = null
+    // 下一张由 cropVisible 的 watch 统一调度，这里不重复触发
   }
 }
 
@@ -518,9 +533,23 @@ function onUpload(file: { raw?: File }) {
     notifyError(new Error(`${raw.name}：图片超过 20MB，请先压缩`))
     return
   }
+  enqueueFile(raw)
+}
+
+/** 入队一个文件。dims 已知时直接带上，省一次读图（裁剪结果走这条路径） */
+function enqueueFile(file: File, dims?: { width: number; height: number }) {
   const id = Date.now() + Math.random()
-  pendingFiles.set(id, raw)
-  queue.value.push({ id, name: raw.name, size: raw.size, status: 'queued', error: '' })
+  pendingFiles.set(id, file)
+  const task: UploadTask = {
+    id,
+    name: file.name,
+    size: file.size,
+    status: 'queued',
+    error: '',
+    width: dims?.width,
+    height: dims?.height,
+  }
+  queue.value.push(task)
   if (queue.value.length > 1) queueVisible.value = true
   void runQueue()
 }
@@ -582,9 +611,11 @@ async function processBatch(pending: UploadTask[]) {
         const base64 = await readBase64(raw)
         // 尺寸在这里读一次：批量接口只回 imgUrl/materialId，不回宽高，
         // 不提前记下来的话，后面判规格会因为没有 width/height 而永远「合格」
-        const { width, height } = await readImageSize(raw)
-        task.width = width
-        task.height = height
+        if (!task.width || !task.height) {
+          const { width, height } = await readImageSize(raw)
+          task.width = width
+          task.height = height
+        }
         files.push({ content_base64: base64, file_name: raw.name, task })
       } catch (error) {
         task.status = 'fail'
@@ -646,22 +677,25 @@ async function processBatch(pending: UploadTask[]) {
     const okCount = pending.filter((x) => x.status === 'ok' || x.status === 'exist').length
     if (okCount) notifySuccess(`上传完成：成功 ${okCount} 张`)
 
-    // 上传成功的图里，第一张规格不符的自动进裁剪器（其余在列表里标红，避免连环弹窗）
-    const firstBad = pending.find((task) => {
+    // 所有规格不符的都排进裁剪队列：裁完一张自动弹下一张（对齐官网批量裁剪）
+    const badTasks = pending.filter((task) => {
       if (task.status !== 'ok' || !task.width || !task.height) return false
       return !validateImage({ width: task.width, height: task.height, size: task.size }, pickKind.value).ok
     })
-    if (firstBad) {
-      const item = list.value.find((x) => x.imgUrl === firstBad.imgUrl) || {
-        imgUrl: firstBad.imgUrl || '',
-        name: firstBad.name,
-        width: firstBad.width,
-        height: firstBad.height,
-        size: firstBad.size,
+    if (badTasks.length) {
+      notifyWarning(`${badTasks.length} 张规格不符，逐个裁剪中`)
+      for (const task of badTasks) {
+        const item =
+          list.value.find((x) => x.imgUrl === task.imgUrl) ||
+          ({
+            imgUrl: task.imgUrl || '',
+            name: task.name,
+            width: task.width!,
+            height: task.height!,
+            size: task.size,
+          } as ProductMaterialImage)
+        openCropper(item)
       }
-      const why = validateImage({ width: firstBad.width!, height: firstBad.height!, size: firstBad.size }, pickKind.value)
-      notifyWarning(`${why.reasons.join('；')}，先裁剪一下`)
-      openCropper(item as ProductMaterialImage)
     }
   } catch (error) {
     pending.forEach((x) => {
