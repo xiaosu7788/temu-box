@@ -663,6 +663,17 @@ watch(
 </script>
 
 <template>
+  <!-- 裁剪弹窗放在与「选图」弹窗平级的位置：
+       嵌套在 el-dialog 内部时，内层容器宽度会塌成 0，Cropper 算不出 canvas -->
+  <ImageCropper
+    v-model="cropVisible"
+    :src="cropSrc"
+    :proportions="cropProportions"
+    :initial-proportion="cropInitialProportion"
+    :title="`裁剪（${pickKind === 'detail' ? '详情图文' : spec.label}）`"
+    @cropped="onCropped"
+  />
+
   <el-dialog
     v-model="visible"
     :title="carousel ? '选择轮播图（3:4）' : '选择素材图（1:1）'"
@@ -929,14 +940,6 @@ watch(
       </el-button>
     </template>
 
-    <ImageCropper
-      v-model="cropVisible"
-      :src="cropSrc"
-      :proportions="cropProportions"
-      :initial-proportion="cropInitialProportion"
-      :title="`裁剪（${pickKind === 'detail' ? '详情图文' : spec.label}）`"
-      @cropped="onCropped"
-    />
   </el-dialog>
 </template>
 

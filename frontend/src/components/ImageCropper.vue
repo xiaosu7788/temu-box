@@ -86,7 +86,7 @@ async function init() {
     activeProportion.value = label
     const ratio = ratios[label]
     cropper = new Cropper(img, {
-      viewMode: 1,
+      viewMode: 0,   // 允许裁剪框超出图片，避免比例差异大时框被压成 0 导致 canvas 为空
       dragMode: 'move',
       autoCropArea: 1,
       background: false,
@@ -127,15 +127,29 @@ async function confirmCrop() {
   }
   exporting.value = true
   try {
-    const canvas = cropper.getCroppedCanvas({
-      width: props.targetWidth,
-      height: props.targetHeight,
+    // ⚠️ 不能把 undefined 传给 width/height：Cropper v1.6 会直接返回 null
+    const opts: { imageSmoothingQuality: 'high'; fillColor: string; width?: number; height?: number } = {
       imageSmoothingQuality: 'high',
       // 官网裁剪后是严格相等，不给 fillColor 会产生透明边
       fillColor: '#fff',
-    })
+    }
+    if (props.targetWidth && props.targetHeight) {
+      opts.width = props.targetWidth
+      opts.height = props.targetHeight
+    }
+    const canvas = cropper.getCroppedCanvas(opts)
     if (!canvas) {
-      notifyError(new Error('裁剪失败：无法生成画布'))
+      const img = imgRef.value
+      const box = cropper.getCropBoxData()
+      const cvs = cropper.getCanvasData()
+      notifyError(
+        new Error(
+          '裁剪失败：画布为空（' +
+            `img.complete=${img?.complete} natural=${img?.naturalWidth}x${img?.naturalHeight} ` +
+            `canvas=${Math.round(cvs.width)}x${Math.round(cvs.height)} ` +
+            `box=${Math.round(box.width)}x${Math.round(box.height)}）`,
+        ),
+      )
       return
     }
     const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
@@ -211,6 +225,9 @@ onBeforeUnmount(destroy)
 
 <style scoped>
 .cropper__stage {
+  /* 必须给确定宽度：嵌套 dialog 里曾塌成 0，导致 Cropper 拿不到尺寸、canvas 为空 */
+  width: 100%;
+  min-width: 280px;
   height: min(52vh, 420px);
   background: #111;
   border-radius: 6px;
