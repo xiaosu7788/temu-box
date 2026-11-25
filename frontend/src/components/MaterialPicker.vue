@@ -460,6 +460,14 @@ const queueRunning = ref(false)
 /** 队列 id → 原始 File（响应式代理会丢失 File，单独存 */
 const pendingFiles = new Map<number, File>()
 
+function statusText(status: UploadTask['status']): string {
+  if (status === 'ok') return '上传成功'
+  if (status === 'exist') return '已存在'
+  if (status === 'fail') return '上传失败'
+  if (status === 'running') return '上传中'
+  return '排队中'
+}
+
 const queuePending = computed(() => queue.value.filter((x) => x.status === 'queued' || x.status === 'running').length)
 const queueDone = computed(() => queue.value.filter((x) => x.status === 'ok').length)
 const queueFailed = computed(() => queue.value.filter((x) => x.status === 'fail').length)
@@ -517,10 +525,26 @@ function onUpload(file: { raw?: File }) {
 /** 串行跑队列：一次只传一张，避免把素材接口打限流 */
 async function runQueue() {
   if (queueRunning.value) return
-  const pending = queue.value.filter((x) => x.status === 'queued')
-  if (!pending.length) return
   queueRunning.value = true
   uploading.value = true
+  try {
+    // el-upload 的 on-change 是逐个触发的：第一批在跑时后序文件才入队，
+    // 所以这里要循环取队尾，直到没有新的 queued 为止
+    for (;;) {
+      const pending = queue.value.filter((x) => x.status === 'queued')
+      if (!pending.length) break
+      await processBatch(pending)
+    }
+  } finally {
+    queueRunning.value = false
+    uploading.value = false
+    query.page = 1
+    void load()
+  }
+}
+
+/** 处理一批（一次请求） */
+async function processBatch(pending: UploadTask[]) {
   try {
     pending.forEach((x) => {
       x.status = 'running'
@@ -585,6 +609,21 @@ async function runQueue() {
     pending.forEach((x) => pendingFiles.delete(x.id))
     const okCount = pending.filter((x) => x.status === 'ok' || x.status === 'exist').length
     if (okCount) notifySuccess(`上传完成：成功 ${okCount} 张`)
+
+    // 上传成功的图里，第一张规格不符的自动进裁剪器（其余在列表里标红，避免连环弹窗）
+    const firstBad = (r.uploaded || []).find((u) => {
+      const item = list.value.find((x) => x.imgUrl === u.imgUrl)
+      if (!item?.width || !item?.height) return false
+      return !validateImage({ width: item.width, height: item.height, size: item.size }, pickKind.value).ok
+    })
+    if (firstBad) {
+      const item = list.value.find((x) => x.imgUrl === firstBad.imgUrl)
+      if (item) {
+        const why = validateImage({ width: item.width, height: item.height, size: item.size }, pickKind.value)
+        notifyWarning(`${why.reasons.join('；')}，先裁剪一下`)
+        openCropper(item)
+      }
+    }
   } catch (error) {
     pending.forEach((x) => {
       if (x.status === 'running') {
@@ -593,10 +632,6 @@ async function runQueue() {
       }
     })
     notifyError(error as Error)
-  } finally {
-    queueRunning.value = false
-    uploading.value = false
-    void load()
   }
 }
 
@@ -787,32 +822,49 @@ watch(
 </script>
 
 <template>
-  <el-dialog v-model="queueVisible" title="上传列表" width="720px" style="max-width: calc(100vw - 32px)" align-center>
-    <el-table :data="queue" size="small" max-height="420" empty-text="还没有上传记录">
-      <el-table-column prop="name" label="素材名称" min-width="220" show-overflow-tooltip />
-      <el-table-column label="类型" width="80">
+  <el-dialog
+    v-model="queueVisible"
+    title="上传列表"
+    width="760px"
+    style="max-width: calc(100vw - 32px)"
+    align-center
+  >
+    <div class="queue-tip">
+      若上传失败或中断，可清空记录后重试；已存在的素材会直接复用，不重复占空间。
+    </div>
+
+    <el-table :data="queue" size="small" max-height="400" empty-text="还没有上传记录" class="queue-table">
+      <el-table-column prop="name" label="素材名称" min-width="240" show-overflow-tooltip />
+      <el-table-column label="类型" width="70">
         <template #default>图片</template>
       </el-table-column>
-      <el-table-column label="大小" width="100">
+      <el-table-column label="大小" width="90" align="right">
         <template #default="{ row }">{{ (row.size / 1024).toFixed(0) }}KB</template>
       </el-table-column>
       <el-table-column label="素材状态" width="110">
         <template #default="{ row }">
-          <span v-if="row.status === 'ok'" style="color: #16a34a">上传成功</span>
-          <span v-else-if="row.status === 'exist'" style="color: #d97706">已存在（复用）</span>
-          <span v-else-if="row.status === 'fail'" style="color: #dc2626">上传失败</span>
-          <span v-else-if="row.status === 'running'" style="color: #2563eb">上传中…</span>
-          <span v-else style="color: #9ca3af">排队中</span>
+          <span class="queue-status" :class="`queue-status--${row.status}`">
+            <span class="queue-status__dot"></span>{{ statusText(row.status) }}
+          </span>
         </template>
       </el-table-column>
-      <el-table-column prop="error" label="失败原因" min-width="180" show-overflow-tooltip />
+      <el-table-column prop="error" label="失败原因" min-width="150" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span class="queue-reason">{{ row.error || '-' }}</span>
+        </template>
+      </el-table-column>
     </el-table>
+
     <template #footer>
-      <span class="queue-foot">
-        共 {{ queue.length }} 条 · 成功 {{ queueDone }} · 失败 {{ queueFailed }}
-      </span>
-      <el-button :disabled="queueRunning" @click="queue = []">清空记录</el-button>
-      <el-button type="primary" @click="queueVisible = false">关闭</el-button>
+      <div class="queue-actions">
+        <span class="queue-actions__stat">
+          共 {{ queue.length }} 条 · 成功 {{ queueDone }} · 失败 {{ queueFailed }}
+        </span>
+        <span>
+          <el-button :disabled="queueRunning" @click="queue = []">清空记录</el-button>
+          <el-button type="primary" @click="queueVisible = false">关闭</el-button>
+        </span>
+      </div>
     </template>
   </el-dialog>
 
@@ -1102,6 +1154,75 @@ watch(
 </template>
 
 <style scoped>
+/* ---------- 上传列表 ---------- */
+.queue-tip {
+  margin-bottom: 10px;
+  padding: 7px 10px;
+  color: #92400e;
+  background: #fffbeb;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.queue-table {
+  --el-table-border-color: #f0f1f3;
+  --el-table-header-bg-color: #fafbfc;
+  font-size: 12px;
+}
+
+.queue-table :deep(.el-table__row) {
+  height: 34px;
+}
+
+.queue-table :deep(.el-table__header .el-table__cell) {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.queue-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.queue-status__dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d1d5db;
+  flex: none;
+}
+
+.queue-status--ok { color: #15803d; }
+.queue-status--ok .queue-status__dot { background: #16a34a; }
+.queue-status--exist { color: #b45309; }
+.queue-status--exist .queue-status__dot { background: #d97706; }
+.queue-status--fail { color: #b91c1c; }
+.queue-status--fail .queue-status__dot { background: #dc2626; }
+.queue-status--running { color: #1d4ed8; }
+.queue-status--running .queue-status__dot { background: #2563eb; }
+
+.queue-reason {
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.queue-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.queue-actions__stat {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+
 .picker-main {
   display: flex;
   gap: 12px;
