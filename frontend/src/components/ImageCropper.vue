@@ -295,6 +295,7 @@ onBeforeUnmount(() => {
 
 <template>
   <el-dialog
+    align-center
     :model-value="modelValue"
     :title="title || '裁剪图片'"
     width="720px"

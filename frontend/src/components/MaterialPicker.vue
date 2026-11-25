@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { InfoFilled, Search, Upload } from '@element-plus/icons-vue'
-import { compressMaterial, cropMaterial, getMaterialFolders, getProductImages, removeMaterial, uploadProductImage, uploadProductVideo, type MaterialFolderNode } from '../api'
+import { compressMaterial, cropMaterial, imageProxyUrl, getMaterialFolders, getProductImages, removeMaterial, uploadProductImage, uploadProductVideo, type MaterialFolderNode } from '../api'
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '../feedback'
 import type { ProductMaterialImage } from '../types'
 import ImageCropper from './ImageCropper.vue'
@@ -149,23 +149,31 @@ function openCropper(item: ProductMaterialImage) {
     return
   }
   // 提前把图塞进浏览器缓存，弹窗打开时 Cropper 能立刻拿到已解码的图
+  // 用与裁剪器完全相同的代理地址，才能命中浏览器缓存，避免弹窗里再等一次
   const pre = new Image()
-  pre.crossOrigin = 'anonymous'
-  pre.src = item.imgUrl
+  pre.src = imageProxyUrl(item.imgUrl)
   cropTarget.value = item
   cropSrc.value = item.imgUrl
   cropVisible.value = true
 }
 
 /** 裁剪完成：base64 上传成新素材，插到列表最前并选中 */
-async function onCropped(dataUrl: string) {
+async function onCropped(dataUrl: string, size: { width: number; height: number }) {
   const item = cropTarget.value
   if (!item) return
   cropSaving.value = true
   try {
     const base64 = dataUrl.split(',')[1] || ''
     const r = await uploadProductImage(base64, `${item.name || 'crop'}-crop.jpg`)
-    const next: ProductMaterialImage = { ...item, imgUrl: r.imgUrl, id: r.materialId }
+    // 必须用裁剪后的真实宽高，否则列表会拿旧尺寸继续标「尺寸不符合要求」
+    const next: ProductMaterialImage = {
+      ...item,
+      imgUrl: r.imgUrl,
+      id: r.materialId,
+      width: size.width,
+      height: size.height,
+      size: Math.round((base64.length * 3) / 4),
+    }
     list.value = [next, ...list.value]
     if (multiple.value) {
       if (picked.value.length < spec.value.maxCount) picked.value = [...picked.value, r.imgUrl]
@@ -675,6 +683,7 @@ watch(
   />
 
   <el-dialog
+    align-center
     v-model="visible"
     :title="carousel ? '选择轮播图（3:4）' : '选择素材图（1:1）'"
     width="min(980px, calc(100vw - 32px))"
