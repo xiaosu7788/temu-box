@@ -38,3 +38,4 @@ bridge/runtime/session_*.json
 bridge/runtime/glo_session*.json
 bridge/runtime/site_table.json
 bridge/runtime/region_sessions.json
+data/img_cache/

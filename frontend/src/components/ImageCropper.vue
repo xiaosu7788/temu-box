@@ -49,7 +49,17 @@ const shown = ref({ left: 0, top: 0, width: 0, height: 0 })
 const sel = ref({ x: 0.1, y: 0.1, w: 0.8, h: 0.8 })
 
 const ratioKeys = computed(() => Object.keys(props.proportions || {}))
-const proxySrc = computed(() => (props.src ? imageProxyUrl(props.src) : ''))
+/** 直接用 CDN 地址（官网同款：CDN 已开 CORS 且缓存 1 年），代理只作为兜底 */
+const directSrc = computed(() => props.src || '')
+const proxySrc = ref('')
+let triedProxy = false
+
+function onImgError() {
+  if (triedProxy) return
+  triedProxy = true
+  // 极少数情况 CDN 没给 CORS 头会导致加载失败，这时退回同源代理
+  proxySrc.value = imageProxyUrl(props.src)
+}
 const currentRatio = computed<number[] | null>(() => props.proportions[activeRatio.value] || null)
 
 /** 按当前比例把选框调成最大内接矩形并居中 */
@@ -88,7 +98,9 @@ function measure() {
 }
 
 async function ready() {
-  if (!proxySrc.value) return
+  triedProxy = false
+  proxySrc.value = ''
+  if (!props.src) return
   loading.value = true
   await nextTick()
   const el = imgRef.value
@@ -309,10 +321,12 @@ onBeforeUnmount(() => {
       <div ref="stageRef" class="icrop__stage" :style="{ height: STAGE_H + 'px' }">
         <img
           ref="imgRef"
-          :src="proxySrc"
+          :src="proxySrc || directSrc"
+          crossorigin="anonymous"
           alt=""
           class="icrop__img"
           @load="measure"
+          @error="onImgError"
         />
         <!-- 选框 -->
         <div class="icrop__sel" :style="selStyle" @pointerdown="onPointerDown($event, 'move')">
