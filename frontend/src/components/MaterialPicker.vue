@@ -452,6 +452,9 @@ interface UploadTask {
   size: number
   status: 'queued' | 'running' | 'ok' | 'exist' | 'fail'
   error: string
+  width?: number
+  height?: number
+  imgUrl?: string
 }
 const queue = ref<UploadTask[]>([])
 const queueVisible = ref(false)
@@ -538,8 +541,24 @@ async function runQueue() {
   } finally {
     queueRunning.value = false
     uploading.value = false
+    // 记住刚上传成功的项：后端列表按名称排序，新图未必落在第 1 页，
+    // load() 一覆盖就「看不到」，所以刷新后把它们手动置顶
+    const fresh = queue.value
+      .filter((x) => (x.status === 'ok' || x.status === 'exist') && x.imgUrl)
+      .map((x) => ({
+        imgUrl: x.imgUrl!,
+        name: x.name,
+        width: x.width,
+        height: x.height,
+        size: x.size,
+        materialType: 1,
+      })) as ProductMaterialImage[]
     query.page = 1
-    void load()
+    await load()
+    if (fresh.length) {
+      const urls = new Set(fresh.map((x) => x.imgUrl))
+      list.value = [...fresh, ...list.value.filter((x) => !urls.has(x.imgUrl))]
+    }
   }
 }
 
@@ -560,7 +579,13 @@ async function processBatch(pending: UploadTask[]) {
         continue
       }
       try {
-        files.push({ content_base64: await readBase64(raw), file_name: raw.name, task })
+        const base64 = await readBase64(raw)
+        // 尺寸在这里读一次：批量接口只回 imgUrl/materialId，不回宽高，
+        // 不提前记下来的话，后面判规格会因为没有 width/height 而永远「合格」
+        const { width, height } = await readImageSize(raw)
+        task.width = width
+        task.height = height
+        files.push({ content_base64: base64, file_name: raw.name, task })
       } catch (error) {
         task.status = 'fail'
         task.error = (error as Error)?.message || '读取失败'
@@ -578,9 +603,20 @@ async function processBatch(pending: UploadTask[]) {
 
     for (const u of r.uploaded || []) {
       const task = byName.get(u.fileName)
-      if (task) task.status = 'ok'
+      if (task) {
+        task.status = 'ok'
+        task.imgUrl = u.imgUrl
+      }
       list.value = [
-        { imgUrl: u.imgUrl, id: u.materialId, name: u.fileName, materialType: 1 } as ProductMaterialImage,
+        {
+          imgUrl: u.imgUrl,
+          id: u.materialId,
+          name: u.fileName,
+          width: task?.width,
+          height: task?.height,
+          size: task?.size,
+          materialType: 1,
+        } as ProductMaterialImage,
         ...list.value,
       ]
     }
@@ -611,18 +647,21 @@ async function processBatch(pending: UploadTask[]) {
     if (okCount) notifySuccess(`上传完成：成功 ${okCount} 张`)
 
     // 上传成功的图里，第一张规格不符的自动进裁剪器（其余在列表里标红，避免连环弹窗）
-    const firstBad = (r.uploaded || []).find((u) => {
-      const item = list.value.find((x) => x.imgUrl === u.imgUrl)
-      if (!item?.width || !item?.height) return false
-      return !validateImage({ width: item.width, height: item.height, size: item.size }, pickKind.value).ok
+    const firstBad = pending.find((task) => {
+      if (task.status !== 'ok' || !task.width || !task.height) return false
+      return !validateImage({ width: task.width, height: task.height, size: task.size }, pickKind.value).ok
     })
     if (firstBad) {
-      const item = list.value.find((x) => x.imgUrl === firstBad.imgUrl)
-      if (item) {
-        const why = validateImage({ width: item.width, height: item.height, size: item.size }, pickKind.value)
-        notifyWarning(`${why.reasons.join('；')}，先裁剪一下`)
-        openCropper(item)
+      const item = list.value.find((x) => x.imgUrl === firstBad.imgUrl) || {
+        imgUrl: firstBad.imgUrl || '',
+        name: firstBad.name,
+        width: firstBad.width,
+        height: firstBad.height,
+        size: firstBad.size,
       }
+      const why = validateImage({ width: firstBad.width!, height: firstBad.height!, size: firstBad.size }, pickKind.value)
+      notifyWarning(`${why.reasons.join('；')}，先裁剪一下`)
+      openCropper(item as ProductMaterialImage)
     }
   } catch (error) {
     pending.forEach((x) => {
