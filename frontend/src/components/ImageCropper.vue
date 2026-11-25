@@ -137,20 +137,40 @@ async function confirmCrop() {
       opts.width = props.targetWidth
       opts.height = props.targetHeight
     }
-    const canvas = cropper.getCroppedCanvas(opts)
+    let canvas = cropper.getCroppedCanvas(opts)
     if (!canvas) {
+      // Cropper 内部 canvas 尺寸算成 NaN 时（容器尺寸异常、或 dialog 刚显示还没排版），
+      // 退回到「用选框坐标直接重绘」：getData() 返回的是相对原图的像素坐标，
+      // 不依赖 Cropper 的 canvas 尺寸计算，只要图片本身解码完成就能出图。
       const img = imgRef.value
-      const box = cropper.getCropBoxData()
-      const cvs = cropper.getCanvasData()
-      notifyError(
-        new Error(
-          '裁剪失败：画布为空（' +
-            `img.complete=${img?.complete} natural=${img?.naturalWidth}x${img?.naturalHeight} ` +
-            `canvas=${Math.round(cvs.width)}x${Math.round(cvs.height)} ` +
-            `box=${Math.round(box.width)}x${Math.round(box.height)}）`,
-        ),
-      )
-      return
+      if (!img || !img.complete || !img.naturalWidth) {
+        notifyError(new Error('裁剪失败：图片还没加载完成，请稍后重试'))
+        return
+      }
+      const d = cropper.getData(true) // true = 取整数、并限制在原图范围内
+      if (!d || !(d.width > 0) || !(d.height > 0)) {
+        const box = cropper.getCropBoxData()
+        notifyError(
+          new Error(
+            '裁剪失败：选框无效（' +
+              `box=${Math.round(box.width)}x${Math.round(box.height)}，` +
+              `stage=${document.querySelector<HTMLElement>('.cropper__stage')?.clientWidth ?? '?'}px）`,
+          ),
+        )
+        return
+      }
+      canvas = document.createElement('canvas')
+      canvas.width = props.targetWidth || Math.round(d.width)
+      canvas.height = props.targetHeight || Math.round(d.height)
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        notifyError(new Error('裁剪失败：无法创建画布上下文'))
+        return
+      }
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.imageSmoothingQuality = 'high'
+      ctx.drawImage(img, d.x, d.y, d.width, d.height, 0, 0, canvas.width, canvas.height)
     }
     const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
     emit('cropped', dataUrl, { width: canvas.width, height: canvas.height })
