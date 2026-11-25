@@ -795,6 +795,36 @@ function onPick(urls: string[]) {
 }
 
 /** 删掉指定位置的轮播图（同一张图可能在多个位置，只删这一个） */
+/* ---------- 轮播图拖拽排序 ---------- */
+const dragIndex = ref(-1)
+const dragOverIndex = ref(-1)
+
+function onDragStart(i: number, e: DragEvent) {
+  dragIndex.value = i
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    // Firefox 必须 setData 才会真正开始拖拽
+    e.dataTransfer.setData('text/plain', String(i))
+  }
+}
+
+/** 拖到第 target 张的位置：把源项抽出、插到目标处 */
+function onDropImage(target: number) {
+  const from = dragIndex.value
+  if (from >= 0 && from !== target) {
+    const arr = [...form.images]
+    const [moved] = arr.splice(from, 1)
+    arr.splice(target, 0, moved)
+    form.images = arr
+  }
+  resetDrag()
+}
+
+function resetDrag() {
+  dragIndex.value = -1
+  dragOverIndex.value = -1
+}
+
 function removeImageAt(index: number) {
   form.images = form.images.filter((_, i) => i !== index)
   // 素材图是首图裁出来的，轮播图变了就清空；
@@ -1824,7 +1854,20 @@ onMounted(async () => {
 
         <el-form-item label="轮播图（3:4）" required>
           <div class="pcreate__images">
-            <div v-for="(url, i) in form.images" :key="`${i}-${url}`" class="pcreate__thumb">
+            <div
+              v-for="(url, i) in form.images"
+              :key="`${url}-${i}`"
+              class="pcreate__thumb"
+              :class="{
+                'pcreate__thumb--dragging': dragIndex === i,
+                'pcreate__thumb--over': dragOverIndex === i && dragIndex !== i,
+              }"
+              draggable="true"
+              @dragstart="onDragStart(i, $event)"
+              @dragover.prevent="dragOverIndex = i"
+              @drop.prevent="onDropImage(i)"
+              @dragend="resetDrag"
+            >
               <el-image
                 :src="url"
                 :preview-src-list="form.images"
@@ -2682,6 +2725,30 @@ onMounted(async () => {
   width: 100%;
   height: 100%;
   cursor: zoom-in;
+}
+
+.pcreate__thumb--dragging {
+  opacity: 0.4;
+}
+
+.pcreate__thumb--over {
+  outline: 2px dashed var(--primary, #2563eb);
+  outline-offset: 1px;
+}
+
+.pcreate__thumb {
+  cursor: grab;
+}
+
+/* el-image 内部的 img 默认可拖拽，会拖出图片幽灵而不是触发卡片重排 */
+.pcreate__thumb :deep(img) {
+  -webkit-user-drag: none;
+  user-select: none;
+  pointer-events: auto;
+}
+
+.pcreate__thumb:active {
+  cursor: grabbing;
 }
 
 .pcreate__thumb {
