@@ -4,6 +4,7 @@ import { InfoFilled, Search, Upload } from '@element-plus/icons-vue'
 import { compressMaterial, cropMaterial, getMaterialFolders, getProductImages, removeMaterial, uploadProductImage, uploadProductVideo, type MaterialFolderNode } from '../api'
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '../feedback'
 import type { ProductMaterialImage } from '../types'
+import ImageCropper from './ImageCropper.vue'
 
 /**
  * 素材库选图器。
@@ -111,6 +112,71 @@ function onThumbError(item: ProductMaterialImage) {
 const compressing = ref<string | null>(null)
 const cropping = ref<string | null>(null)
 
+/** 当前弹窗按哪种规格校验（kind 优先，回退到 carousel 布尔） */
+const pickKind = computed<'carousel' | 'material' | 'detail'>(() => {
+  if (props.kind) return props.kind
+  return props.carousel ? 'carousel' : 'material'
+})
+/* ---------- 交互式裁剪（对齐官网：Cropper 拖框/换比例） ---------- */
+const cropSrc = ref('')
+const cropTarget = ref<ProductMaterialImage | null>(null)
+const cropVisible = ref(false)
+const cropSaving = ref(false)
+
+/** 可选比例（官网 Ct 映射的常用子集） */
+const cropProportions = computed<Record<string, number[]>>(() => {
+  // 用 Object.assign 而不是三元返回不同键的对象：
+  // 后者会被 TS 推断成「键可有可无」的联合类型，不满足 Record<string, number[]>
+  const out: Record<string, number[]> = {}
+  if (pickKind.value === 'detail') {
+    Object.assign(out, {
+      '1:1': [1, 1], '3:4': [3, 4], '4:3': [4, 3],
+      '9:16': [9, 16], '16:9': [16, 9], '2:1': [2, 1], '4:1': [4, 1],
+    })
+  } else if (pickKind.value === 'carousel') {
+    Object.assign(out, { '3:4': [3, 4], '1:1': [1, 1] })
+  } else {
+    Object.assign(out, { '1:1': [1, 1], '3:4': [3, 4] })
+  }
+  return out
+})
+
+const cropInitialProportion = computed(() => (pickKind.value === 'carousel' ? '3:4' : '1:1'))
+
+function openCropper(item: ProductMaterialImage) {
+  if (!item.width || !item.height) {
+    notifyError(new Error('这张素材没有尺寸信息，无法裁剪'))
+    return
+  }
+  cropTarget.value = item
+  cropSrc.value = item.imgUrl
+  cropVisible.value = true
+}
+
+/** 裁剪完成：base64 上传成新素材，插到列表最前并选中 */
+async function onCropped(dataUrl: string) {
+  const item = cropTarget.value
+  if (!item) return
+  cropSaving.value = true
+  try {
+    const base64 = dataUrl.split(',')[1] || ''
+    const r = await uploadProductImage(base64, `${item.name || 'crop'}-crop.jpg`)
+    const next: ProductMaterialImage = { ...item, imgUrl: r.imgUrl, id: r.materialId }
+    list.value = [next, ...list.value]
+    if (multiple.value) {
+      if (picked.value.length < spec.value.maxCount) picked.value = [...picked.value, r.imgUrl]
+    } else {
+      picked.value = [r.imgUrl]
+    }
+    notifySuccess('已裁剪并生成新素材')
+  } catch (error) {
+    notifyError(error)
+  } finally {
+    cropSaving.value = false
+    cropTarget.value = null
+  }
+}
+
 /** 目标规格（当前用途决定的裁切尺寸） */
 const targetSpec = computed(() =>
   props.carousel ? { w: 1340, h: 1785, name: '轮播图 3:4' } : { w: 800, h: 800, name: '素材图 1:1' },
@@ -198,11 +264,6 @@ interface ImageCheck {
   reasons: string[]
 }
 
-/** 当前弹窗按哪种规格校验（kind 优先，回退到 carousel 布尔） */
-const pickKind = computed<'carousel' | 'material' | 'detail'>(() => {
-  if (props.kind) return props.kind
-  return props.carousel ? 'carousel' : 'material'
-})
 
 /** 提交前自检：尺寸/比例/体积，返回不通过的原因 */
 function validateImage(
@@ -502,7 +563,10 @@ async function toggle(item: ProductMaterialImage) {
   const url = item.imgUrl
   if (!url) return
   if (!sizeOk(item)) {
-    notifyError(new Error(`尺寸不符合要求：需 ≥${spec.value.minW}×${spec.value.minH}`))
+    // 对齐官网：选中不合格的图直接进裁剪器，而不是拒绝
+    const why = validateImage({ width: item.width, height: item.height, size: item.size }, pickKind.value)
+    notifyWarning(`${why.reasons.join('；')}，先裁剪`)
+    openCropper(item)
     return
   }
 
@@ -783,9 +847,8 @@ watch(
           <button
             type="button"
             class="picker-card__op"
-            :disabled="cropping === item.imgUrl"
-            @click.stop="onCrop(item)"
-          >{{ cropping === item.imgUrl ? '裁剪中' : '裁剪' }}</button>
+            @click.stop="openCropper(item)"
+          >裁剪</button>
           <button
             type="button"
             class="picker-card__op"
@@ -854,6 +917,15 @@ watch(
         确定{{ overLimit ? '（超出可选数量）' : '' }}
       </el-button>
     </template>
+
+    <ImageCropper
+      v-model="cropVisible"
+      :src="cropSrc"
+      :proportions="cropProportions"
+      :initial-proportion="cropInitialProportion"
+      :title="`裁剪（${pickKind === 'detail' ? '详情图文' : spec.label}）`"
+      @cropped="onCropped"
+    />
   </el-dialog>
 </template>
 
