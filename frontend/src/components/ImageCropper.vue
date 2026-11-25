@@ -81,6 +81,14 @@ async function init() {
     })
   }
   try {
+    // 容器没排好版时 Cropper 的 imageData 会是空的，后面 getData() 直接抛
+    // "Cannot read properties of undefined (reading 'rotate')"
+    const stage = img.parentElement
+    if (!stage || stage.clientWidth < 10 || stage.clientHeight < 10) {
+      loading.value = false
+      notifyError(new Error(`裁剪区尺寸异常（${stage?.clientWidth ?? 0}×${stage?.clientHeight ?? 0}），请关闭后重试`))
+      return
+    }
     const ratios = props.proportions || {}
     const label = props.initialProportion || proportionKeys.value[0] || ''
     activeProportion.value = label
@@ -147,7 +155,12 @@ async function confirmCrop() {
         notifyError(new Error('裁剪失败：图片还没加载完成，请稍后重试'))
         return
       }
-      const d = cropper.getData(true) // true = 取整数、并限制在原图范围内
+      let d: { x: number; y: number; width: number; height: number } | null = null
+      try {
+        d = cropper.getData(true) // true = 取整数、并限制在原图范围内
+      } catch {
+        d = null // Cropper 的 imageData 没建好时会抛 rotate 相关错误
+      }
       if (!d || !(d.width > 0) || !(d.height > 0)) {
         const box = cropper.getCropBoxData()
         notifyError(
@@ -204,7 +217,8 @@ onBeforeUnmount(destroy)
   <el-dialog
     :model-value="modelValue"
     :title="title || '裁剪图片'"
-    width="min(720px, calc(100vw - 32px))"
+    width="720px"
+    style="max-width: calc(100vw - 32px)"
     :close-on-click-modal="false"
     destroy-on-close
     @opened="init"
@@ -245,10 +259,13 @@ onBeforeUnmount(destroy)
 
 <style scoped>
 .cropper__stage {
-  /* 必须给确定宽度：嵌套 dialog 里曾塌成 0，导致 Cropper 拿不到尺寸、canvas 为空 */
+  /* 用确定像素值：min() 在部分视口/缩放下会算出无效尺寸，
+     导致 Cropper 的 imageData 拿不到宽高，后续 getData() / getCroppedCanvas() 全崩 */
   width: 100%;
   min-width: 280px;
-  height: min(52vh, 420px);
+  height: 420px;
+  max-height: 52vh;
+  min-height: 220px;
   background: #111;
   border-radius: 6px;
   overflow: hidden;
