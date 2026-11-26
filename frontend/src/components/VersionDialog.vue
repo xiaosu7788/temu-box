@@ -44,6 +44,10 @@ function parts(value: string) {
 }
 
 const updateAvailable = computed(() => {
+  // 边车按「远程 HEAD 提交」判断，比版本号准：
+  // 同一个版本号下可能已经堆了若干提交（修 bug 一般不会每次都改 VERSION）
+  if (snapshot.value?.project?.update_available) return true
+  // 边车不可用或还没拉取远端时，退回版本号比较
   const remote = remoteVersion.value
   if (!remote || !currentVersion.value) return false
   const local = parts(currentVersion.value)
@@ -74,7 +78,12 @@ const banner = computed(() => {
     return { tone: 'failed', title: '更新失败', desc: job.value.message || '展开下方日志查看原因' }
   }
   if (updateAvailable.value) {
-    return { tone: 'new', title: `发现新版本: v${remoteVersion.value}`, desc: snapshot.value?.project.remote.subject || '' }
+    const behind = snapshot.value?.project.behind || 0
+    return {
+      tone: 'new',
+      title: behind ? `发现新版本：${behind} 个提交待更新` : `发现新版本: v${remoteVersion.value}`,
+      desc: snapshot.value?.project.remote.subject || '',
+    }
   }
   // 能读到远端版本且不比当前新 → 明确告诉用户「已是最新」，不要留空
   if (remoteVersion.value && remoteVersion.value === currentVersion.value) {
@@ -199,14 +208,16 @@ async function load(manual = false) {
     if (!updaterEnabled.value) notifyWarning('未启用一键更新，仅能查看当前版本')
     else if (staleSidecar.value) notifyWarning('边车版本过旧，请在服务器执行 ./scripts/enable-updater.sh')
     else if (!remoteVersion.value) notifyWarning('读不到远端版本，请检查服务器网络')
-    else if (updateAvailable.value) notifySuccess(`发现新版本 v${remoteVersion.value}`)
-    else notifySuccess(`已是最新版本 v${currentVersion.value}`)
+    else if (updateAvailable.value) {
+      const behind = snapshot.value?.project?.behind || 0
+      notifySuccess(behind ? `发现 ${behind} 个新提交，可更新` : '发现可更新的提交')
+    } else notifySuccess(`已是最新版本 v${currentVersion.value}`)
   }
 }
 
 async function startUpdate() {
   const confirmed = await confirmAction(
-    `将执行：备份数据 → 拉取代码 → 拉取镜像 → 重启后端与前端 → 健康检查。目标版本：v${remoteVersion.value}。期间网站会短暂中断 1-2 分钟。`,
+    `将执行：备份数据 → 拉取代码 → 拉取镜像 → 重启后端与前端 → 健康检查。\n目标：${snapshot.value?.project.remote.subject || '最新提交'}${remoteVersion.value !== currentVersion.value ? `（v${remoteVersion.value}）` : ''}。\n期间网站会短暂中断 1-2 分钟。`,
     '确认更新到最新版本',
   )
   if (!confirmed) return
