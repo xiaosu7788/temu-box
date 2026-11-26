@@ -1400,10 +1400,16 @@ class Product {
           },
           productSkuMultiPackReq: multiPackReq,
           // ⚠️ 库存字段是 targetStockAvailable
+          // ⚠️ bridge 补丁：上游给每个仓库都填同一个 stock（总库存 600 + 3 个仓 = 每仓 600，
+          //    实际总库存变 1800）。这里优先用 form.stockPerWarehouse 按仓拆分，
+          //    没有该字段时才退回上游行为。
           productSkuStockQuantityReq: {
             warehouseStockQuantityReqs: whIds.map((w) => ({
               warehouseId: w,
-              targetStockAvailable: stock,
+              targetStockAvailable:
+                form.stockPerWarehouse && form.stockPerWarehouse[w] != null
+                  ? Math.max(0, Math.floor(Number(form.stockPerWarehouse[w]) || 0))
+                  : stock,
             })),
           },
           productSkuAccessoriesReq: {

@@ -32,6 +32,7 @@ temu-ops 的上游 `ops_server.js` 是**单账号单例**（模块级 `const ops
 | 16 | `server.js` | 无 `/kefu/connect` | 新增 `POST /kefu/connect`（建立/恢复客服会话，拿 `receptionId`）；`/kefu/wake` 支持 `toolId`/`autoConnect` |
 | 17 | `lib/lifecycle.js` + `server.js` | 无上新生命周期接口 | 新增 `lib/lifecycle.js`（robin `searchForSemiSupplier` / 站点 / 快捷筛选 / 处罚 / 下架原因）与 `GET /goods/lifecycle[/all|/sites|/filters]`；商品查询改用该接口做数据源 |
 | 18 | `server.js` | 无 `/product/upload-many` | 新增批量上传路由，对齐官网 5 步流程（批量 MD5 → queryByMd5 查重 → 分流 → 并发 4）；上游 `material.uploadMany()` 已封装，这里只做参数转换 |
+| 19 | `lib/product.js` | `warehouseStockQuantityReqs` 给每个仓库都填同一个 `stock`（总 600 + 3 仓 = 每仓 600） | 优先按 `form.stockPerWarehouse` 逐仓填，没有该字段才退回上游行为 |
 
 ## 接口
 

@@ -376,7 +376,10 @@ def normalize_form(raw: dict) -> dict:
         cleaned = [str(x).strip() for x in wh_ids if str(x).strip()]
         if cleaned:
             form["warehouseIds"] = cleaned
-    # 多仓库存：{warehouseId: 数量}，不传则每个仓都等分总库存
+    # 多仓库存：{warehouseId: 数量}。
+    # ⚠️ 不传的话上游 buildBody 会把「总库存」原样填到每一个仓库
+    # （总 600 + 3 个仓 = 每仓 600，实际总库存变 1800），
+    # 所以前端一定要把 stockPerWarehouse 传全。
     if isinstance(raw.get("stockPerWarehouse"), dict) and raw["stockPerWarehouse"]:
         per = {}
         for wid, qty in raw["stockPerWarehouse"].items():
