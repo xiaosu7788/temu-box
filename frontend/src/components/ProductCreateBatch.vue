@@ -244,6 +244,11 @@ async function applyTemplate(card: BatchCard, templateId: number | null) {
     }
     if (typeof v.skuPrice === 'number') card.skuPrice = v.skuPrice
     if (typeof v.stock === 'number') card.stock = v.stock
+    // 站点与发货仓：模板里存过就要带过来，否则用户得每张卡重新选一遍
+    if (v.siteId) card.siteId = Number(v.siteId)
+    if (Array.isArray(v.warehouseIds) && v.warehouseIds.length) {
+      card.warehouseIds = v.warehouseIds.map(String)
+    }
   } catch (error) {
     notifyError(error)
   } finally {
@@ -301,8 +306,8 @@ function buildItem(card: BatchCard) {
     decorationImages: [...card.decorationImages],
     skuPrice: card.skuPrice,
     stock: card.stock,
-    // 模板里存的 sizeTemplateId 是蓝本，提交要用 sizeTemplateSourceId
-    sizeTemplateSourceId: v.sizeTemplateId || undefined,
+    // 模板里存的是 sizeTemplateSourceId（蓝本），sizeTemplateId 是旧字段名
+    sizeTemplateSourceId: v.sizeTemplateSourceId || v.sizeTemplateId || undefined,
     generalSizeType: v.generalSizeType || undefined,
   }
 }
@@ -450,6 +455,9 @@ async function saveCardEditor() {
   if (next.weight) next.weight = normalizeWeightPayload(next.weight)
   card.templateValues = next
   if (next.siteId) card.siteId = Number(next.siteId)
+  if (Array.isArray(next.warehouseIds) && next.warehouseIds.length) {
+    card.warehouseIds = next.warehouseIds.map(String)
+  }
   if (next.freightTemplateId) card.freightTemplateId = String(next.freightTemplateId)
   card.templateName = templates.value.find((x) => x.id === card.templateId)?.name || card.templateName
   editCardVisible.value = false

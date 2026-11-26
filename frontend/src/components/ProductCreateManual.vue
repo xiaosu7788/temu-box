@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { Grid, Picture, Search } from '@element-plus/icons-vue'
 import MaterialPicker from './MaterialPicker.vue'
 import TemuCategoryPicker from './TemuCategoryPicker.vue'
@@ -925,6 +925,15 @@ async function applyFormTemplate(id: number) {
     const r = await getFormTemplate(id)
     const v = r.values as Record<string, any>
 
+    applyingTemplate.value = true
+
+    // 0. 经营站点：仓库与尺码组都依赖它，必须先切站点
+    if (v.siteId && Number(v.siteId) !== form.siteId) {
+      form.siteId = Number(v.siteId)
+      await nextTick()
+      await loadEnv() // 等新站点的仓库/尺码组就绪，再回填仓库
+    }
+
     // 1. 类目：变了就等模板加载完再填属性
     if (Array.isArray(v.catPath) && v.catPath.length) {
       const text = v.catPath.join('>')
@@ -967,7 +976,19 @@ async function applyFormTemplate(id: number) {
     if (v.skuPrice) form.skuPrice = Number(v.skuPrice)
     if (typeof v.stock === 'number') form.stock = v.stock
     if (Array.isArray(v.sizeVids) && v.sizeVids.length) form.sizeVids = v.sizeVids.map(Number)
-    if (v.sizeTemplateId) sizeTemplateId.value = Number(v.sizeTemplateId)
+    // 发货仓：必须在站点切换完成之后写，否则会被 siteId 的 watcher 清掉
+    if (Array.isArray(v.warehouseIds) && v.warehouseIds.length) {
+      form.warehouseIds = v.warehouseIds.map(String)
+    }
+    // 尺码表：buildForm 存的是 sizeTemplateSourceId（蓝本 id），sizeTemplateId 是旧字段名
+    const srcTpl = v.sizeTemplateSourceId ?? v.sizeTemplateId
+    if (srcTpl) {
+      sizeTemplateId.value = Number(srcTpl)
+      // 蓝本列表可能还没加载（依赖类目 + 站点），补一次
+      if (!sizeTemplates.value.some((x) => Number(x.businessId) === Number(srcTpl))) {
+        void loadSizeTemplates()
+      }
+    }
     if (v.generalSizeType) {
       const name = Object.keys(SIZE_TYPE_TO_GST).find((k) => SIZE_TYPE_TO_GST[k] === Number(v.generalSizeType))
       if (name) sizeTypeId.value = name
@@ -981,6 +1002,7 @@ async function applyFormTemplate(id: number) {
     notifyError(error)
   } finally {
     templateLoading.value = false
+    applyingTemplate.value = false
   }
 }
 
@@ -1185,13 +1207,16 @@ async function doCreate() {
   }
 }
 
+/** 套用模板期间为 true：此时站点是模板带来的，仓库也要跟着模板走，不能被 watcher 清空 */
+const applyingTemplate = ref(false)
+
 watch(
   () => form.siteId,
   () => {
     // 先清空：否则新站点数据回来前，下拉框仍渲染上一站点的仓库（名称查不到就变成 WH-xxx）
     featureGuard.value = true
     env.value = null
-    form.warehouseIds = []
+    if (!applyingTemplate.value) form.warehouseIds = []
     void loadEnv().finally(() => {
       featureGuard.value = false
     })
