@@ -186,6 +186,15 @@ function openCropper(item: ProductMaterialImage) {
 }
 
 function showCropper(item: ProductMaterialImage) {
+  // 原图比目标尺寸小：裁剪只会缩小选框，输出时必然要放大，画质会下降。
+  // 提前说清楚，别让用户裁完才发现图还是不达标
+  const tgt = targetSpec.value
+  if (item.width && item.height && (item.width < tgt.w || item.height < tgt.h)) {
+    notifyWarning(
+      `原图 ${item.width}×${item.height} 小于目标 ${tgt.w}×${tgt.h}，` +
+        `裁剪后会被放大，边缘可能发虚。建议换更大的原图。`,
+    )
+  }
   // 提前把图塞进浏览器缓存，弹窗打开时能立刻拿到已解码的图
   const pre = new Image()
   pre.src = item.imgUrl
@@ -231,9 +240,13 @@ async function onCropped(dataUrl: string, size: { width: number; height: number 
 }
 
 /** 目标规格（当前用途决定的裁切尺寸） */
-const targetSpec = computed(() =>
-  props.carousel ? { w: 1340, h: 1785, name: '轮播图 3:4' } : { w: 800, h: 800, name: '素材图 1:1' },
-)
+/** 裁剪输出尺寸：按当前口径取目标尺寸，裁完直接是合规图 */
+const targetSpec = computed(() => {
+  const kind = pickKind.value
+  if (kind === 'carousel') return { w: 1340, h: 1785, name: '轮播图 3:4' }
+  if (kind === 'goodsDetail') return { w: 1200, h: 1600, name: '详情图文' }
+  return { w: 800, h: 800, name: '素材图 1:1' }
+})
 
 /** 居中裁切为当前规格，生成一张新素材并选中 */
 async function onCrop(item: ProductMaterialImage) {
@@ -998,6 +1011,8 @@ watch(
     :proportions="cropProportions"
     :initial-proportion="cropInitialProportion"
     :title="`裁剪（${pickKind === 'goodsDetail' ? '详情图文' : spec.label}）`"
+    :target-width="targetSpec.w"
+    :target-height="targetSpec.h"
     @cropped="onCropped"
   />
 
