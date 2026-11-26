@@ -1142,6 +1142,15 @@ export interface UpdateProjectState {
   behind: number
   fast_forward: boolean
   update_available: boolean
+  /** 远端提交的 CI 构建状态：没构建完就更新会拉到旧镜像 */
+  ci?: {
+    status: string
+    conclusion: string
+    ready: boolean
+    failed?: boolean
+    url?: string
+    note?: string
+  }
   incoming: UpdateIncomingCommit[]
 }
 

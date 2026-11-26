@@ -59,8 +59,23 @@ const updateAvailable = computed(() => {
 })
 
 // 只有「发现有新版本 + 边车就绪 + 没有任务在跑」时才允许点升级
+// CI 还在构建镜像时不允许更新：那时 pull 到的还是旧镜像，版本号会变但功能不变
+const ciState = computed(() => snapshot.value?.project?.ci || null)
+const ciPending = computed(() => {
+  const s = ciState.value?.status || ''
+  return ['queued', 'in_progress', 'waiting', 'requested', 'pending'].includes(s)
+})
+const ciFailed = computed(() => Boolean(ciState.value?.failed))
+
 const canUpdate = computed(
-  () => updateAvailable.value && ready.value && !running.value && !starting.value && updaterEnabled.value,
+  () =>
+    updateAvailable.value &&
+    ready.value &&
+    !running.value &&
+    !starting.value &&
+    updaterEnabled.value &&
+    !ciPending.value &&
+    !ciFailed.value,
 )
 
 const updateLabel = computed(() => {
@@ -76,6 +91,20 @@ const banner = computed(() => {
   }
   if (job.value?.status === 'failed') {
     return { tone: 'failed', title: '更新失败', desc: job.value.message || '展开下方日志查看原因' }
+  }
+  if (ciFailed.value) {
+    return {
+      tone: 'failed',
+      title: '远端 CI 构建失败，镜像没有更新',
+      desc: ciState.value?.url ? `详见 ${ciState.value.url}` : '请先修好 CI 再更新',
+    }
+  }
+  if (updateAvailable.value && ciPending.value) {
+    return {
+      tone: 'running',
+      title: 'CI 正在构建镜像',
+      desc: '构建完成后才能更新；现在更新会拉到旧镜像（版本号变了但功能不变）',
+    }
   }
   if (updateAvailable.value) {
     const behind = snapshot.value?.project.behind || 0

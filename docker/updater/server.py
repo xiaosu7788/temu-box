@@ -236,7 +236,7 @@ ROLLBACK_FILE = "rollback.json"
 
 KIND_TITLES = {"update": "更新到最新版本", "rollback": "回滚到上一个版本"}
 KIND_STEPS = {
-    "update": ("检查版本", "备份数据", "拉取代码", "拉取镜像", "重启服务", "健康检查"),
+    "update": ("检查版本", "备份数据", "拉取代码", "等待镜像构建", "拉取镜像", "重启服务", "健康检查"),
     "rollback": ("读取回滚点", "恢复代码", "恢复镜像", "重启服务", "健康检查"),
 }
 
@@ -438,6 +438,80 @@ def fetch_remote() -> dict:
     return {"at": checked_at, "sha": sha, "subject": info.get("subject", ""), "date": info.get("date", ""), "error": None}
 
 
+CI_CACHE_SECONDS = 60
+_ci_cache: dict = {}
+_ci_lock = threading.Lock()
+
+
+def github_repo() -> str:
+    """从 origin 远程地址解析 owner/repo；解析不到返回空串。"""
+    code, out = git("remote", "get-url", "origin", timeout=15)
+    if code != 0 or not out.strip():
+        return ""
+    url = out.strip()
+    if url.endswith(".git"):
+        url = url[:-4]
+    if "github.com" not in url:
+        return ""
+    tail = url.split("github.com", 1)[1].lstrip(":/")
+    parts = [p for p in tail.split("/") if p]
+    return "/".join(parts[:2]) if len(parts) >= 2 else ""
+
+
+def check_ci_ready(sha: str) -> dict:
+    """查 GitHub Actions 是否已为该提交构建完成。
+
+    为什么需要：更新流程是「git pull → compose pull → up -d」，
+    而镜像由 CI 异步构建。如果在 CI 完成前就 pull，拿到的是旧镜像，
+    结果是「代码已更新、前端还是旧的」——版本号变了但功能没变。
+
+    返回 {"status": "completed|in_progress|queued|unknown|none", "conclusion": str, "ready": bool, "url": str}
+    """
+    if not sha:
+        return {"status": "unknown", "conclusion": "", "ready": True, "url": ""}
+
+    with _ci_lock:
+        cached = dict(_ci_cache)
+    if cached.get("sha") == sha and time.time() - float(cached.get("at") or 0) < CI_CACHE_SECONDS:
+        return cached.get("value") or {"status": "unknown", "conclusion": "", "ready": True, "url": ""}
+
+    repo = github_repo()
+    if not repo:
+        value = {"status": "unknown", "conclusion": "", "ready": True, "url": ""}
+    else:
+        url = f"https://api.github.com/repos/{repo}/actions/runs?head_sha={sha}&per_page=5"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "temu-box-updater",
+            "Accept": "application/vnd.github+json",
+        })
+        token = os.environ.get("UPDATER_GH_TOKEN", "").strip()
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            runs = data.get("workflow_runs") or []
+            if not runs:
+                value = {"status": "none", "conclusion": "", "ready": True, "url": ""}
+            else:
+                run = runs[0]
+                status = str(run.get("status") or "")
+                conclusion = str(run.get("conclusion") or "")
+                value = {
+                    "status": status,
+                    "conclusion": conclusion,
+                    "ready": status == "completed" and conclusion == "success",
+                    "url": str(run.get("html_url") or ""),
+                    "failed": status == "completed" and conclusion not in ("success", ""),
+                }
+        except Exception as exc:  # noqa: BLE001 - 查不到就当未知，不阻断更新
+            value = {"status": "unknown", "conclusion": "", "ready": True, "note": str(exc)[:120], "url": ""}
+
+    with _ci_lock:
+        _ci_cache.update({"sha": sha, "at": time.time(), "value": value})
+    return value
+
+
 def remote_state(busy: bool) -> dict:
     """远端提交信息，30 秒内复用；任务执行期间不 fetch，避免和更新流程抢仓库。"""
     with _cache_lock:
@@ -619,6 +693,8 @@ def status_snapshot() -> dict:
             "commit": local,
             "dirty": dirty,
             "remote": remote,
+            # 远端提交的 CI 构建状态：没构建完就点更新会拉到旧镜像
+            "ci": check_ci_ready(remote.get("sha") or ""),
             "behind": behind,
             "fast_forward": fast_forward,
             "update_available": bool(remote_sha) and remote_sha != local["sha"],
@@ -735,8 +811,42 @@ def do_update(job: Job) -> None:
         return
     after = commit_info("HEAD")
     job.add(f"当前版本：{after['short']} {after['subject']}")
-    # 4 拉取镜像
+
+    # 3.5 等镜像就绪：镜像由 CI 异步构建，没构建完就 pull 会拿到旧的，
+    #     结果是「代码已更新、前端还是旧包」——版本号变了但功能没变
     job.begin(4)
+    ci = check_ci_ready(remote_sha)
+    job.add(f"CI 状态：{ci.get('status') or 'unknown'}{('/' + ci['conclusion']) if ci.get('conclusion') else ''}")
+    if ci.get("failed"):
+        job.fail(
+            f"远端提交的 CI 构建失败（{ci.get('conclusion')}），镜像没有更新。"
+            f"{('详见 ' + ci['url']) if ci.get('url') else ''}",
+            step="等待镜像构建",
+        )
+        return
+    if ci.get("status") in ("queued", "in_progress", "waiting", "requested", "pending"):
+        job.add("CI 还在构建镜像，最多等待 10 分钟…")
+        deadline = time.time() + 600
+        while time.time() < deadline:
+            time.sleep(15)
+            ci = check_ci_ready(remote_sha)
+            job.add(f"CI 状态：{ci.get('status') or 'unknown'}")
+            if ci.get("ready") or ci.get("failed"):
+                break
+        if ci.get("failed"):
+            job.fail(
+                f"CI 构建失败（{ci.get('conclusion')}），镜像没有更新。"
+                f"{('详见 ' + ci['url']) if ci.get('url') else ''}",
+                step="等待镜像构建",
+            )
+            return
+        if not ci.get("ready"):
+            job.fail("等待 CI 构建超时（10 分钟）。请等 CI 完成后再点更新", step="等待镜像构建")
+            return
+        job.add("镜像已构建完成，继续拉取")
+
+    # 5 拉取镜像
+    job.begin(5)
     images = compose_images()
     running_before = {name: running_image_id(name) for name in PROJECT_SERVICES}
     tagged: dict = {}
@@ -772,15 +882,15 @@ def do_update(job: Job) -> None:
                  "容器仍在旧镜像上运行，可重试或回滚",
                  before=before["short"], after=after["short"])
         return
-    # 5 重启服务
-    job.begin(5)
+    # 6 重启服务
+    job.begin(6)
     profiles, services = compose_scope()
     job.add(f"维护服务：{'、'.join(services)}（updater 不在其中，不会重建自己）")
     if stream(job, compose("up", "-d", "--force-recreate", *services, profiles=profiles), timeout=UP_TIMEOUT) != 0:
         job.fail("重建服务失败，可在本页点击回滚", before=before["short"], after=after["short"])
         return
-    # 6 健康检查
-    job.begin(6)
+    # 7 健康检查
+    job.begin(7)
     healthy, report = wait_healthy(job)
     new_images = {name: image_state(images.get(name, "")).get("short", "") for name in PROJECT_SERVICES}
     detail = {
