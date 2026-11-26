@@ -104,20 +104,19 @@ function openPicker(index: number, field: 'images' | 'materialImgUrl' | 'decorat
 }
 
 /** 读 URL 图片的实际尺寸 */
+/**
+ * 读原图尺寸。
+ * ⚠️ 必须用原图 URL：之前套了 thumbUrl（?imageMogr2/thumbnail/x400），
+ * 拿到的自然是缩略图尺寸（1350×1800 会量成 300×400），
+ * 后面判「短边是否足够」就全错了。
+ */
 function loadImageSize(url: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve) => {
     const img = new Image()
     img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
     img.onerror = () => resolve({ width: 0, height: 0 })
-    img.src = thumbUrl(url)
+    img.src = url
   })
-}
-
-/** URL 的缩略图版本（CDN 支持 imageMogr2，避免拉原图只为量尺寸） */
-function thumbUrl(url: string): string {
-  if (!url) return ''
-  if (url.includes('?')) return url
-  return `${url}?imageMogr2/thumbnail/x400`
 }
 
 /**
