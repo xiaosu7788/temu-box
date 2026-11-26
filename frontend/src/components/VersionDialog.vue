@@ -76,6 +76,10 @@ const banner = computed(() => {
   if (updateAvailable.value) {
     return { tone: 'new', title: `发现新版本: v${remoteVersion.value}`, desc: snapshot.value?.project.remote.subject || '' }
   }
+  // 能读到远端版本且不比当前新 → 明确告诉用户「已是最新」，不要留空
+  if (remoteVersion.value && remoteVersion.value === currentVersion.value) {
+    return { tone: 'done', title: `已是最新版本 v${currentVersion.value}`, desc: snapshot.value?.project.commit.subject || '' }
+  }
   return null
 })
 
@@ -189,6 +193,15 @@ async function load(manual = false) {
   }
   loading.value = false
   checking.value = false
+  // 手动点「检查更新」要给明确反馈：没有新版本时界面本来什么都不显示，
+  // 用户会以为按钮没生效
+  if (manual) {
+    if (!updaterEnabled.value) notifyWarning('未启用一键更新，仅能查看当前版本')
+    else if (staleSidecar.value) notifyWarning('边车版本过旧，请在服务器执行 ./scripts/enable-updater.sh')
+    else if (!remoteVersion.value) notifyWarning('读不到远端版本，请检查服务器网络')
+    else if (updateAvailable.value) notifySuccess(`发现新版本 v${remoteVersion.value}`)
+    else notifySuccess(`已是最新版本 v${currentVersion.value}`)
+  }
 }
 
 async function startUpdate() {
