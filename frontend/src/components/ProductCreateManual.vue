@@ -761,23 +761,27 @@ function loadImageSize(url: string): Promise<{ width: number; height: number }> 
  * 首图 → 居中裁 800×800 作为素材图。
  * 尺寸不足时留空，由服务端 autoMaterialImg 兜底（它会再裁一次）。
  */
+/** 素材图统一输出边长 */
+const MATERIAL_SIDE = 1350
+
 async function autoCropMaterial(sourceUrl?: string) {
   const first = sourceUrl || form.images[0]
   if (!first || form.materialImgUrl) return
   if (!leafCatId.value) return
   const { width, height } = await loadImageSize(first)
-  // 1:1 能裁出的最大边长就是短边；平台下限 600，目标 1350
+  // 素材图一律输出 1350×1350：原图够大就居中裁 1350，不够则由服务端放大
   const side = Math.min(width, height)
   if (side < 600) {
     notifyWarning(`首图 ${width}×${height} 短边不足 600，无法生成合规素材图，请换一张`)
     return
   }
-  const target = Math.min(side, 1350)
+  // 从原图取的区域不能超过短边，否则 dx/dy 会越界
+  const cropSide = Math.min(side, MATERIAL_SIDE)
   materialCropping.value = true
   try {
-    const dx = Math.round((width - target) / 2)
-    const dy = Math.round((height - target) / 2)
-    const r = await cropMaterial(first, { width: target, height: target, dx, dy })
+    const dx = Math.round((width - cropSide) / 2)
+    const dy = Math.round((height - cropSide) / 2)
+    const r = await cropMaterial(first, { width: MATERIAL_SIDE, height: MATERIAL_SIDE, dx, dy })
     if (r.url) {
       form.materialImgUrl = r.url
       materialAuto.value = true

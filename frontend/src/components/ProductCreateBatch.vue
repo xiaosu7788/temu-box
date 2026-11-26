@@ -129,15 +129,16 @@ async function autoCropMaterialForCard(card: BatchCard, sourceUrl?: string) {
   if (!first || card.materialImgUrl) return
   try {
     const { width, height } = await loadImageSize(first)
+    // 一律输出 1350×1350：原图够大就居中裁，不够由服务端放大
     const side = Math.min(width, height)
     if (side < 600) {
       notifyWarning(`首图 ${width}×${height} 短边不足 600，无法生成合规素材图，请换一张`)
       return
     }
-    const target = Math.min(side, 1350)
-    const dx = Math.round((width - target) / 2)
-    const dy = Math.round((height - target) / 2)
-    const r = await cropMaterial(first, { width: target, height: target, dx, dy })
+    const cropSide = Math.min(side, 1350)
+    const dx = Math.round((width - cropSide) / 2)
+    const dy = Math.round((height - cropSide) / 2)
+    const r = await cropMaterial(first, { width: 1350, height: 1350, dx, dy })
     if (r.url) card.materialImgUrl = r.url
   } catch {
     // 自动裁失败就保持留空，交给服务端的 autoMaterialImg
