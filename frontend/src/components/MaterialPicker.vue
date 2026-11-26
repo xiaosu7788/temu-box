@@ -812,13 +812,6 @@ async function toggle(item: ProductMaterialImage) {
   const url = item.imgUrl
   if (!url) return
 
-  // 已选中 → 再点即取消（同一张图可能被点多次，一次去掉一张）
-  if (picked.value.includes(url)) {
-    const idx = picked.value.lastIndexOf(url)
-    picked.value = picked.value.filter((_, i) => i !== idx)
-    return
-  }
-
   if (!sizeOk(item)) {
     // 对齐官网：选中不合格的图直接进裁剪器，而不是拒绝
     const why = validateImage({ width: item.width, height: item.height, size: item.size }, pickKind.value)
@@ -1140,6 +1133,8 @@ watch(
             v-if="!isVideo(item) && sizeOk(item)"
             class="picker-check"
             :class="{ 'picker-check--on': orderOf(item.imgUrl) > 0 }"
+            :title="orderOf(item.imgUrl) > 0 ? '点击取消这一张' : ''"
+            @click.stop="orderOf(item.imgUrl) > 0 && removeOne(item.imgUrl)"
           >{{ orderOf(item.imgUrl) || '' }}</span>
 
         </div>
@@ -1607,7 +1602,7 @@ watch(
   font-size: 13px;
   font-weight: 600;
   line-height: 1;
-  pointer-events: none;
+  cursor: pointer;
   transition: background 0.12s;
 }
 
