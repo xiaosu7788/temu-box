@@ -766,19 +766,19 @@ async function autoCropMaterial(sourceUrl?: string) {
   if (!first || form.materialImgUrl) return
   if (!leafCatId.value) return
   const { width, height } = await loadImageSize(first)
-  if (width < 800 || height < 800) {
+  if (width < 1350 || height < 1350) {
     // 裁不出 800×800：素材图会留空，交给服务端 autoMaterialImg，
     // 但那样裁出来的边长 = min(宽,高)，可能低于 600 的下限
     notifyWarning(
-      `首图 ${width}×${height} 小于 800×800，无法自动生成合规素材图，请手动选一张 1:1 的图`,
+      `首图 ${width}×${height} 小于 1350×1350，无法自动生成合规素材图，请手动选一张 1:1 的图`,
     )
     return
   }
   materialCropping.value = true
   try {
-    const dx = Math.max(0, Math.round((width - 800) / 2))
-    const dy = Math.max(0, Math.round((height - 800) / 2))
-    const r = await cropMaterial(first, { width: 800, height: 800, dx, dy })
+    const dx = Math.max(0, Math.round((width - 1350) / 2))
+    const dy = Math.max(0, Math.round((height - 1350) / 2))
+    const r = await cropMaterial(first, { width: 1350, height: 1350, dx, dy })
     if (r.url) {
       form.materialImgUrl = r.url
       materialAuto.value = true

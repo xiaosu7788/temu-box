@@ -243,9 +243,9 @@ async function onCropped(dataUrl: string, size: { width: number; height: number 
 /** 裁剪输出尺寸：按当前口径取目标尺寸，裁完直接是合规图 */
 const targetSpec = computed(() => {
   const kind = pickKind.value
-  if (kind === 'carousel') return { w: 1340, h: 1785, name: '轮播图 3:4' }
+  if (kind === 'carousel') return { w: 1350, h: 1800, name: '轮播图 3:4' }
   if (kind === 'goodsDetail') return { w: 1200, h: 1600, name: '详情图文' }
-  return { w: 800, h: 800, name: '素材图 1:1' }
+  return { w: 1350, h: 1350, name: '素材图 1:1' }
 })
 
 /** 居中裁切为当前规格，生成一张新素材并选中 */
