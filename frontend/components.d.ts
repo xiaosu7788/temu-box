@@ -75,6 +75,7 @@ declare module 'vue' {
     RegionPicker: typeof import('./src/components/RegionPicker.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    StockDialog: typeof import('./src/components/StockDialog.vue')['default']
     StoreGoodsPanel: typeof import('./src/components/StoreGoodsPanel.vue')['default']
     StoreKefuActionsPanel: typeof import('./src/components/StoreKefuActionsPanel.vue')['default']
     StoreKefuPanel: typeof import('./src/components/StoreKefuPanel.vue')['default']

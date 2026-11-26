@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { Grid, Picture, Search } from '@element-plus/icons-vue'
 import MaterialPicker from './MaterialPicker.vue'
+import StockDialog from './StockDialog.vue'
 import TemuCategoryPicker from './TemuCategoryPicker.vue'
 import {
   createProduct,
@@ -923,10 +924,24 @@ function applyBatchStock() {
   for (const id of form.warehouseIds) stockPerWarehouse[id] = v
 }
 
-/** 确认：把各仓库存合计写回总库存 */
-function confirmStockDialog() {
-  form.stock = stockTotal.value
+/** StockDialog 确认：把各仓库存合计写回总库存 */
+function onStockConfirm(total: number) {
+  form.stock = total
   stockDialogVisible.value = false
+}
+
+/* ---------- 编辑模板里的填写库存 ---------- */
+const editTplStockDialog = ref(false)
+const editTplStockPerWarehouse = reactive<Record<string, number>>({})
+const editTplWarehouseIds = ref<string[]>([])
+
+const editTplStockTotal = computed(() =>
+  editTplWarehouseIds.value.reduce((s, id) => s + (Number(editTplStockPerWarehouse[id]) || 0), 0),
+)
+
+function onEditTplStockConfirm(total: number) {
+  editTplValues.value.stock = total
+  editTplStockDialog.value = false
 }
 
 /** 打开库存分布弹窗：按当前仓库初始化 */
@@ -1133,6 +1148,12 @@ async function openEditTemplate(tpl: { id: number; name: string; note: string })
       editTplSites.value = await getProductSites().catch(() => [])
     }
     editTplEnv.value = await getProductEnv(editTplValues.value.siteId || undefined).catch(() => null)
+    // 发货仓与各仓库存：模板里存过就带进「填写库存」弹窗
+    editTplWarehouseIds.value = Array.isArray(v.warehouseIds) ? v.warehouseIds.map(String) : []
+    Object.keys(editTplStockPerWarehouse).forEach((k) => delete editTplStockPerWarehouse[k])
+    if (v.stockPerWarehouse && typeof v.stockPerWarehouse === 'object') {
+      Object.assign(editTplStockPerWarehouse, v.stockPerWarehouse)
+    }
     const catId = editTplCatPath.value[editTplCatPath.value.length - 1]
     editTplSizeTree.value = {}
     editTplSizeStandard.value = ''
@@ -1216,6 +1237,11 @@ async function confirmEditTemplate() {
       sizeTemplateSourceId: editTplSizeTplId.value || undefined,
       sizeTemplateId: editTplSizeTplId.value || undefined,
       generalSizeType: SIZE_TYPE_TO_GST[editTplSizeType.value] || undefined,
+      // 发货仓与各仓库存也要存，否则套用模板时库存没了
+      warehouseIds: [...editTplWarehouseIds.value],
+      stockPerWarehouse: { ...editTplStockPerWarehouse },
+      // 总库存取明细合计，和明细保持一致
+      stock: editTplStockTotal.value,
     }
     // 编辑弹窗改的是 cm/g，保存前必须按它重算平台单位
     if (nextForm.volume) nextForm.volume = normalizeVolumePayload(nextForm.volume as Record<string, unknown>)
@@ -1656,7 +1682,11 @@ onMounted(async () => {
         </el-form-item>
 
         <el-form-item label="库存">
-          <el-input-number v-model="editTplValues.stock" :min="0" :max="999999" class="pcreate__attrctl" controls-position="right" />
+          <span class="pcreate__stocknum">{{ editTplStockTotal }}</span>
+          <el-button type="primary" plain size="small" :disabled="!editTplWarehouseIds.length" @click="editTplStockDialog = true">
+            填写库存
+          </el-button>
+          <span class="pcreate__meta">按发货仓分别填写，合计即为总库存</span>
         </el-form-item>
       </el-form>
 
@@ -2296,112 +2326,33 @@ onMounted(async () => {
       </el-form>
     </el-card>
 
+    <!-- 编辑模板：填写库存 -->
+    <StockDialog
+      v-model="editTplStockDialog"
+      :warehouses="envWarehouses"
+      :warehouse-ids="editTplWarehouseIds"
+      :stock-per-warehouse="editTplStockPerWarehouse"
+      :site-name="currentSiteName"
+      :color-label="colorLabel"
+      :size-label="sizeLabel"
+      @update:warehouse-ids="(v: string[]) => (editTplWarehouseIds = v)"
+      @update:stock-per-warehouse="(v: Record<string, number>) => Object.assign(editTplStockPerWarehouse, v)"
+      @confirm="onEditTplStockConfirm"
+    />
+
     <!-- 填写库存 -->
-    <el-dialog
+    <StockDialog
       v-model="stockDialogVisible"
-      title="填写库存"
-      width="min(1100px, calc(100vw - 32px))"
-      align-center
-      class="stockdlg"
-    >
-      <div class="stockdlg__tip">
-        <p>1、创建时库存非必填，若填写，请确保该商品有实物库存且库存数准确；</p>
-        <p>2、若不填写库存，创建后可在【商品列表-操作栏】点击【修改库存】及时完善；</p>
-        <p>3、商品发布时请务必保证库存准确，商家不得因缺货、超卖等而漏发、错发，否则将按商家协议、Temu商家规则等规定处理。</p>
-      </div>
-
-      <div class="stockdlg__section">
-        <div class="stockdlg__label">站点与发货仓关系</div>
-        <div class="stockdlg__body">
-          <div class="stockdlg__row">
-            <span class="stockdlg__hint">我的模板</span>
-            <span class="stockdlg__muted">暂无模板，填写以下信息并点击右侧按钮即可保存模板</span>
-            <el-button size="small" class="stockdlg__save">保存为模板</el-button>
-          </div>
-          <div class="stockdlg__row">
-            <span class="stockdlg__field">覆盖站点</span>
-            <span class="stockdlg__site">{{ currentSiteName }}</span>
-            <span class="stockdlg__req">* 卖家自发货仓</span>
-            <span class="stockdlg__muted">多发货仓时，订单就近发货</span>
-            <el-button size="small" link type="primary" @click="loadEnv(true)">刷新</el-button>
-          </div>
-          <div class="stockdlg__row">
-            <span class="stockdlg__field">{{ currentSiteName }}</span>
-            <el-select
-              v-model="form.warehouseIds"
-              multiple
-              collapse-tags
-              collapse-tags-tooltip
-              clearable
-              filterable
-              placeholder="选择发货仓"
-              class="stockdlg__whselect"
-            >
-              <el-option
-                v-for="w in envWarehouses"
-                :key="w.warehouseId"
-                :label="w.warehouseName || w.warehouseId"
-                :value="w.warehouseId"
-              />
-            </el-select>
-          </div>
-        </div>
-      </div>
-
-      <div class="stockdlg__section">
-        <div class="stockdlg__label">库存</div>
-        <div class="stockdlg__body">
-          <div class="stockdlg__row">
-            <span class="stockdlg__field">当前库存</span>
-            <el-input-number v-model="stockBatchValue" :min="0" :max="999999" controls-position="right" class="stockdlg__batchinput" />
-            <el-button size="small" :disabled="!form.warehouseIds.length" @click="applyBatchStock">批量填写</el-button>
-          </div>
-
-          <el-table :data="stockRows" size="small" class="stockdlg__table" empty-text="请先选择发货仓">
-            <el-table-column label="颜色" width="110">
-              <template #default>
-                {{ colorLabel }}
-              </template>
-            </el-table-column>
-            <el-table-column label="尺码" width="110">
-              <template #default>
-                <div>{{ sizeLabel }}</div>
-                <el-tag v-if="!form.sizeVids.length" size="small" type="info">当前 sku</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="发货仓" width="120">
-              <template #default="{ row }">{{ row.name }}</template>
-            </el-table-column>
-            <el-table-column label="当前库存">
-              <template #header>
-                <div>当前库存</div>
-                <div class="stockdlg__colhint">（选填，若填写请确保库存数准确）</div>
-              </template>
-              <template #default="{ row }">
-                <el-input-number
-                  :model-value="stockPerWarehouse[row.id] || 0"
-                  :min="0"
-                  :max="999999"
-                  size="small"
-                  controls-position="right"
-                  class="stockdlg__input"
-                  @update:model-value="(v: number | undefined) => (stockPerWarehouse[row.id] = v ?? 0)"
-                />
-              </template>
-            </el-table-column>
-            <el-table-column label="覆盖站点" width="120">
-              <template #default>{{ currentSiteName }}</template>
-            </el-table-column>
-          </el-table>
-        </div>
-      </div>
-
-      <template #footer>
-        <span class="stockdlg__total">合计 {{ stockTotal }}</span>
-        <el-button @click="stockDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="confirmStockDialog">确认</el-button>
-      </template>
-    </el-dialog>
+      :warehouses="envWarehouses"
+      :warehouse-ids="form.warehouseIds"
+      :stock-per-warehouse="stockPerWarehouse"
+      :site-name="currentSiteName"
+      :color-label="colorLabel"
+      :size-label="sizeLabel"
+      @update:warehouse-ids="(v: string[]) => (form.warehouseIds = v)"
+      @update:stock-per-warehouse="(v: Record<string, number>) => Object.assign(stockPerWarehouse, v)"
+      @confirm="onStockConfirm"
+    />
 
     <!-- 提交 -->
     <div v-if="tmpl" class="pcreate__submit">

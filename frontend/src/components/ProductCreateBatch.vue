@@ -44,6 +44,8 @@ interface BatchCard {
   /** 站点与发货仓：和手动创建一样，每张卡片独立 */
   siteId: number
   warehouseIds: string[]
+  /** 各仓库存 {warehouseId: qty}；stock 只是它的合计 */
+  stockPerWarehouse: Record<string, number>
   freightTemplateId: string
 }
 
@@ -220,6 +222,7 @@ function makeCard(): BatchCard {
     selected: false,
     siteId: 100,
     warehouseIds: [],
+    stockPerWarehouse: {},
     freightTemplateId: '',
   }
 }
@@ -293,6 +296,11 @@ async function applyTemplate(card: BatchCard, templateId: number | null) {
     if (Array.isArray(v.warehouseIds) && v.warehouseIds.length) {
       card.warehouseIds = v.warehouseIds.map(String)
     }
+    // 模板里存了各仓库存就带过来
+    if (v.stockPerWarehouse && typeof v.stockPerWarehouse === 'object') {
+      card.stockPerWarehouse = { ...v.stockPerWarehouse }
+      card.stock = cardStockTotal(card)
+    }
   } catch (error) {
     notifyError(error)
   } finally {
@@ -350,10 +358,53 @@ function buildItem(card: BatchCard) {
     decorationImages: [...card.decorationImages],
     skuPrice: card.skuPrice,
     stock: card.stock,
+    // 多仓库存必须逐仓传，否则上游会把总数填到每个仓库（每仓 600 的坑）
+    stockPerWarehouse: { ...card.stockPerWarehouse },
     // 模板里存的是 sizeTemplateSourceId（蓝本），sizeTemplateId 是旧字段名
     sizeTemplateSourceId: v.sizeTemplateSourceId || v.sizeTemplateId || undefined,
     generalSizeType: v.generalSizeType || undefined,
   }
+}
+
+/* ---------- 填写库存弹窗 ---------- */
+const stockDialogVisible = ref(false)
+const stockDialogIndex = ref(-1)
+const stockDlgWarehouses = ref<Array<{ warehouseId: string; warehouseName: string }>>([])
+/** 按站点缓存仓库列表，避免每次开弹窗都请求 */
+const cardEnvMap = ref<Record<number, Array<{ warehouseId: string; warehouseName: string }>>>({})
+
+function cardStockTotal(card: BatchCard): number {
+  return card.warehouseIds.reduce((s, id) => s + (Number(card.stockPerWarehouse[id]) || 0), 0)
+}
+
+async function ensureCardEnv(siteId: number) {
+  if (cardEnvMap.value[siteId]) return cardEnvMap.value[siteId]
+  try {
+    const e = await getProductEnv(siteId)
+    const list = ((e as { warehouses?: Array<{ warehouseId: string; warehouseName: string }> })?.warehouses || [])
+      .map((w) => ({ warehouseId: w.warehouseId, warehouseName: w.warehouseName || w.warehouseId }))
+    cardEnvMap.value[siteId] = list
+    return list
+  } catch {
+    cardEnvMap.value[siteId] = []
+    return []
+  }
+}
+
+/** 打开某张卡片的填写库存弹窗 */
+async function openStockDialog(index: number) {
+  const card = cards.value[index]
+  if (!card) return
+  stockDialogIndex.value = index
+  stockDlgWarehouses.value = await ensureCardEnv(card.siteId)
+  stockDialogVisible.value = true
+}
+
+/** 弹窗确认：把明细合计写回 card.stock */
+function onStockConfirm(total: number) {
+  const card = cards.value[stockDialogIndex.value]
+  if (card) card.stock = total
+  stockDialogVisible.value = false
 }
 
 /* ---------- 单卡编辑逻辑 ---------- */
@@ -712,7 +763,10 @@ onUnmounted(stopPolling)
           <el-form-item label="价格 / 库存">
             <div class="batch__row">
               <el-input-number v-model="card.skuPrice" :min="0.01" :max="999999" :precision="2" controls-position="right" />
-              <el-input-number v-model="card.stock" :min="0" :max="999999" controls-position="right" />
+              <span class="batch__stocknum">{{ cardStockTotal(card) }}</span>
+              <el-button size="small" plain type="primary" :disabled="!card.warehouseIds.length" @click="openStockDialog(i)">
+                填写库存
+              </el-button>
             </div>
           </el-form-item>
           <el-form-item label="轮播图" required>
@@ -1036,6 +1090,20 @@ onUnmounted(stopPolling)
       @confirm="onPick"
     />
   </div>
+
+  <StockDialog
+    v-if="stockDialogIndex >= 0 && cards[stockDialogIndex]"
+    v-model="stockDialogVisible"
+    :warehouses="stockDlgWarehouses"
+    :warehouse-ids="cards[stockDialogIndex].warehouseIds"
+    :stock-per-warehouse="cards[stockDialogIndex].stockPerWarehouse"
+    :site-name="String(cards[stockDialogIndex].siteId)"
+    :color-label="cards[stockDialogIndex].colorVid ? String(cards[stockDialogIndex].colorVid) : ''"
+    :size-label="'当前 sku'"
+    @update:warehouse-ids="(v: string[]) => (cards[stockDialogIndex].warehouseIds = v)"
+    @update:stock-per-warehouse="(v: Record<string, number>) => (cards[stockDialogIndex].stockPerWarehouse = v)"
+    @confirm="onStockConfirm"
+  />
 </template>
 
 <style scoped>
