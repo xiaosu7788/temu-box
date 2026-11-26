@@ -20,7 +20,7 @@ const props = defineProps<{
    *   material 素材 1:1 / 5MB / 短边≥600
    *   detail   详情图文 480×480 / 3MB / 宽高比 0.5~2（官网 goodsLayerDecorationReqs）
    */
-  kind?: 'carousel' | 'material' | 'detail'
+  kind?: 'carousel' | 'material' | 'goodsDetail'
   /** 已选中的 URL */
   selected?: string[]
 }>()
@@ -52,11 +52,27 @@ const removingId = ref<number | null>(null)
 const multiple = computed(() => !!props.carousel)
 
 /** 规格要求（官网：轮播 3:4 宽>1340 高>1785；素材 1:1 >800） */
-const spec = computed(() =>
-  props.carousel
-    ? { minW: 1340, minH: 1785, ratio: '3:4', maxCount: 10, label: '轮播图' }
-    : { minW: 800, minH: 800, ratio: '1:1', maxCount: 1, label: '素材图' },
-)
+/** 当前口径的规格摘要（给标题、计数、提示文案用；判定逻辑在 validateImage） */
+const spec = computed(() => {
+  const kind = pickKind.value
+  const limits =
+    kind === 'carousel' ? UPLOAD_LIMITS.carousel
+      : kind === 'goodsDetail' ? UPLOAD_LIMITS.goodsDetail
+        : UPLOAD_LIMITS.material
+  const maxCount = kind === 'goodsDetail' ? 20 : kind === 'carousel' ? 10 : 1
+  const label = kind === 'carousel' ? '轮播图' : kind === 'goodsDetail' ? '详情图文' : '素材图'
+  const ratioLabel = 'ratioRange' in limits
+    ? `${limits.ratioRange[0]}~${limits.ratioRange[1]}`
+    : (limits as { label: string }).label
+  return {
+    minW: limits.minWidth,
+    minH: limits.minHeight,
+    maxSizeMB: 'maxSizeMB' in limits ? limits.maxSizeMB : UPLOAD_LIMITS.maxImageSizeMB,
+    ratioLabel,
+    maxCount,
+    label,
+  }
+})
 
 /** 该图是否满足当前规格（接口没给宽高时视为可用） */
 const isVideo = (item: ProductMaterialImage) => Number(item.materialType) === 0
@@ -123,7 +139,7 @@ const compressing = ref<string | null>(null)
 const cropping = ref<string | null>(null)
 
 /** 当前弹窗按哪种规格校验（kind 优先，回退到 carousel 布尔） */
-const pickKind = computed<'carousel' | 'material' | 'detail'>(() => {
+const pickKind = computed<'carousel' | 'material' | 'goodsDetail'>(() => {
   if (props.kind) return props.kind
   return props.carousel ? 'carousel' : 'material'
 })
@@ -138,7 +154,7 @@ const cropProportions = computed<Record<string, number[]>>(() => {
   // 用 Object.assign 而不是三元返回不同键的对象：
   // 后者会被 TS 推断成「键可有可无」的联合类型，不满足 Record<string, number[]>
   const out: Record<string, number[]> = {}
-  if (pickKind.value === 'detail') {
+  if (pickKind.value === 'goodsDetail') {
     Object.assign(out, {
       '1:1': [1, 1], '3:4': [3, 4], '4:3': [4, 3],
       '9:16': [9, 16], '16:9': [16, 9], '2:1': [2, 1], '4:1': [4, 1],
@@ -278,22 +294,25 @@ const MAX_IMAGE_SIZE = 5 * MB
  * 官网前端 beforeUpload 的三道校验（体积 / 短边 / 比例）。
  */
 /**
- * 与上游 temu-ops lib/material.js 的 UPLOAD_LIMITS 保持一致。
+ * 与上游 temu-ops 1.3.14 的 UPLOAD_LIMITS 保持一致。
  *
- * ⚠️ 比例容差是「像素」不是百分比（官网 _cdn_9255 的 tn()）：
- *      Math.abs(height - width / ratio) <= (ratio === 3/4 ? 10 : 0)
- *    即 3:4 允许 ±10 像素，1:1 必须严格相等。
- *    之前写成 ±10%（ratioTolerance: 0.1）会把 800×801 判成合格，实际提交会被平台拒绝。
+ * ⚠️ 规格分四层，别混（上游 IMAGE_PIPELINE.md §11.3）：
+ *   ① 选文件前置：5MB / 短边 600 / 3:4 或 1:1   —— 商品页 beforeUpload
+ *   ② 轮播图：    **2MB / 宽 >1340 / 高 >1785 / 3:4** —— 素材中心轮播位
+ *   ③ 详情图：    3MB / ≥480×480 / 宽高比 0.5~2  —— 素材中心详情位
+ *   ④ 素材图：    5MB / ≥600×600 / 1:1
+ * 之前把 ① 当成 ② 用，导致 2.5MB 的图在轮播位被放行、到平台才拒。
  */
 const UPLOAD_LIMITS = {
-  maxImageSize: MAX_IMAGE_SIZE,
+  /** 选文件硬门槛（MB） */
+  maxImageSizeMB: 5,
   minImageSide: 600,
-  ratioFloat: 10, // 仅 3:4 使用
+  /** 比例容差是「像素」不是百分比：3:4 允许 ±10px，其它 ±0 */
+  ratioFloat: 10,
   ratioFloatOther: 0,
-  carousel: { ratio: [3, 4], label: '3:4' },
-  material: { ratio: [1, 1], label: '1:1' },
-  // 详情图文（goodsLayerDecorationReqs）的固定规格：480×480、3MB、宽高比 0.5~2
-  detail: { minWidth: 480, minHeight: 480, maxSize: 3 * 1024 * 1024, ratioRange: [0.5, 2], label: '1:2~2:1' },
+  carousel: { maxSizeMB: 2, minWidth: 1340, minHeight: 1785, ratio: [3, 4], label: '3:4' },
+  goodsDetail: { maxSizeMB: 3, minWidth: 480, minHeight: 480, ratioRange: [0.5, 2], label: '0.5~2' },
+  material: { maxSizeMB: 5, minWidth: 600, minHeight: 600, ratio: [1, 1], label: '1:1' },
 }
 
 interface ImageCheck {
@@ -302,53 +321,56 @@ interface ImageCheck {
 }
 
 
-/** 提交前自检：尺寸/比例/体积，返回不通过的原因 */
+/** 校验口径：与上游 validateImage 的 kind 同名 */
+type PickKind = 'carousel' | 'material' | 'goodsDetail'
+
+/** 提交前自检：尺寸/比例/体积，返回不通过的原因（对齐上游 validateImage） */
 function validateImage(
   img: { width?: number; height?: number; size?: number; name?: string },
-  kind: 'carousel' | 'material' | 'detail',
+  kind: PickKind,
 ): ImageCheck {
   const reasons: string[] = []
   const w = Number(img.width) || 0
   const h = Number(img.height) || 0
   const size = Number(img.size) || 0
 
-  if (kind === 'detail') {
-    const spec = UPLOAD_LIMITS.detail
-    if (size > spec.maxSize) reasons.push(`${(size / MB).toFixed(2)}MB 超过 3MB`)
-    if (w && h) {
-      if (w < spec.minWidth || h < spec.minHeight) {
-        reasons.push(`尺寸 ${w}×${h} 小于 ${spec.minWidth}×${spec.minHeight}`)
-      }
-      const ratio = w / h
-      if (ratio < spec.ratioRange[0] || ratio > spec.ratioRange[1]) {
-        reasons.push(`宽高比 ${ratio.toFixed(2)} 超出 ${spec.label}`)
-      }
-    } else {
-      reasons.push('读不到图片尺寸')
-    }
+  const spec =
+    kind === 'carousel'
+      ? UPLOAD_LIMITS.carousel
+      : kind === 'goodsDetail'
+        ? UPLOAD_LIMITS.goodsDetail
+        : UPLOAD_LIMITS.material
+
+  // ① 体积（各层上限不同：轮播 2MB、详情 3MB、素材 5MB）
+  const maxMB = 'maxSizeMB' in spec ? spec.maxSizeMB : UPLOAD_LIMITS.maxImageSizeMB
+  if (size && size > maxMB * MB) {
+    reasons.push(`体积 ${(size / MB).toFixed(2)}MB 超过上限 ${maxMB}MB`)
+  }
+
+  if (!w || !h) {
+    reasons.push('读不到图片尺寸')
     return { ok: reasons.length === 0, reasons }
   }
 
-  const spec = kind === 'carousel' ? UPLOAD_LIMITS.carousel : UPLOAD_LIMITS.material
-  const tol = kind === 'carousel' ? UPLOAD_LIMITS.ratioFloat : UPLOAD_LIMITS.ratioFloatOther
+  // ② 尺寸下限
+  if (w < spec.minWidth) reasons.push(`宽度 ${w} 小于最小 ${spec.minWidth}`)
+  if (h < spec.minHeight) reasons.push(`高度 ${h} 小于最小 ${spec.minHeight}`)
 
-  if (size > UPLOAD_LIMITS.maxImageSize) {
-    reasons.push(`${(size / MB).toFixed(2)}MB 超过 5MB`)
-  }
-  if (w && h) {
-    const short = Math.min(w, h)
-    if (short < UPLOAD_LIMITS.minImageSide) {
-      reasons.push(`短边 ${short}px 小于 ${UPLOAD_LIMITS.minImageSide}px`)
+  // ③ 比例
+  if ('ratioRange' in spec) {
+    const ratio = w / h
+    if (ratio < spec.ratioRange[0] || ratio > spec.ratioRange[1]) {
+      reasons.push(`宽高比 ${ratio.toFixed(2)} 超出 ${spec.ratioRange[0]}~${spec.ratioRange[1]}`)
     }
-    // 官网判据：|height - width / ratio| <= 容差（像素）
+  } else if ('ratio' in spec) {
+    const tol = kind === 'carousel' ? UPLOAD_LIMITS.ratioFloat : UPLOAD_LIMITS.ratioFloatOther
     const [rw, rh] = spec.ratio
     const expectedH = (w / rw) * rh
     if (Math.abs(h - expectedH) > tol) {
-      reasons.push(`比例 ${w}×${h} 不是 ${spec.label}（像素容差 ±${tol}）`)
+      reasons.push(`比例 ${w}×${h} 不符合 ${spec.label}（像素容差 ±${tol}）`)
     }
-  } else {
-    reasons.push('读不到图片尺寸')
   }
+
   return { ok: reasons.length === 0, reasons }
 }
 
@@ -894,7 +916,7 @@ async function applySelection() {
     const more = bad.length > 3 ? `\n… 另有 ${bad.length - 3} 张` : ''
     const ok = await confirmAction(
       `${bad.length} 张图不满足${
-        pickKind.value === 'detail' ? '详情图文' : pickKind.value === 'carousel' ? '轮播图 3:4' : '素材图 1:1'
+        pickKind.value === 'goodsDetail' ? '详情图文' : pickKind.value === 'carousel' ? '轮播图 3:4' : '素材图 1:1'
       }规格：\n${detail}${more}\n\n仍然使用吗？（提交商品时可能被平台拒绝）`,
       '图片规格不通过',
     )
@@ -975,7 +997,7 @@ watch(
     :src="cropSrc"
     :proportions="cropProportions"
     :initial-proportion="cropInitialProportion"
-    :title="`裁剪（${pickKind === 'detail' ? '详情图文' : spec.label}）`"
+    :title="`裁剪（${pickKind === 'goodsDetail' ? '详情图文' : spec.label}）`"
     @cropped="onCropped"
   />
 
@@ -1050,7 +1072,7 @@ watch(
         <el-radio-button value="list">列表</el-radio-button>
       </el-radio-group>
       <span class="picker-hint">
-        {{ carousel ? '轮播图需 3:4、≥1340×1785、≤5MB' : '素材图需 1:1、≥800×800、≤5MB' }}
+        {{ pickKind === 'carousel' ? '轮播图：3:4、宽 >1340、高 >1785、≤2MB' : pickKind === 'goodsDetail' ? '详情图文：≥480×480、宽高比 0.5~2、≤3MB' : '素材图：1:1、≥600×600、≤5MB' }}
       </span>
     </div>
 
@@ -1221,7 +1243,7 @@ watch(
           已选 <b>{{ picked.length }}</b> / {{ spec.maxCount }}
         </span>
         <el-tooltip
-          :content="`规格：宽高比例 ${spec.ratio}，宽 ≥${spec.minW}px，高 ≥${spec.minH}px，≤5MB`"
+          :content="`${spec.label}：宽 ≥${spec.minW}px，高 ≥${spec.minH}px，比例 ${spec.ratioLabel}，≤${spec.maxSizeMB}MB`"
           placement="top"
         >
           <el-icon class="picker-info"><InfoFilled /></el-icon>

@@ -214,30 +214,36 @@ const MATERIAL_SPEC = {
  * ⚠️ 比例容差是「像素」不是百分比（官网 ratiosFloat 默认 0）。
  * ⚠️ 超体积官网是「先调 /material/render/compress 压缩再校验」，不是直接拒绝。
  */
+/**
+ * 图片规格（四层，别混用）
+ *
+ *  ① local       —— 选本地文件时的前置校验（_pm_5719 beforeUpload）
+ *  ② carousel    —— 素材中心「轮播图」弹窗（limitRule = qn.HL）
+ *                   UI 文案原文：
+ *                     1、大小不符合要求，需满足小于 2M
+ *                     2、宽高不符合要求，需满足宽 > 1340px、高 > 1785px
+ *  ③ goodsDetail —— 详情图（limitRule = oP.GoodsDetail，kt/It/Tt/At/St）
+ *                   480×480 起、3MB、宽高比 0.5~2，**没有 2M/1340 那套提示**
+ *  ④ material    —— 素材图（1:1），精确值未确认，暂按本地文件那层兜底
+ */
 const UPLOAD_LIMITS = {
-  // 商品页本地图的硬门槛（_pm_5719 beforeUpload 实测常量）
+  // ① 本地文件前置校验
   maxImageSize: 5242880,      // 5 MB
   minImageSide: 600,          // 短边 ≥600px
 
-  // 比例容差：官网 _cdn_9255 的 tn() 实现 ——
-  //   Math.abs(height - width / ratio) <= (ratio === 3/4 ? 10 : 0)
-  // 即 **3:4 容差 10 像素，其它比例 0 像素**（不是统一值，也不是百分比）。
-  ratioFloat: 10,             // 仅 3:4 使用
+  // 比例容差：官网 tn() —— 3:4 用 10px，其它 0px
+  ratioFloat: 10,
   ratioFloatOther: 0,
 
-  carousel: { proportion: "3:4", ratio: [3, 4], recommended: "1340x1785" },
-  material: { proportion: "1:1", ratio: [1, 1], recommended: "800x800" },
+  // ② 轮播图（素材中心）—— 来自 UI 文案，2MB / 1340×1785
+  carousel: { maxSize: 2, minWidth: 1340, minHeight: 1785, ratio: [3, 4], recommended: "1340x1785" },
 
-  // 详情图（limitRule === oP.GoodsDetail）的固定规格，来自 _cdn_9255：
-  //   kt=480 It=480 Tt=3145728 At=0.5 St=2
-  goodsDetail: {
-    minWidth: 480,
-    minHeight: 480,
-    maxSize: 3,               // MB（官网 Tt=3145728 字节）
-    ratioRange: [0.5, 2],     // width/height 必须在 0.5 ~ 2 之间（1:2 ~ 2:1）
-  },
+  // ③ 详情图
+  goodsDetail: { maxSize: 3, minWidth: 480, minHeight: 480, ratioRange: [0.5, 2], recommended: "≥480x480" },
 
-  // 官网支持的比例标签（Ct 映射）
+  // ④ 素材图（1:1），精确上限未确认
+  material: { maxSize: 5, minWidth: 600, minHeight: 600, ratio: [1, 1], recommended: "800x800" },
+
   proportions: { "1:1": [1, 1], "1:3": [1, 3], "2:1": [2, 1], "3:4": [3, 4], "4:1": [4, 1] },
 };
 
@@ -265,11 +271,20 @@ function validateImage(o = {}) {
   const size = Number(o.size) || 0;
   const reasons = [];
 
-  const spec = o.spec || (o.kind === "material"
-    ? { ratios: [UPLOAD_LIMITS.material.ratio] }
-    : o.kind === "carousel"
-      ? { ratios: [UPLOAD_LIMITS.carousel.ratio] }
-      : null);
+  let spec = o.spec || null;
+  if (!spec) {
+    const k = o.kind;
+    if (k === "carousel") {
+      const c = UPLOAD_LIMITS.carousel;
+      spec = { maxSize: c.maxSize, minWidth: c.minWidth, minHeight: c.minHeight, ratios: [c.ratio] };
+    } else if (k === "goodsDetail") {
+      const g = UPLOAD_LIMITS.goodsDetail;
+      spec = { maxSize: g.maxSize, minWidth: g.minWidth, minHeight: g.minHeight, ratioRange: g.ratioRange };
+    } else if (k === "material") {
+      const m = UPLOAD_LIMITS.material;
+      spec = { maxSize: m.maxSize, minWidth: m.minWidth, minHeight: m.minHeight, ratios: [m.ratio] };
+    }
+  }
 
   // ① 格式白名单
   if (spec && spec.accepts && !_extOk(o.url, spec.accepts)) {

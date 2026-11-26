@@ -2304,7 +2304,7 @@ onMounted(async () => {
     <MaterialPicker
       v-model="decoPickerVisible"
       carousel
-      kind="detail"
+      kind="goodsDetail"
       :selected="decorationImages"
       @confirm="onPickDecoration"
     />
