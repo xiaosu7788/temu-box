@@ -873,6 +873,62 @@ function removeImageAt(index: number) {
   }
 }
 
+/* ---------- 填写库存弹窗 ---------- */
+const stockBatchValue = ref(0)
+
+/** 当前站点名（弹窗里的「覆盖站点」列） */
+const currentSiteName = computed(() => {
+  const hit = sites.value.find((s) => Number(s.siteId) === Number(form.siteId))
+  return String(hit?.siteName || form.siteId || '') || '—'
+})
+
+/** 当前站点可选的发货仓（弹窗上方多选） */
+const envWarehouses = computed(() =>
+  (env.value?.warehouses || []).filter((w) => w.warehouseId),
+)
+
+/** 表格行：一个发货仓一行 */
+const stockRows = computed(() =>
+  form.warehouseIds.map((id) => ({
+    id,
+    name: envWarehouses.value.find((w) => w.warehouseId === id)?.warehouseName || id,
+  })),
+)
+
+/** 当前颜色名 */
+const colorLabel = computed(() => {
+  for (const g of colorGroups.value) {
+    const hit = (g.colors || []).find((c) => Number(c.vid) === Number(form.colorVid))
+    if (hit) return hit.value
+  }
+  return form.colorVid ? String(form.colorVid) : '—'
+})
+
+/** 当前尺码名 */
+const sizeLabel = computed(() => {
+  for (const [, types] of Object.entries(sizeTree.value || {})) {
+    for (const [, list] of Object.entries(types || {})) {
+      const hit = (list as Array<{ vid: number; value: string }>).find((s) =>
+        form.sizeVids.includes(Number(s.vid)),
+      )
+      if (hit) return hit.value
+    }
+  }
+  return form.sizeVids.length ? `${form.sizeVids.length} 个尺码` : '—'
+})
+
+/** 批量填写：把上面的数值填到所有已选仓库 */
+function applyBatchStock() {
+  const v = Math.max(0, Math.floor(Number(stockBatchValue.value) || 0))
+  for (const id of form.warehouseIds) stockPerWarehouse[id] = v
+}
+
+/** 确认：把各仓库存合计写回总库存 */
+function confirmStockDialog() {
+  form.stock = stockTotal.value
+  stockDialogVisible.value = false
+}
+
 /** 打开库存分布弹窗：按当前仓库初始化 */
 function openStockDialog() {
   for (const id of form.warehouseIds) {
@@ -1770,8 +1826,10 @@ onMounted(async () => {
           </span>
         </el-form-item>
         <el-form-item label="库存">
-          <el-input-number v-model="form.stock" :min="0" :max="999999" :disabled="!hasSize" />
-          <el-button link type="primary" size="small" @click="openStockDialog">按仓库分布</el-button>
+          <span class="pcreate__stocknum">{{ stockTotal }}</span>
+          <el-button type="primary" plain size="small" :disabled="!form.warehouseIds.length" @click="openStockDialog">
+            填写库存
+          </el-button>
           <span class="pcreate__meta">创建时非必填，填了请确保准确</span>
         </el-form-item>
 
@@ -2238,32 +2296,110 @@ onMounted(async () => {
       </el-form>
     </el-card>
 
-    <!-- 库存分布 -->
-    <el-dialog v-model="stockDialogVisible" title="按仓库分布库存" width="min(520px, calc(100vw - 32px))">
-      <el-table :data="form.warehouseIds" size="small">
-        <el-table-column label="仓库">
-          <template #default="scope">{{ warehouseLabel(String(scope.row)) }}</template>
-        </el-table-column>
-        <el-table-column label="库存" width="170">
-          <template #default="scope">
-            <el-input-number
-              :model-value="stockPerWarehouse[String(scope.row)] || 0"
-              :min="0"
-              :max="999999"
-              size="small"
-              @update:model-value="(v: number | undefined) => (stockPerWarehouse[String(scope.row)] = v ?? 0)"
-            />
-          </template>
-        </el-table-column>
-      </el-table>
-      <p class="pcreate__meta">
-        合计 {{ stockTotal }} / 总库存 {{ form.stock }}
-        <span v-if="stockTotal !== form.stock" class="pcreate__whnote">（不一致，提交时会以总库存为准）</span>
-      </p>
+    <!-- 填写库存 -->
+    <el-dialog
+      v-model="stockDialogVisible"
+      title="填写库存"
+      width="min(1100px, calc(100vw - 32px))"
+      align-center
+      class="stockdlg"
+    >
+      <div class="stockdlg__tip">
+        <p>1、创建时库存非必填，若填写，请确保该商品有实物库存且库存数准确；</p>
+        <p>2、若不填写库存，创建后可在【商品列表-操作栏】点击【修改库存】及时完善；</p>
+        <p>3、商品发布时请务必保证库存准确，商家不得因缺货、超卖等而漏发、错发，否则将按商家协议、Temu商家规则等规定处理。</p>
+      </div>
+
+      <div class="stockdlg__section">
+        <div class="stockdlg__label">站点与发货仓关系</div>
+        <div class="stockdlg__body">
+          <div class="stockdlg__row">
+            <span class="stockdlg__hint">我的模板</span>
+            <span class="stockdlg__muted">暂无模板，填写以下信息并点击右侧按钮即可保存模板</span>
+            <el-button size="small" class="stockdlg__save">保存为模板</el-button>
+          </div>
+          <div class="stockdlg__row">
+            <span class="stockdlg__field">覆盖站点</span>
+            <span class="stockdlg__site">{{ currentSiteName }}</span>
+            <span class="stockdlg__req">* 卖家自发货仓</span>
+            <span class="stockdlg__muted">多发货仓时，订单就近发货</span>
+            <el-button size="small" link type="primary" @click="loadEnv(true)">刷新</el-button>
+          </div>
+          <div class="stockdlg__row">
+            <span class="stockdlg__field">{{ currentSiteName }}</span>
+            <el-select
+              v-model="form.warehouseIds"
+              multiple
+              collapse-tags
+              collapse-tags-tooltip
+              clearable
+              filterable
+              placeholder="选择发货仓"
+              class="stockdlg__whselect"
+            >
+              <el-option
+                v-for="w in envWarehouses"
+                :key="w.warehouseId"
+                :label="w.warehouseName || w.warehouseId"
+                :value="w.warehouseId"
+              />
+            </el-select>
+          </div>
+        </div>
+      </div>
+
+      <div class="stockdlg__section">
+        <div class="stockdlg__label">库存</div>
+        <div class="stockdlg__body">
+          <div class="stockdlg__row">
+            <span class="stockdlg__field">当前库存</span>
+            <el-input-number v-model="stockBatchValue" :min="0" :max="999999" controls-position="right" class="stockdlg__batchinput" />
+            <el-button size="small" :disabled="!form.warehouseIds.length" @click="applyBatchStock">批量填写</el-button>
+          </div>
+
+          <el-table :data="stockRows" size="small" class="stockdlg__table" empty-text="请先选择发货仓">
+            <el-table-column label="颜色" width="110">
+              <template #default>
+                {{ colorLabel }}
+              </template>
+            </el-table-column>
+            <el-table-column label="尺码" width="110">
+              <template #default>
+                <div>{{ sizeLabel }}</div>
+                <el-tag v-if="!form.sizeVids.length" size="small" type="info">当前 sku</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="发货仓" width="120">
+              <template #default="{ row }">{{ row.name }}</template>
+            </el-table-column>
+            <el-table-column label="当前库存">
+              <template #header>
+                <div>当前库存</div>
+                <div class="stockdlg__colhint">（选填，若填写请确保库存数准确）</div>
+              </template>
+              <template #default="{ row }">
+                <el-input-number
+                  :model-value="stockPerWarehouse[row.id] || 0"
+                  :min="0"
+                  :max="999999"
+                  size="small"
+                  controls-position="right"
+                  class="stockdlg__input"
+                  @update:model-value="(v: number | undefined) => (stockPerWarehouse[row.id] = v ?? 0)"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column label="覆盖站点" width="120">
+              <template #default>{{ currentSiteName }}</template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </div>
+
       <template #footer>
-        <el-button @click="distributeStockEvenly">一键平均分配</el-button>
-        <el-button @click="form.stock = stockTotal || form.stock; stockDialogVisible = false">用合计作总库存</el-button>
-        <el-button type="primary" @click="stockDialogVisible = false">确定</el-button>
+        <span class="stockdlg__total">合计 {{ stockTotal }}</span>
+        <el-button @click="stockDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmStockDialog">确认</el-button>
       </template>
     </el-dialog>
 
@@ -2329,6 +2465,125 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* ---------- 填写库存弹窗 ---------- */
+.pcreate__stocknum {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text, #303133);
+  margin-right: 10px;
+}
+
+.stockdlg__tip {
+  background: #fdf6ec;
+  border: 1px solid #faecd8;
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.stockdlg__tip p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #b88230;
+}
+
+.stockdlg__section {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.stockdlg__label {
+  width: 110px;
+  flex: none;
+  padding-top: 8px;
+  font-size: 13px;
+  color: #606266;
+  text-align: right;
+}
+
+.stockdlg__body {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+
+.stockdlg__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.stockdlg__row + .stockdlg__row {
+  margin-top: 8px;
+}
+
+.stockdlg__field {
+  width: 90px;
+  flex: none;
+  font-size: 13px;
+  color: #606266;
+}
+
+.stockdlg__hint {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.stockdlg__muted {
+  font-size: 12px;
+  color: #909399;
+}
+
+.stockdlg__save {
+  margin-left: auto;
+}
+
+.stockdlg__site {
+  font-size: 13px;
+}
+
+.stockdlg__req {
+  color: #f56c6c;
+  font-size: 13px;
+}
+
+.stockdlg__whselect {
+  flex: 1;
+  min-width: 0;
+}
+
+.stockdlg__batchinput {
+  width: 160px;
+}
+
+.stockdlg__table {
+  margin-top: 10px;
+}
+
+.stockdlg__input {
+  width: 100%;
+}
+
+.stockdlg__colhint {
+  font-size: 11px;
+  color: #c0c4cc;
+  font-weight: normal;
+  line-height: 1.3;
+}
+
+.stockdlg__total {
+  float: left;
+  line-height: 32px;
+  font-size: 12px;
+  color: #606266;
+}
+
+
 .pcreate {
   display: flex;
   flex-direction: column;
