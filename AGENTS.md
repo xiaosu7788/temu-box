@@ -278,7 +278,9 @@ npx vue-tsc -b --force
 
 ### 版本号与更新日志
 - `VERSION`（语义化版本，如 `0.6.0`）是版本号唯一来源；`CHANGELOG.md` 记录每个版本改了什么，分「新增 / 优化 / 修复」。
-- 发版：改 `VERSION` + 在 `CHANGELOG.md` 顶部加一节 → 提交推送；CI 会额外构建 `v<版本号>` 标签的镜像。
+- **每次推送都要改 `VERSION` 并在 `CHANGELOG.md` 顶部加一节**（补丁级 +0.0.1 即可），
+  不要只推代码不动版本号——边车的更新检测、镜像标签、回滚定位都依赖它。
+  流程：改 `VERSION` + 写 CHANGELOG → 提交推送；CI 会额外构建 `v<版本号>` 标签的镜像。
 - 后端 `GET /api/version`（管理员）返回版本号、提交号与解析后的日志；运维边车的 `/status` 返回当前版本与远端版本。
 - 日志解析逻辑在 `backend/app/version.py` 与 `docker/updater/server.py` 各有一份（边车是独立镜像），改动要同步。
 - **改动 `docker/updater/**`（边车代码）后，必须在服务器重跑 `./scripts/enable-updater.sh` 才生效**：一键更新只重建前后端，边车按设计不重建自己（保证更新失败时还能回滚）。

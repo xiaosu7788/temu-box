@@ -826,7 +826,12 @@ async function toggle(item: ProductMaterialImage) {
     return
   }
 
-  // 多选模式：每次点击追加一张，同一张可重复
+  // 同一次打开内：已选则取消（一次去一张），未选则追加
+  if (picked.value.includes(url)) {
+    picked.value = picked.value.filter((u) => u !== url)
+    return
+  }
+
   if (picked.value.length >= spec.value.maxCount) {
     notifyError(new Error(`最多可选 ${spec.value.maxCount} 张`))
     return
@@ -885,7 +890,10 @@ async function applySelection() {
     )
     if (!ok) return
   }
-  emit('confirm', picked.value)
+  // 多选（轮播图 / 详情图文）：追加到已有列表，所以重新打开再选同一张会排到第 2 位
+  // 单选（素材图）：直接替换
+  const next = multiple.value ? [...(props.selected || []), ...picked.value] : picked.value
+  emit('confirm', next)
   visible.value = false
 }
 
@@ -893,7 +901,9 @@ watch(
   () => props.modelValue,
   (open) => {
     if (!open) return
-    picked.value = [...(props.selected || [])]
+    // 每次打开都从零开始选：上一次确认过的图不显示为已选，
+    // 这样「重新打开再选同一张」才能变成轮播图 2（见 applySelection 的追加逻辑）
+    picked.value = []
     query.page = 1
     void loadFolders()
     void load()
