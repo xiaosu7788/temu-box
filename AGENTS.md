@@ -267,8 +267,11 @@ npx vue-tsc -b --force
 - 提交前跑后端 `pytest`；涉及前端必跑 `npm run build`。推送网络不稳定时允许带重试，推送后可用 GitHub API
   核对远程 HEAD。
 - 不要提交运行时文件：`.env`、`data/*`、`dist/`、`node_modules/`、`.venv/`。
+- **不要主动连接服务器**：没有用户当轮的明确指示，不执行任何 SSH / MCP 远程命令——
+  包括查容器状态、看日志、查数据库、`git pull`、`docker compose pull/up`。
+  改完代码只做到「本地改 → commit → push」，把部署命令写出来交给用户执行。
 - **线上改动只走一条路**：本地改 → `git commit && git push` → 等 CI 构建镜像 → 服务器
-  `git pull` + `docker compose pull` + `up -d --force-recreate`。
+  `git pull` + `docker compose pull` + `up -d --force-recreate`（这一步由用户执行）。
   **不要**在服务器上用 `docker exec ... sed -i` 热改容器内文件，也不要用 `sed -i` 直接改服务器上的源码——
   这类改动不进 git、不可追溯，下次 `--force-recreate` 还会被镜像覆盖，排查时会误判线上到底跑的哪份代码。
   唯一例外是 `.env.docker` 这类不入库的配置（仍需说明追加了什么）。

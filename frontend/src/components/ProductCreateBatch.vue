@@ -324,7 +324,8 @@ async function refreshEditFields() {
   const selected = (editCardRaw.value.selected || {}) as Record<string, string | number>
   const [d, st] = await Promise.all([
     describeProduct(catId, selected),
-    getSizeTemplates(catId, undefined).catch(() => ({ list: [] })),
+    // 尺码表按「类目 + 站点」下发，不传站点可能拿到别的站点的表甚至空列表
+    getSizeTemplates(catId, editCardRaw.value.siteId || undefined).catch(() => ({ list: [] })),
   ])
   editCardFields.value = (d.fields as any) || []
   editColorGroups.value = (d.colorGroups as any) || []
@@ -387,6 +388,11 @@ async function openCardEditor(index: number) {
   editCardRaw.value = merged
   editCardRaw.value.siteId = card.siteId || editCardRaw.value.siteId || 100
   editCardRaw.value.freightTemplateId = card.freightTemplateId || editCardRaw.value.freightTemplateId || ''
+  // 模板存的是 sizeTemplateSourceId（蓝本 id），下拉绑的是 sizeTemplateId；
+  // 不做这层映射，套用模板后「尺码表」永远是空的
+  if (!editCardRaw.value.sizeTemplateId && editCardRaw.value.sizeTemplateSourceId) {
+    editCardRaw.value.sizeTemplateId = Number(editCardRaw.value.sizeTemplateSourceId)
+  }
   editCatPath.value = Array.isArray(editCardRaw.value.catPath) ? editCardRaw.value.catPath.map(Number) : []
   editCatNames.value = []
   editCardLoading.value = true
@@ -449,6 +455,8 @@ async function saveCardEditor() {
   const next = JSON.parse(JSON.stringify(editCardRaw.value))
   next.catPath = editCatPath.value
   next.sizeTemplateId = next.sizeTemplateId || undefined
+  // 提交链路读的是 sizeTemplateSourceId，编辑下拉改的是 sizeTemplateId，两个都要落
+  next.sizeTemplateSourceId = next.sizeTemplateId || next.sizeTemplateSourceId || undefined
   next.generalSizeType = SIZE_TYPE_TO_GST[editSizeType.value] || undefined
   // 编辑改的是 cm/g，保存前按它重算平台单位
   if (next.volume) next.volume = normalizeVolumePayload(next.volume)
