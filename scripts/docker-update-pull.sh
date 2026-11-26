@@ -30,7 +30,7 @@ if grep -q '^BRIDGE_TOKEN=.' .env.docker 2>/dev/null; then
     || echo "  ⚠ bridge 镜像拉取失败，保留现有镜像继续"
 fi
 
-echo "== 4/5 启动服务（不重新构建）=="
+echo "== 4/6 启动服务（不重新构建）=="
 # --force-recreate 是必须的：镜像 tag 是 :latest，pull 之后 compose 认为配置没变，
 # 不带这个参数容器会原地不动，新代码根本没生效（历史踩过）
 if grep -q '^DATABASE_URL=.' .env.docker; then
@@ -45,8 +45,27 @@ if grep -q '^BRIDGE_TOKEN=.' .env.docker 2>/dev/null; then
     || echo "  ⚠ bridge 启动失败，店铺管理模块暂不可用"
 fi
 
-echo "== 5/5 检查状态 =="
+echo "== 5/6 检查状态 =="
 docker compose --env-file .env.docker --profile internal-db ps
 web_port="$(grep '^WEB_PORT=' .env.docker | cut -d= -f2)"
 web_port="${web_port:-8089}"
 curl -i "http://127.0.0.1:${web_port}/api/health"
+
+echo "== 6/6 清理旧镜像与构建缓存 =="
+# 每次 pull + --force-recreate 都会把旧的 :latest 打成悬空镜像，
+# 不清理会一直堆（服务器上曾累积 89 个 / 8.4GB）。
+# 只清 24 小时前的，避免误删正在用于回滚的镜像。
+freed="$(docker image prune -f --filter 'until=24h' 2>/dev/null | sed -n 's/^Total reclaimed space: //p')"
+echo "  悬空镜像：${freed:-无}"
+cached="$(docker builder prune -f 2>/dev/null | sed -n 's/^Total:\s*//p')"
+echo "  构建缓存：${cached:-无}"
+
+# 旧备份也顺带按保留份数清理（backup.sh 内也有同样逻辑，
+# 这里兜住「用旧版 backup.sh 备份过」的历史数据）
+keep="${BACKUP_KEEP:-15}"
+for pattern in "temu-box-data-*.tar.gz" "temu-box-db-*.dump"; do
+  [[ -d backups ]] || continue
+  # shellcheck disable=SC2012
+  ls -t backups/$pattern 2>/dev/null | tail -n +$((keep + 1)) | xargs -r rm -f
+done
+echo "  备份：保留最近 ${keep} 份"
