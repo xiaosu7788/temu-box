@@ -14,6 +14,7 @@ import {
   listFormTemplates,
   describeProduct,
   startProductBatch,
+  cropMaterial,
 } from '../api'
 import { normalizeVolumePayload, normalizeWeightPayload } from '../unitConvert'
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '../feedback'
@@ -102,13 +103,51 @@ function openPicker(index: number, field: 'images' | 'materialImgUrl' | 'decorat
   pickerVisible.value = true
 }
 
+/** 读 URL 图片的实际尺寸 */
+function loadImageSize(url: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
+    img.onerror = () => resolve({ width: 0, height: 0 })
+    img.src = thumbUrl(url)
+  })
+}
+
+/** URL 的缩略图版本（CDN 支持 imageMogr2，避免拉原图只为量尺寸） */
+function thumbUrl(url: string): string {
+  if (!url) return ''
+  if (url.includes('?')) return url
+  return `${url}?imageMogr2/thumbnail/x400`
+}
+
+/**
+ * 选完轮播图后自动把首图裁成 1:1 当素材图（与手动创建一致）。
+ * 素材图留空时服务端也会 autoMaterialImg，但本地先裁能给用户即时反馈。
+ */
+async function autoCropMaterialForCard(card: BatchCard, sourceUrl?: string) {
+  const first = sourceUrl || card.images[0]
+  if (!first || card.materialImgUrl) return
+  try {
+    const { width, height } = await loadImageSize(first)
+    if (width < 800 || height < 800) return
+    const dx = Math.max(0, Math.round((width - 800) / 2))
+    const dy = Math.max(0, Math.round((height - 800) / 2))
+    const r = await cropMaterial(first, { width: 800, height: 800, dx, dy })
+    if (r.url) card.materialImgUrl = r.url
+  } catch {
+    // 自动裁失败就保持留空，交给服务端的 autoMaterialImg
+  }
+}
+
 function onPick(urls: string[]) {
   if (!pickerTarget) return
   const card = cards.value[pickerTarget.index]
   if (!card) return
   if (pickerTarget.field === 'materialImgUrl') card.materialImgUrl = urls[0] || ''
-  else if (pickerTarget.field === 'images') card.images = [...urls]
-  else card.decorationImages = [...urls]
+  else if (pickerTarget.field === 'images') {
+    card.images = [...urls]
+    void autoCropMaterialForCard(card, urls[0])
+  } else card.decorationImages = [...urls]
   pickerTarget = null
 }
 

@@ -75,6 +75,16 @@ function sizeOk(item: ProductMaterialImage): boolean {
   return validateImage({ width: item.width, height: item.height, size: item.size }, pickKind.value).ok
 }
 
+/**
+ * 不合格的具体原因。
+ * 之前这里写死「需 ≥1340×1785」（轮播图的推荐尺寸），
+ * 在详情图文模式下会误导——详情图是 480×480 / 3MB / 比例 0.5~2。
+ */
+function badReason(item: ProductMaterialImage): string {
+  const r = validateImage({ width: item.width, height: item.height, size: item.size }, pickKind.value)
+  return r.reasons.join('；') || '规格不符合'
+}
+
 /** 该图是否已在选中列表里（按 imgUrl 或 md5，防同图重复选中） */
 function isPicked(item: ProductMaterialImage): boolean {
   return picked.value.includes(item.imgUrl)
@@ -1135,8 +1145,8 @@ watch(
             <span>不能用作轮播图</span>
           </span>
           <span v-else-if="!sizeOk(item)" class="picker-card__badge">
-            <strong>尺寸不符合要求</strong>
-            <span>需 ≥{{ spec.minW }}×{{ spec.minH }}</span>
+            <strong>规格不符合</strong>
+            <span>{{ badReason(item) }}</span>
           </span>
           <span v-else-if="isVideo(item)" class="picker-card__vid">▶ {{ durationText(item) }}</span>
           <span
