@@ -1061,6 +1061,17 @@ async function applyFormTemplate(id: number) {
     if (Array.isArray(v.warehouseIds) && v.warehouseIds.length) {
       form.warehouseIds = v.warehouseIds.map(String)
     }
+    // 各仓库存明细：只恢复 stock（总数）会出现「总数有值但每仓都是 0」
+    Object.keys(stockPerWarehouse).forEach((k) => delete stockPerWarehouse[k])
+    if (v.stockPerWarehouse && typeof v.stockPerWarehouse === 'object') {
+      Object.assign(stockPerWarehouse, v.stockPerWarehouse)
+      form.stock = stockTotal.value
+    } else if (Number(v.stock) > 0 && form.warehouseIds.length) {
+      // 老模板只有总库存：铺到第一个仓库
+      for (const id of form.warehouseIds) stockPerWarehouse[id] = 0
+      stockPerWarehouse[form.warehouseIds[0]] = Number(v.stock)
+      form.stock = stockTotal.value
+    }
     // 尺码表：buildForm 存的是 sizeTemplateSourceId（蓝本 id），sizeTemplateId 是旧字段名
     const srcTpl = v.sizeTemplateSourceId ?? v.sizeTemplateId
     if (srcTpl) {
@@ -1149,10 +1160,21 @@ async function openEditTemplate(tpl: { id: number; name: string; note: string })
     }
     editTplEnv.value = await getProductEnv(editTplValues.value.siteId || undefined).catch(() => null)
     // 发货仓与各仓库存：模板里存过就带进「填写库存」弹窗
-    editTplWarehouseIds.value = Array.isArray(v.warehouseIds) ? v.warehouseIds.map(String) : []
+    editTplWarehouseIds.value =
+      Array.isArray(v.warehouseIds) && v.warehouseIds.length
+        ? v.warehouseIds.map(String)
+        : [...form.warehouseIds]     // 老模板没存仓库就沿用当前表单的
     Object.keys(editTplStockPerWarehouse).forEach((k) => delete editTplStockPerWarehouse[k])
     if (v.stockPerWarehouse && typeof v.stockPerWarehouse === 'object') {
       Object.assign(editTplStockPerWarehouse, v.stockPerWarehouse)
+    } else if (Number(v.stock) > 0) {
+      // 老模板只存了总库存：全部放到第一个仓库，其余填 0，
+      // 至少让合计等于原来的 stock，用户可以再点「填写库存」调整
+      const first = editTplWarehouseIds.value[0]
+      if (first) {
+        for (const id of editTplWarehouseIds.value) editTplStockPerWarehouse[id] = 0
+        editTplStockPerWarehouse[first] = Number(v.stock)
+      }
     }
     const catId = editTplCatPath.value[editTplCatPath.value.length - 1]
     editTplSizeTree.value = {}

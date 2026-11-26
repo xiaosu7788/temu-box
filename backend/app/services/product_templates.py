@@ -39,6 +39,7 @@ REUSABLE_KEYS = (
     "suggestedRetailPrice",
     "skuPrice",
     "stock",
+    "stockPerWarehouse",     # 各仓库存明细（只存 stock 会导致套用后库存全 0）
     "sizeVids",              # 尺码勾选（用户只说要换颜色规格）
     # 前端 buildForm 存的字段名是 sizeTemplateSourceId（蓝本 id，SDK 会据此建新表）；
     # 只写 sizeTemplateId 会漏掉，编辑模板时下拉永远是空的
