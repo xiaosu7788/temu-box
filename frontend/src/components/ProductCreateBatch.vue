@@ -112,6 +112,40 @@ function onPick(urls: string[]) {
   pickerTarget = null
 }
 
+/* ---------- 批量卡片图片拖拽排序 ---------- */
+type DragInfo = { card: number; field: 'images' | 'decorationImages'; img: number }
+const dragInfo = ref<DragInfo | null>(null)
+const dragOver = ref<{ card: number; img: number } | null>(null)
+
+function onImgDragStart(card: number, field: 'images' | 'decorationImages', img: number, e: DragEvent) {
+  dragInfo.value = { card, field, img }
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', `${card}:${field}:${img}`)
+  }
+}
+
+function onImgDragOver(card: number, img: number) {
+  dragOver.value = { card, img }
+}
+
+/** 只允许在同一张卡的同一种图列表内重排（跨卡拖没有业务意义） */
+function onImgDrop(card: number, field: 'images' | 'decorationImages', img: number) {
+  const src = dragInfo.value
+  if (src && src.card === card && src.field === field && src.img !== img) {
+    const list = [...cards.value[card][field]]
+    const [moved] = list.splice(src.img, 1)
+    list.splice(img, 0, moved)
+    cards.value[card][field] = list
+  }
+  resetImgDrag()
+}
+
+function resetImgDrag() {
+  dragInfo.value = null
+  dragOver.value = null
+}
+
 function removeImage(index: number, field: 'images' | 'decorationImages', i: number) {
   const card = cards.value[index]
   if (!card) return
@@ -623,7 +657,20 @@ onUnmounted(stopPolling)
           </el-form-item>
           <el-form-item label="轮播图" required>
             <div class="batch__imgs">
-              <div v-for="(url, k) in card.images" :key="`${k}-${url}`" class="batch__thumb">
+              <div
+                v-for="(url, k) in card.images"
+                :key="`${k}-${url}`"
+                class="batch__thumb"
+                :class="{
+                  'batch__thumb--dragging': dragInfo && dragInfo.card === i && dragInfo.field === 'images' && dragInfo.img === k,
+                  'batch__thumb--over': dragOver && dragOver.card === i && dragOver.img === k,
+                }"
+                draggable="true"
+                @dragstart="onImgDragStart(i, 'images', k, $event)"
+                @dragover.prevent="onImgDragOver(i, k)"
+                @drop.prevent="onImgDrop(i, 'images', k)"
+                @dragend="resetImgDrag"
+              >
                 <img :src="url" alt="" />
                 <span class="batch__thumbidx">{{ k + 1 }}</span>
                 <button type="button" class="batch__thumbx" @click="removeImage(i, 'images', k)">×</button>
@@ -644,8 +691,22 @@ onUnmounted(stopPolling)
           </el-form-item>
           <el-form-item label="详情图文">
             <div class="batch__imgs">
-              <div v-for="(url, k) in card.decorationImages" :key="`d-${k}-${url}`" class="batch__thumb">
+              <div
+                v-for="(url, k) in card.decorationImages"
+                :key="`d-${k}-${url}`"
+                class="batch__thumb"
+                :class="{
+                  'batch__thumb--dragging': dragInfo && dragInfo.card === i && dragInfo.field === 'decorationImages' && dragInfo.img === k,
+                  'batch__thumb--over': dragOver && dragOver.card === i && dragOver.img === k,
+                }"
+                draggable="true"
+                @dragstart="onImgDragStart(i, 'decorationImages', k, $event)"
+                @dragover.prevent="onImgDragOver(i, k)"
+                @drop.prevent="onImgDrop(i, 'decorationImages', k)"
+                @dragend="resetImgDrag"
+              >
                 <img :src="url" alt="" />
+                <span class="batch__thumbidx">{{ k + 1 }}</span>
                 <button type="button" class="batch__thumbx" @click="removeImage(i, 'decorationImages', k)">×</button>
               </div>
               <button type="button" class="batch__imgadd" @click="openPicker(i, 'decorationImages')">选图</button>
@@ -1035,6 +1096,24 @@ onUnmounted(stopPolling)
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.batch__thumb--dragging {
+  opacity: 0.4;
+}
+
+.batch__thumb--over {
+  outline: 2px dashed var(--primary, #2563eb);
+  outline-offset: 1px;
+}
+
+.batch__thumb {
+  cursor: grab;
+}
+
+.batch__thumb :deep(img) {
+  -webkit-user-drag: none;
+  user-select: none;
 }
 
 .batch__thumb {

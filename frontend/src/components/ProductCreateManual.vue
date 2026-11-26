@@ -820,6 +820,34 @@ function onDropImage(target: number) {
   resetDrag()
 }
 
+/* ---------- 详情图文拖拽排序 ---------- */
+const decoDragIndex = ref(-1)
+const decoDragOverIndex = ref(-1)
+
+function onDecoDragStart(i: number, e: DragEvent) {
+  decoDragIndex.value = i
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(i))
+  }
+}
+
+function onDropDecoration(target: number) {
+  const from = decoDragIndex.value
+  if (from >= 0 && from !== target) {
+    const arr = [...decorationImages.value]
+    const [moved] = arr.splice(from, 1)
+    arr.splice(target, 0, moved)
+    decorationImages.value = arr
+  }
+  resetDecoDrag()
+}
+
+function resetDecoDrag() {
+  decoDragIndex.value = -1
+  decoDragOverIndex.value = -1
+}
+
 function resetDrag() {
   dragIndex.value = -1
   dragOverIndex.value = -1
@@ -1916,7 +1944,20 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item label="详情图文（3:4）">
           <div class="pcreate__images">
-            <div v-for="(url, i) in decorationImages" :key="`${i}-${url}`" class="pcreate__thumb">
+            <div
+              v-for="(url, i) in decorationImages"
+              :key="`${url}-${i}`"
+              class="pcreate__thumb"
+              :class="{
+                'pcreate__thumb--dragging': decoDragIndex === i,
+                'pcreate__thumb--over': decoDragOverIndex === i && decoDragIndex !== i,
+              }"
+              draggable="true"
+              @dragstart="onDecoDragStart(i, $event)"
+              @dragover.prevent="decoDragOverIndex = i"
+              @drop.prevent="onDropDecoration(i)"
+              @dragend="resetDecoDrag"
+            >
               <el-image
                 :src="url"
                 :preview-src-list="decorationImages"
