@@ -129,7 +129,12 @@ async function autoCropMaterialForCard(card: BatchCard, sourceUrl?: string) {
   if (!first || card.materialImgUrl) return
   try {
     const { width, height } = await loadImageSize(first)
-    if (width < 800 || height < 800) return
+    if (width < 800 || height < 800) {
+      notifyWarning(
+        `首图 ${width}×${height} 小于 800×800，无法自动生成合规素材图，请手动选一张 1:1 的图`,
+      )
+      return
+    }
     const dx = Math.max(0, Math.round((width - 800) / 2))
     const dy = Math.max(0, Math.round((height - 800) / 2))
     const r = await cropMaterial(first, { width: 800, height: 800, dx, dy })
