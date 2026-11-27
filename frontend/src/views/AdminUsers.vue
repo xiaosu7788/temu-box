@@ -294,7 +294,10 @@ async function bulkSetStoreAccess(enabled: boolean) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void loadCategoryOptions()
+})
 </script>
 
 <template>
@@ -408,9 +411,10 @@ onMounted(load)
           <p class="perm-hint">只勾「商品查询」时，该用户只能看看商品，不能创建商品</p>
         </el-form-item>
         <el-form-item label="品类权限">
-          <el-checkbox-group v-model="editForm.categories">
+          <el-checkbox-group v-if="categoryOptions.length" v-model="editForm.categories">
             <el-checkbox v-for="c in categoryOptions" :key="c.code" :value="c.code">{{ c.name }}</el-checkbox>
           </el-checkbox-group>
+          <span v-else class="perm-empty">还没有品类，请先在「品类管理」里新建</span>
           <p class="perm-hint">
             不勾 = 全部品类；勾了就只能在所选品类下做订单计算、看对应库存、报名活动、维护头程名单
           </p>
@@ -439,6 +443,11 @@ onMounted(load)
 </template>
 
 <style scoped>
+.perm-empty {
+  font-size: 12px;
+  color: #909399;
+}
+
 .credential-password {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
