@@ -29,6 +29,7 @@ from app.config import (
     ensure_directories,
 )
 from app.database import (
+    list_product_create_logs,
     get_temu_session,
     create_user,
     database_status,
@@ -963,7 +964,7 @@ def store_product_logs(
     user: dict = Depends(store_user),
 ):
     """建品记录（操作记录页「商品创建」标签）。"""
-    return database.list_product_create_logs(
+    return list_product_create_logs(
         user["id"], status=status, keyword=keyword, page=page, size=size
     )
 

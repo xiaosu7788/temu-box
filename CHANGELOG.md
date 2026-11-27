@@ -5,6 +5,14 @@
 
 条目分类：**新增**（功能）、**优化**（性能与体验）、**修复**（缺陷）。
 
+## 0.15.1 - 2026-11-26
+
+### 修复
+- **操作记录页 500**：`main.py` 用的是函数式导入（`from app.database import (...)`），
+  新路由却写成 `database.list_product_create_logs(...)`，`database` 这个名字根本没绑定，
+  NameError 直接被 FastAPI 转成 500。改为直接导入并调用。
+- 补 `tests/test_product_logs.py` 覆盖该接口（含失败筛选），防止同类导入错误再漏过去。
+
 ## 0.15.0 - 2026-11-26
 
 ### 新增
