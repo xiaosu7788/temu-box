@@ -141,7 +141,8 @@ async function saveUser() {
   if (!editing.value) return
   saving.value = true
   try {
-    Object.assign(editing.value, await updateAdminUser(editing.value.id, {
+    const targetId = editing.value.id
+    const updated = await updateAdminUser(targetId, {
       username: editForm.username.trim(),
       display_name: editForm.display_name.trim(),
       modules: editForm.modules,
@@ -149,7 +150,12 @@ async function saveUser() {
       categories: editForm.categories,
       note: editForm.note.trim(),
       password: editForm.password || undefined,
-    }))
+    })
+    Object.assign(editing.value, updated)
+    // 列表里的对象也要同步：openEdit 读的是 users 里的那一份，
+    // 只更新 editing 的话，重新打开弹窗看到的还是旧值（品类权限勾选丢失就是这么来的）
+    const idx = users.value.findIndex((u) => u.id === targetId)
+    if (idx >= 0) users.value[idx] = { ...users.value[idx], ...updated }
     editDialogVisible.value = false
     editing.value = null
     notifySuccess('用户信息已更新')
