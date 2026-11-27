@@ -910,9 +910,23 @@ def store_product_upload(payload: dict, user: dict = Depends(store_user)):
         raise _store_http_error(exc) from None
 
 
+def _current_account_hash(user_id: int) -> str:
+    """当前用户正在使用的店铺的 account_hash；没登录返回空串（此时不做店铺过滤）。
+
+    批量任务记录挂在 user_id 上，一个用户可切换多个店铺，
+    不过滤的话在 B 店会看到 A 店的任务进度。
+    """
+    try:
+        session = get_temu_session(user_id)
+        account = (session or {}).get("account") or ""
+        return hashlib.sha1(account.strip().lower().encode("utf-8")).hexdigest()[:16] if account else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 @app.get("/api/store/products/batch")
 def store_product_batch_status(user: dict = Depends(store_user)):
-    return product_create.batch_status(user["id"])
+    return product_create.batch_status(user["id"], _current_account_hash(user["id"]))
 
 
 @app.post("/api/store/products/batch")
@@ -921,7 +935,12 @@ def store_product_batch_start(payload: dict, request: Request, user: dict = Depe
     dry_run = payload.get("dry_run")
     dry_run = True if dry_run is None else bool(dry_run)
     try:
-        state = product_create.start_batch(user["id"], payload.get("items") or [], dry_run=dry_run)
+        state = product_create.start_batch(
+            user["id"],
+            payload.get("items") or [],
+            dry_run=dry_run,
+            account_hash=_current_account_hash(user["id"]),
+        )
     except StoreError as exc:
         raise _store_http_error(exc) from None
     audit.record(
@@ -935,9 +954,18 @@ def store_product_batch_start(payload: dict, request: Request, user: dict = Depe
     return state
 
 
+@app.delete("/api/store/products/batch")
+def store_product_batch_clear(user: dict = Depends(store_user)):
+    """清空已结束的批量任务记录。"""
+    try:
+        return product_create.clear_batch(user["id"], _current_account_hash(user["id"]))
+    except StoreError as exc:
+        raise _store_http_error(exc) from None
+
+
 @app.post("/api/store/products/batch/cancel")
 def store_product_batch_cancel(user: dict = Depends(store_user)):
-    return product_create.cancel_batch(user["id"])
+    return product_create.cancel_batch(user["id"], _current_account_hash(user["id"]))
 
 
 @app.get("/api/store/goods/filters")

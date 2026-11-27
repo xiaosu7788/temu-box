@@ -15,6 +15,7 @@ import {
   describeProduct,
   startProductBatch,
   cropMaterial,
+  clearProductBatch,
 } from '../api'
 import { normalizeVolumePayload, normalizeWeightPayload } from '../unitConvert'
 import { confirmAction, notifyError, notifySuccess, notifyWarning } from '../feedback'
@@ -682,6 +683,16 @@ onMounted(async () => {
   createCards()
 })
 
+/** 清空已结束的任务记录 */
+async function clearBatch() {
+  try {
+    await clearProductBatch()
+    batch.value = { status: 'idle' }
+  } catch (error) {
+    notifyError(error as Error)
+  }
+}
+
 onUnmounted(stopPolling)
 </script>
 
@@ -847,7 +858,10 @@ onUnmounted(stopPolling)
     <el-card v-if="batch.status !== 'idle'" shadow="never" class="batch__progress">
       <div class="batch__proghead">
         <span>批量任务：{{ batch.status === 'running' ? '执行中' : '已结束' }}</span>
-        <el-button v-if="batch.status === 'running'" size="small" @click="cancel">停止</el-button>
+        <span>
+          <el-button v-if="batch.status === 'running'" size="small" @click="cancel">停止</el-button>
+          <el-button v-else size="small" link type="primary" @click="clearBatch">清空记录</el-button>
+        </span>
       </div>
       <el-progress :percentage="progress" :status="batch.status === 'running' ? undefined : 'success'" />
       <p class="batch__meta">

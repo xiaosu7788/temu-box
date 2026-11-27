@@ -467,6 +467,12 @@ export async function startProductBatch(items: Array<Record<string, unknown>>, d
   return data
 }
 
+/** 清空已结束的批量任务记录（正在跑的不让清） */
+export async function clearProductBatch() {
+  const { data } = await http.delete<{ status: string }>('/store/products/batch')
+  return data
+}
+
 export async function cancelProductBatch() {
   const { data } = await http.post<ProductBatchState>('/store/products/batch/cancel')
   return data

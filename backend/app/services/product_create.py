@@ -20,7 +20,7 @@ import time
 from typing import Optional
 
 from app.services import temu_bridge
-from app.database import load_batch_state, log_product_create, save_batch_state
+from app.database import ProductBatchState, load_batch_state, log_product_create, save_batch_state
 from app.services.store_goods import require_account
 from app.services.store_session import StoreError, translate_bridge_error
 from app.services.temu_bridge import BridgeError
@@ -623,18 +623,34 @@ def _batch_key(user_id: int) -> int:
     return user_id
 
 
-def batch_status(user_id: int) -> dict:
-    """当前用户的批量任务进度。
+def _same_shop(state: dict, account_hash: str) -> bool:
+    """状态记录是否属于当前店铺。老数据没有 account_hash 时按「同店」处理，避免直接失效。"""
+    if not account_hash:
+        return True
+    saved = str(state.get("account_hash") or "")
+    return not saved or saved == account_hash
+
+
+def batch_status(user_id: int, account_hash: str = "") -> dict:
+    """当前用户 + 当前店铺的批量任务进度。
 
     内存优先（最快）；内存没有时从库恢复——后端重启后仍能看到上次的进度与失败原因。
+
+    ⚠️ 必须按店铺隔离：任务记录挂在 user_id 上，但一个用户可以切换多个店铺，
+    不区分的话在 B 店会看到 A 店的任务进度。
     """
     key = _batch_key(user_id)
     with _BATCH_LOCK:
         hit = _BATCH_STATE.get(key)
         if hit:
-            return dict(hit)
+            if _same_shop(hit, account_hash):
+                return dict(hit)
+            return {"status": "idle"}
     restored = load_batch_state(key)
     if not restored:
+        return {"status": "idle"}
+    if not _same_shop(restored, account_hash):
+        # 别的店铺的任务，不展示也不覆盖（保留它，切回去还能看到）
         return {"status": "idle"}
     # 进程重启时仍在「running」的任务其实已经中止了，标成 interrupted，
     # 否则前端会一直转圈等一个永远不会完成的批次
@@ -647,7 +663,7 @@ def batch_status(user_id: int) -> dict:
     return dict(restored)
 
 
-def start_batch(user_id: int, items: list, *, dry_run: bool = True) -> dict:
+def start_batch(user_id: int, items: list, *, dry_run: bool = True, account_hash: str = "") -> dict:
     """启动批量创建。items 每项是一条 normalize_form 前的原始表单。"""
     if not isinstance(items, list) or not items:
         raise StoreError("批量列表为空", code="ARGS", status=400)
@@ -672,6 +688,7 @@ def start_batch(user_id: int, items: list, *, dry_run: bool = True) -> dict:
             ],
             "started_at": time.time(),
             "finished_at": None,
+            "account_hash": account_hash,
         }
         # 立刻落库：后端重启后还能看到「有一条跑着的批次」
         save_batch_state(_batch_key(user_id), _BATCH_STATE[_batch_key(user_id)])
@@ -709,9 +726,30 @@ def start_batch(user_id: int, items: list, *, dry_run: bool = True) -> dict:
     return batch_status(user_id)
 
 
-def cancel_batch(user_id: int) -> dict:
+def clear_batch(user_id: int, account_hash: str = "") -> dict:
+    """清空已完成/中止的批量任务记录（正在跑的不清，避免误操作）。
+
+    不清理的话前端会一直显示「批量任务：已结束」，换店铺也甩不掉。
+    """
+    key = _batch_key(user_id)
+    with _BATCH_LOCK:
+        state = _BATCH_STATE.get(key)
+        if state and state.get("status") == "running":
+            raise StoreError("批量任务正在执行，无法清空", code="BUSY", status=409)
+        _BATCH_STATE.pop(key, None)
+    try:
+        with db_session() as session:
+            row = session.get(ProductBatchState, int(user_id))
+            if row:
+                session.delete(row)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("temubox.product").warning("清空批量进度失败", exc_info=True)
+    return {"status": "idle"}
+
+
+def cancel_batch(user_id: int, account_hash: str = "") -> dict:
     with _BATCH_LOCK:
         state = _BATCH_STATE.get(_batch_key(user_id))
-        if state and state.get("status") == "running":
+        if state and state.get("status") == "running" and _same_shop(state, account_hash):
             state["cancelled"] = True
-    return batch_status(user_id)
+    return batch_status(user_id, account_hash)
