@@ -205,6 +205,9 @@ class User(Base):
     modules: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     # 店铺管理下的二级模块（JSON 数组）：goods/create/kefu/actions
     store_modules: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    # 品类权限（JSON 数组，存 Category.code）。
+    # 空数组 = 全部品类（默认，老用户行为不变）；非空 = 只能操作这些品类。
+    categories: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -1345,14 +1348,15 @@ def user_dict(row: Optional[User]) -> Optional[dict]:
         "store_access": bool(row.store_access),
         "modules": _load_json_list(row.modules),
         "store_modules": _load_json_list(row.store_modules),
+        "categories": _load_json_list(getattr(row, "categories", None)),
         "created_at": _user_timestamp(row.created_at),
         "approved_at": _user_timestamp(row.approved_at),
     }
 
 
-def create_user(username: str, password_hash: str, display_name: str = "", role: str = "user", status: str = "pending", store_access: bool = False) -> dict:
+def create_user(username: str, password_hash: str, display_name: str = "", role: str = "user", status: str = "pending", store_access: bool = False, categories: Optional[list] = None) -> dict:
     with db_session() as session:
-        row = User(username=username, password_hash=password_hash, display_name=display_name, role=role, status=status, store_access=store_access, approved_at=datetime.now(timezone.utc) if status == "approved" else None)
+        row = User(username=username, password_hash=password_hash, display_name=display_name, role=role, status=status, store_access=store_access, categories=json.dumps(list(categories or []), ensure_ascii=False), approved_at=datetime.now(timezone.utc) if status == "approved" else None)
         session.add(row)
         session.flush()
         return {**user_dict(row), "password_hash": row.password_hash}
@@ -1377,6 +1381,7 @@ def update_user_credentials(
     store_access: Optional[bool] = None,
     modules: Optional[list] = None,
     store_modules: Optional[list] = None,
+    categories: Optional[list] = None,
 ) -> Optional[dict]:
     with db_session() as session:
         row = session.get(User, user_id)
@@ -1390,6 +1395,8 @@ def update_user_credentials(
             row.display_name = display_name
         if note is not None:
             row.note = note
+        if categories is not None:
+            row.categories = json.dumps(list(categories), ensure_ascii=False)
         if store_access is not None:
             row.store_access = bool(store_access)
         if modules is not None:

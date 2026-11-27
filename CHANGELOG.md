@@ -5,6 +5,28 @@
 
 条目分类：**新增**（功能）、**优化**（性能与体验）、**修复**（缺陷）。
 
+## 0.16.0 - 2026-11-27
+
+### 新增
+- **品类权限**：管理员可在「用户管理 → 品类权限」为每个用户勾选可用品类，
+  用户只能操作自己有权品的品类。
+
+  | 数据 | 说明 |
+  |---|---|
+  | `users.categories` | JSON 数组存 `Category.code`；空 = 全部品类（老用户行为不变）|
+  | 迁移 | `20261127_01_user_categories.py` |
+
+  **隔离范围**：
+  - `GET /api/categories` 只返回有权限的品类 → 前端品类选择器自动收敛
+  - 订单成本计算：`/api/regions/{code}/settings`、`/api/settings` 按 `category_code` 校验
+  - 库存查询：`/api/inventory/items` 按「品类绑定的库存类目」校验
+    （`Category.inventory_category`），无权品类对应的库存类目直接 403
+  - 头程减半 / 克重头程：`/api/half-headcost`、`/api/weight-headcost` 按品类校验
+  - 批量报名活动：`/api/activities/preview`、`/api/activities/bulk` 按品类校验
+  - 管理员恒为全权限，不受限制
+
+  **扩展**：新增品类只需在品类管理里建，然后到用户管理勾选即可，无需改代码。
+
 ## 0.15.2 - 2026-11-26
 
 ### 修复

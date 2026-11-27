@@ -115,6 +115,8 @@ class AdminUserUpdateRequest(BaseModel):
     store_access: Optional[bool] = None
     modules: Optional[list[str]] = None
     store_modules: Optional[list[str]] = None
+    # 品类权限（Category.code 列表）：空列表 = 全部品类
+    categories: Optional[list[str]] = None
 
 
 

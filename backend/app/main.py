@@ -272,9 +272,66 @@ def status(user: dict = Depends(current_user)):
     }
 
 
+def allowed_category_codes(user: dict) -> list[str]:
+    """用户有权限的品类 code 列表。
+
+    空列表 = 全部品类（老用户与管理员的默认行为）。
+    """
+    if user.get("role") == "admin":
+        return []
+    return [str(x).strip() for x in (user.get("categories") or []) if str(x).strip()]
+
+
+def guard_category(user: dict, code: Optional[str]) -> Optional[str]:
+    """校验品类权限。
+
+    - 无权限配置（空列表）→ 原样返回；
+    - 有配置但没传 code → 落到第一个有权限的品类；
+    - 传了但不在白名单 → 403。
+    """
+    allowed = allowed_category_codes(user)
+    if not allowed:
+        return code
+    if not code:
+        return allowed[0]
+    if str(code) not in allowed:
+        raise HTTPException(status_code=403, detail=f"没有品类 {code} 的权限")
+    return code
+
+
+def allowed_inventory_categories(user: dict) -> list[str]:
+    """用户可访问的库存类目（由品类权限推导）。
+
+    品类通过 Category.inventory_category 绑定库存类目；空列表 = 不限。
+    """
+    codes = allowed_category_codes(user)
+    if not codes:
+        return []
+    out: list[str] = []
+    for c in list_categories():
+        if str(c.get("code")) in codes:
+            ic = str(c.get("inventory_category") or "").strip() or "A"
+            if ic not in out:
+                out.append(ic)
+    return out
+
+
+def guard_inventory_category(user: dict, inventory_category: Optional[str]) -> str:
+    """校验库存类目访问权限，返回实际要用的库存类目。"""
+    ic = (inventory_category or "").strip() or "A"
+    allowed = allowed_inventory_categories(user)
+    if allowed and ic not in allowed:
+        raise HTTPException(status_code=403, detail=f"没有库存类目 {ic} 的权限")
+    return ic
+
+
 @app.get("/api/categories")
 def public_categories(region_code: Optional[str] = Query(None, max_length=16), _user: dict = Depends(current_user)):
-    return {"items": list_categories(region_code=region_code)}
+    items = list_categories(region_code=region_code)
+    allowed = allowed_category_codes(_user)
+    if allowed:
+        items = [c for c in items if str(c.get("code")) in allowed]
+    return {"items": items}
 
 
 # ==================== 店铺管理（每个用户登录自己的店铺） ====================
@@ -1289,6 +1346,7 @@ def public_regions(_user: dict = Depends(current_user)):
 @app.get("/api/regions/{code}/settings")
 def public_region_settings(code: str, category_code: Optional[str] = Query(None, max_length=16), _user: dict = Depends(current_user)):
     try:
+        category_code = guard_category(_user, category_code)
         return get_region_profile(code, category_code)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1301,6 +1359,7 @@ def get_public_settings(
     _user: dict = Depends(current_user),
 ):
     try:
+        category_code = guard_category(_user, category_code)
         return get_region_profile(region_code, category_code)["settings"]
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1368,7 +1427,8 @@ def list_inventory_items(
     inventory_category: Optional[str] = Query(None, max_length=16),
     user: dict = Depends(current_user),
 ):
-    catalog = load_price_catalog(category=inventory_category or "A")
+    inventory_category = guard_inventory_category(user, inventory_category)
+    catalog = load_price_catalog(category=inventory_category)
     items = filter_catalog_items(
         catalog,
         query=query,
@@ -1523,6 +1583,7 @@ async def preview_bulk_activity(
     result_filter: Optional[str] = Form(None),
     _user: dict = Depends(current_user),
 ):
+    category_code = guard_category(_user, category_code)
     validate_excel(file)
     content = await file.read(MAX_UPLOAD_BYTES + 1)
     await file.close()
@@ -1566,6 +1627,7 @@ async def process_bulk_activity(
     drop_all_unrecognized: Optional[bool] = Form(None),
     user: dict = Depends(current_user),
 ):
+    category_code = guard_category(user, category_code)
     validate_excel(file)
     content = await file.read(MAX_UPLOAD_BYTES + 1)
     await file.close()
@@ -1758,6 +1820,7 @@ def list_half_headcost(
     inventory_category: Optional[str] = Query(None, max_length=16),
     _user: dict = Depends(current_user),
 ):
+    category_code = guard_category(_user, category_code)
     try:
         category = get_category(category_code)
     except ValueError as exc:
@@ -1875,6 +1938,7 @@ def list_weight_headcost(
     inventory_category: Optional[str] = Query(None, max_length=16),
     _user: dict = Depends(current_user),
 ):
+    category_code = guard_category(_user, category_code)
     try:
         category = get_category(category_code)
     except ValueError as exc:
@@ -2326,6 +2390,16 @@ def admin_update_user(user_id: int, payload: AdminUserUpdateRequest, request: Re
     # 模块权限：只传了的才改，未传保持原样
     modules = payload.modules if "modules" in fields else None
     store_modules = payload.store_modules if "store_modules" in fields else None
+    # 品类权限：只接受真实存在的品类 code，去重保序；空列表 = 全部品类
+    categories = None
+    if "categories" in fields:
+        known = {str(c.get("code")) for c in list_categories()}
+        seen: list[str] = []
+        for code in payload.categories or []:
+            code = str(code).strip()
+            if code in known and code not in seen:
+                seen.append(code)
+        categories = seen
     user = update_user_credentials(
         user_id,
         username=username if payload.username is not None else None,
@@ -2335,6 +2409,7 @@ def admin_update_user(user_id: int, payload: AdminUserUpdateRequest, request: Re
         store_access=store_access,
         modules=modules,
         store_modules=store_modules,
+        categories=categories,
     )
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
@@ -2377,6 +2452,7 @@ def admin_get_settings(
     _admin: dict = Depends(admin_user),
 ):
     try:
+        category_code = guard_category(_admin, category_code)
         return get_region_profile(region_code, category_code, include_disabled=True)["settings"]
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -2391,6 +2467,7 @@ def admin_update_settings(
     admin: dict = Depends(admin_user),
 ):
     try:
+        category_code = guard_category(admin, category_code)
         profile = get_region_profile(region_code, category_code, include_disabled=True)
         updated = update_region(profile["code"], {**profile, "settings": payload.model_dump()}, admin["id"], category_code=profile["category"]["code"])
         audit.record(admin, "settings.update", "region", f"{profile['code']}/{profile['category']['code']}", "更新成本参数", request)
@@ -2472,6 +2549,7 @@ def admin_regions(_admin: dict = Depends(admin_user)):
 @app.get("/api/admin/regions/{code}")
 def admin_region(code: str, category_code: Optional[str] = Query(None, max_length=16), _admin: dict = Depends(admin_user)):
     try:
+        category_code = guard_category(_admin, category_code)
         return get_region_profile(code, category_code, include_disabled=True)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

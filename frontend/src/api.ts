@@ -1141,7 +1141,7 @@ export async function updateUserStatus(id: number, status: AdminUserStatusAction
   return data
 }
 
-export async function updateAdminUser(id: number, payload: { username?: string; display_name?: string; note?: string; password?: string; store_access?: boolean; modules?: string[]; store_modules?: string[] }) {
+export async function updateAdminUser(id: number, payload: { username?: string; display_name?: string; note?: string; password?: string; store_access?: boolean; modules?: string[]; store_modules?: string[]; categories?: string[] }) {
   const { data } = await http.patch<User>(`/admin/users/${id}`, payload)
   return data
 }

@@ -231,6 +231,8 @@ export interface User {
   modules?: string[]
   /** 店铺管理二级模块权限 */
   store_modules?: string[]
+  /** 品类权限（Category.code）：空 = 全部品类 */
+  categories?: string[]
   is_admin?: boolean
 }
 

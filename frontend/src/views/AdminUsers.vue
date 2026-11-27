@@ -8,6 +8,7 @@ import {
   getAdminUsers,
   updateAdminUser,
   updateUserStatus,
+  getCategories,
 } from '../api'
 import { confirmAction, notifyError, notifySuccess } from '../feedback'
 import type { User } from '../types'
@@ -42,8 +43,12 @@ const editForm = reactive({
   password: '',
   modules: [] as string[],
   store_modules: [] as string[],
+  // 品类权限：空 = 全部品类
+  categories: [] as string[],
 })
 const bulkForm = reactive({ setDisplayName: false, display_name: '', setNote: false, note: '' })
+/** 可供分配的品类（管理员接口一次拿全量） */
+const categoryOptions = ref<Array<{ code: string; name: string }>>([])
 const selectedIds = computed(() => selectedUsers.value.filter((user) => user.role !== 'admin').map((user) => user.id))
 const canBulkEdit = computed(() => bulkForm.setDisplayName || bulkForm.setNote)
 
@@ -115,10 +120,21 @@ function openEdit(user: User) {
     : user.store_access
       ? ['orders', 'inventory', 'activities', 'tasks', 'store']
       : ['orders', 'inventory', 'activities', 'tasks']
+  editForm.categories = Array.isArray(user.categories) ? [...user.categories] : []
   editForm.store_modules = Array.isArray(user.store_modules) && user.store_modules.length
     ? [...user.store_modules]
     : ['goods', 'create', 'kefu', 'actions']
   editDialogVisible.value = true
+}
+
+/** 拉品类列表（/api/categories 已按当前用户过滤，管理员是全量） */
+async function loadCategoryOptions() {
+  try {
+    const list = await getCategories()
+    categoryOptions.value = (list || []).map((c) => ({ code: c.code, name: c.name || c.code }))
+  } catch {
+    categoryOptions.value = []
+  }
 }
 
 async function saveUser() {
@@ -130,6 +146,7 @@ async function saveUser() {
       display_name: editForm.display_name.trim(),
       modules: editForm.modules,
       store_modules: editForm.store_modules,
+      categories: editForm.categories,
       note: editForm.note.trim(),
       password: editForm.password || undefined,
     }))
@@ -389,6 +406,14 @@ onMounted(load)
             <el-checkbox v-for="m in STORE_MODULE_OPTIONS" :key="m.key" :value="m.key">{{ m.label }}</el-checkbox>
           </el-checkbox-group>
           <p class="perm-hint">只勾「商品查询」时，该用户只能看看商品，不能创建商品</p>
+        </el-form-item>
+        <el-form-item label="品类权限">
+          <el-checkbox-group v-model="editForm.categories">
+            <el-checkbox v-for="c in categoryOptions" :key="c.code" :value="c.code">{{ c.name }}</el-checkbox>
+          </el-checkbox-group>
+          <p class="perm-hint">
+            不勾 = 全部品类；勾了就只能在所选品类下做订单计算、看对应库存、报名活动、维护头程名单
+          </p>
         </el-form-item>
       </el-form>
       <template #footer><el-button @click="editDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" :disabled="editForm.username.trim().length < 3 || (!!editForm.password && editForm.password.length < 8)" @click="saveUser">保存</el-button></template>
