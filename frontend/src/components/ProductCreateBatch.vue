@@ -626,56 +626,26 @@ function startPolling() {
   }, 5000)
 }
 
-/** 任务结束后：全成功提示并自动收卡片；有失败则保留，给出重试入口 */
+/**
+ * 任务结束后：只提示结果，卡片立即收掉。
+ * 详细记录与失败原因统一去「操作记录 → 商品创建」查看，创建页不再堆历史。
+ */
 async function onBatchFinished() {
   const b = batch.value
   const failed = Number(b.failed || 0)
   const succeeded = Number(b.succeeded || 0)
-  if (b.status === 'done' && failed === 0) {
-    notifySuccess(`批量创建完成：成功 ${succeeded} 个`)
-    // 留 1.2 秒让绿色进度条走完，再把卡片收掉
-    window.setTimeout(() => {
-      if (batch.value.status === 'done' && !Number(batch.value.failed || 0)) {
-        batch.value = { status: 'idle' }
-        void clearProductBatch().catch(() => {})
-      }
-    }, 1200)
-    return
-  }
-  if (failed) {
-    notifyError(new Error(`创建结束：成功 ${succeeded} 个、失败 ${failed} 个，可在下方查看原因后重试`))
-    return
-  }
+  const where = '详情见「操作记录 → 商品创建」'
+
   if (b.status === 'interrupted') {
-    notifyWarning('批量任务被中断，可点「清空记录」后重新提交')
+    notifyWarning(`批量任务被中断（成功 ${succeeded} 个、失败 ${failed} 个），${where}`)
+  } else if (failed) {
+    notifyError(new Error(`创建结束：成功 ${succeeded} 个、失败 ${failed} 个，${where}`))
+  } else {
+    notifySuccess(`批量创建完成：成功 ${succeeded} 个，${where}`)
   }
-}
 
-/** 失败卡片在 cards 里的下标，用于重试 */
-const failedIndexes = computed(() =>
-  (batch.value.items || [])
-    .filter((it) => it.status === 'failed' || it.status === 'cancelled')
-    .map((it) => Number(it.index))
-    .filter((i) => Number.isInteger(i) && i >= 0 && i < cards.value.length),
-)
-
-/** 重试失败项：用当前卡片内容重新提交（用户可先改完再重试） */
-async function retryFailed() {
-  const ids = failedIndexes.value
-  if (!ids.length) return
-  const items = ids.map((i) => buildItem(cards.value[i]))
-  const ok = await confirmAction(`重试 ${items.length} 个失败的卡片？间隔仍约 20 秒。`, '重试失败项')
-  if (!ok) return
-  starting.value = true
-  try {
-    batch.value = await startProductBatch(items, false)
-    notifySuccess(`已重新提交 ${items.length} 个`)
-    startPolling()
-  } catch (error) {
-    notifyError(error)
-  } finally {
-    starting.value = false
-  }
+  batch.value = { status: 'idle' }
+  void clearProductBatch().catch(() => {})
 }
 
 /** 任务状态中文与配色 */
@@ -742,23 +712,19 @@ onMounted(async () => {
     templates.value = []
   }
   try {
-    batch.value = await getProductBatchStatus()
-    if (batch.value.status === 'running') startPolling()
+    const st = await getProductBatchStatus()
+    if (st.status === 'running') {
+      batch.value = st
+      startPolling()
+    } else if (st.status !== 'idle') {
+      // 已结束的旧记录不在创建页展示（记录去「操作记录 → 商品创建」），顺手清掉
+      void clearProductBatch().catch(() => {})
+    }
   } catch {
     /* 没有历史任务 */
   }
   createCards()
 })
-
-/** 清空已结束的任务记录 */
-async function clearBatch() {
-  try {
-    await clearProductBatch()
-    batch.value = { status: 'idle' }
-  } catch (error) {
-    notifyError(error as Error)
-  }
-}
 
 onUnmounted(stopPolling)
 </script>
@@ -923,37 +889,20 @@ onUnmounted(stopPolling)
 
     <!-- 运行进度 -->
     <Transition name="batch-fade">
-      <el-card v-if="batch.status !== 'idle'" shadow="never" class="batch__progress">
+      <el-card v-if="batch.status === 'running'" shadow="never" class="batch__progress">
         <div class="batch__proghead">
           <span class="batch__progtitle">
-            <span
-              class="batch__dot"
-              :class="batch.status === 'running' ? 'batch__dot--live' : batch.failed ? 'batch__dot--fail' : 'batch__dot--ok'"
-            />
-            {{
-              batch.status === 'running'
-                ? '正在创建'
-                : batch.status === 'interrupted'
-                  ? '任务已中断'
-                  : batch.failed
-                    ? '创建结束（有失败）'
-                    : '创建完成'
-            }}
+            <span class="batch__dot batch__dot--live" />
+            正在创建
           </span>
           <span class="batch__progactions">
-            <el-button v-if="batch.status === 'running'" size="small" @click="cancel">停止</el-button>
-            <template v-else>
-              <el-button v-if="failedIndexes.length" type="primary" size="small" @click="retryFailed">
-                重试失败的 {{ failedIndexes.length }} 个
-              </el-button>
-              <el-button size="small" link type="primary" @click="clearBatch">清空记录</el-button>
-            </template>
+            <el-button size="small" @click="cancel">停止</el-button>
           </span>
         </div>
 
         <el-progress
           :percentage="progress"
-          :status="batch.status === 'running' ? undefined : batch.failed ? 'warning' : 'success'"
+
           :stroke-width="8"
         />
         <p class="batch__meta">

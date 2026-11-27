@@ -20,7 +20,7 @@ import time
 from typing import Optional
 
 from app.services import temu_bridge
-from app.database import ProductBatchState, load_batch_state, log_product_create, save_batch_state
+from app.database import ProductBatchState, db_session, load_batch_state, log_product_create, save_batch_state
 from app.services.store_goods import require_account
 from app.services.store_session import StoreError, translate_bridge_error
 from app.services.temu_bridge import BridgeError
@@ -741,13 +741,12 @@ def clear_batch(user_id: int, account_hash: str = "") -> dict:
         if state and state.get("status") == "running":
             raise StoreError("批量任务正在执行，无法清空", code="BUSY", status=409)
         _BATCH_STATE.pop(key, None)
-    try:
-        with db_session() as session:
-            row = session.get(ProductBatchState, int(user_id))
-            if row:
-                session.delete(row)
-    except Exception:  # noqa: BLE001
-        logging.getLogger("temubox.product").warning("清空批量进度失败", exc_info=True)
+    # 库里的必须删掉：只清内存的话下次 batch_status 会把旧记录读回来，
+    # 表现为「点了清空但记录还在」。这里不吞异常，失败就让调用方看到。
+    with db_session() as session:
+        row = session.get(ProductBatchState, int(user_id))
+        if row:
+            session.delete(row)
     return {"status": "idle"}
 
 
