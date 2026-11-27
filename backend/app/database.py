@@ -544,6 +544,8 @@ def _ensure_user_schema() -> None:
             connection.execute(text("ALTER TABLE users ADD COLUMN modules TEXT NOT NULL DEFAULT '[]'"))
         if "store_modules" not in columns:
             connection.execute(text("ALTER TABLE users ADD COLUMN store_modules TEXT NOT NULL DEFAULT '[]'"))
+        if "categories" not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN categories TEXT NOT NULL DEFAULT '[]'"))
 
 
 def _ensure_template_schema() -> None:
