@@ -2149,6 +2149,63 @@ def set_flag(key: str, value: bool = True) -> None:
         else:
             session.add(AppSetting(key=key, value=encoded))
 
+def list_product_create_logs(
+    user_id: int,
+    *,
+    status: str = "",
+    keyword: str = "",
+    page: int = 1,
+    size: int = 20,
+) -> dict:
+    """当前用户的建品记录（操作记录页「商品创建」用）。
+
+    status 可选 ok / failed；keyword 匹配商品名。
+    """
+    from sqlalchemy import func, select
+
+    conds = [ProductCreateLog.user_id == int(user_id)]
+    if status in ("ok", "failed"):
+        conds.append(ProductCreateLog.status == status)
+    kw = (keyword or "").strip()
+    if kw:
+        conds.append(ProductCreateLog.product_name.ilike(f"%{kw}%"))
+
+    page = max(1, int(page or 1))
+    size = min(100, max(1, int(size or 20)))
+    with db_session() as session:
+        total = session.scalar(select(func.count()).select_from(ProductCreateLog).where(*conds)) or 0
+        rows = session.scalars(
+            select(ProductCreateLog)
+            .where(*conds)
+            .order_by(ProductCreateLog.created_at.desc(), ProductCreateLog.id.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+        ).all()
+        ok_count = session.scalar(
+            select(func.count()).select_from(ProductCreateLog).where(*conds, ProductCreateLog.status == "ok")
+        ) or 0
+        items = [
+            {
+                "id": r.id,
+                "product_name": r.product_name,
+                "status": r.status,
+                "error": r.error or "",
+                "product_id": r.product_id,
+                "batch": bool(r.batch),
+                "created_at": r.created_at.isoformat() if r.created_at else "",
+            }
+            for r in rows
+        ]
+    return {
+        "items": items,
+        "total": int(total),
+        "ok": int(ok_count),
+        "failed": int(total) - int(ok_count),
+        "page": page,
+        "size": size,
+    }
+
+
 def log_product_create(
     user_id: int,
     product_name: str,

@@ -42,7 +42,7 @@ export const router = createRouter({
         { path: 'goods', component: () => import('./components/StoreGoodsPanel.vue'), meta: { title: '商品查询' } },
         { path: 'create', component: () => import('./components/StoreProductCreate.vue'), meta: { title: '创建商品' } },
         { path: 'kefu', component: () => import('./components/StoreKefuPanel.vue'), meta: { title: '客服自助' } },
-        { path: 'actions', component: () => import('./components/StoreKefuActionsPanel.vue'), meta: { title: '操作记录' } },
+        { path: 'actions', component: () => import('./components/StoreRecordsPanel.vue'), meta: { title: '操作记录' } },
       ],
     },
     { path: '/tasks', component: TaskHistory, meta: { title: '任务记录' } },

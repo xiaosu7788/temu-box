@@ -616,11 +616,78 @@ function startPolling() {
   pollTimer = window.setInterval(async () => {
     try {
       batch.value = await getProductBatchStatus()
-      if (batch.value.status !== 'running') stopPolling()
+      if (batch.value.status !== 'running') {
+        stopPolling()
+        void onBatchFinished()
+      }
     } catch {
       stopPolling()
     }
   }, 5000)
+}
+
+/** 任务结束后：全成功提示并自动收卡片；有失败则保留，给出重试入口 */
+async function onBatchFinished() {
+  const b = batch.value
+  const failed = Number(b.failed || 0)
+  const succeeded = Number(b.succeeded || 0)
+  if (b.status === 'done' && failed === 0) {
+    notifySuccess(`批量创建完成：成功 ${succeeded} 个`)
+    // 留 1.2 秒让绿色进度条走完，再把卡片收掉
+    window.setTimeout(() => {
+      if (batch.value.status === 'done' && !Number(batch.value.failed || 0)) {
+        batch.value = { status: 'idle' }
+        void clearProductBatch().catch(() => {})
+      }
+    }, 1200)
+    return
+  }
+  if (failed) {
+    notifyError(new Error(`创建结束：成功 ${succeeded} 个、失败 ${failed} 个，可在下方查看原因后重试`))
+    return
+  }
+  if (b.status === 'interrupted') {
+    notifyWarning('批量任务被中断，可点「清空记录」后重新提交')
+  }
+}
+
+/** 失败卡片在 cards 里的下标，用于重试 */
+const failedIndexes = computed(() =>
+  (batch.value.items || [])
+    .filter((it) => it.status === 'failed' || it.status === 'cancelled')
+    .map((it) => Number(it.index))
+    .filter((i) => Number.isInteger(i) && i >= 0 && i < cards.value.length),
+)
+
+/** 重试失败项：用当前卡片内容重新提交（用户可先改完再重试） */
+async function retryFailed() {
+  const ids = failedIndexes.value
+  if (!ids.length) return
+  const items = ids.map((i) => buildItem(cards.value[i]))
+  const ok = await confirmAction(`重试 ${items.length} 个失败的卡片？间隔仍约 20 秒。`, '重试失败项')
+  if (!ok) return
+  starting.value = true
+  try {
+    batch.value = await startProductBatch(items, false)
+    notifySuccess(`已重新提交 ${items.length} 个`)
+    startPolling()
+  } catch (error) {
+    notifyError(error)
+  } finally {
+    starting.value = false
+  }
+}
+
+/** 任务状态中文与配色 */
+function statusText(s: string) {
+  return ({ ok: '成功', failed: '失败', pending: '排队中', running: '创建中', cancelled: '已取消' } as Record<string, string>)[s] || s
+}
+
+function statusTone(s: string) {
+  if (s === 'ok') return 'success'
+  if (s === 'failed') return 'danger'
+  if (s === 'running') return 'primary'
+  return 'info'
 }
 
 function stopPolling() {
@@ -855,34 +922,78 @@ onUnmounted(stopPolling)
     </div>
 
     <!-- 运行进度 -->
-    <el-card v-if="batch.status !== 'idle'" shadow="never" class="batch__progress">
-      <div class="batch__proghead">
-        <span>批量任务：{{ batch.status === 'running' ? '执行中' : '已结束' }}</span>
-        <span>
-          <el-button v-if="batch.status === 'running'" size="small" @click="cancel">停止</el-button>
-          <el-button v-else size="small" link type="primary" @click="clearBatch">清空记录</el-button>
-        </span>
-      </div>
-      <el-progress :percentage="progress" :status="batch.status === 'running' ? undefined : 'success'" />
-      <p class="batch__meta">
-        成功 {{ batch.succeeded || 0 }} · 失败 {{ batch.failed || 0 }} · 共 {{ batch.total || 0 }}
-        <template v-if="batch.current">· 当前：{{ batch.current }}</template>
-      </p>
-      <el-table v-if="batch.items?.length" :data="batch.items" size="small" max-height="240">
-        <el-table-column prop="index" label="#" width="52" />
-        <el-table-column prop="name" label="商品" min-width="160" show-overflow-tooltip />
-        <el-table-column label="状态" width="90">
-          <template #default="scope">
-            <el-tag
-              :type="scope.row.status === 'ok' ? 'success' : scope.row.status === 'failed' ? 'danger' : 'info'"
-              size="small"
-              effect="plain"
-            >{{ scope.row.status }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="error" label="原因" min-width="180" show-overflow-tooltip />
-      </el-table>
-    </el-card>
+    <Transition name="batch-fade">
+      <el-card v-if="batch.status !== 'idle'" shadow="never" class="batch__progress">
+        <div class="batch__proghead">
+          <span class="batch__progtitle">
+            <span
+              class="batch__dot"
+              :class="batch.status === 'running' ? 'batch__dot--live' : batch.failed ? 'batch__dot--fail' : 'batch__dot--ok'"
+            />
+            {{
+              batch.status === 'running'
+                ? '正在创建'
+                : batch.status === 'interrupted'
+                  ? '任务已中断'
+                  : batch.failed
+                    ? '创建结束（有失败）'
+                    : '创建完成'
+            }}
+          </span>
+          <span class="batch__progactions">
+            <el-button v-if="batch.status === 'running'" size="small" @click="cancel">停止</el-button>
+            <template v-else>
+              <el-button v-if="failedIndexes.length" type="primary" size="small" @click="retryFailed">
+                重试失败的 {{ failedIndexes.length }} 个
+              </el-button>
+              <el-button size="small" link type="primary" @click="clearBatch">清空记录</el-button>
+            </template>
+          </span>
+        </div>
+
+        <el-progress
+          :percentage="progress"
+          :status="batch.status === 'running' ? undefined : batch.failed ? 'warning' : 'success'"
+          :stroke-width="8"
+        />
+        <p class="batch__meta">
+          成功 {{ batch.succeeded || 0 }} · 失败 {{ batch.failed || 0 }} · 共 {{ batch.total || 0 }}
+        </p>
+
+        <el-table v-if="batch.items?.length" :data="batch.items" size="small" max-height="240">
+          <el-table-column prop="index" label="#" width="52" />
+          <el-table-column prop="name" label="商品" min-width="160" show-overflow-tooltip />
+          <el-table-column label="状态" width="86">
+            <template #default="scope">
+              <el-tag :type="statusTone(scope.row.status)" size="small" effect="plain">
+                {{ statusText(scope.row.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="原因" min-width="220">
+            <template #default="scope">
+              <span v-if="scope.row.error" class="batch__error">{{ scope.row.error }}</span>
+              <span v-else class="batch__muted">—</span>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <!-- 运行中的遮罩：挡住表格，只让用户看到整体进度 -->
+        <Transition name="batch-mask">
+          <div v-if="batch.status === 'running'" class="batch__mask">
+            <div class="batch__mask-ring">
+              <el-progress type="circle" :percentage="progress" :width="104" :stroke-width="7" />
+            </div>
+            <p class="batch__mask-title">{{ batch.done || 0 }} / {{ batch.total || 0 }}</p>
+            <p v-if="batch.current" class="batch__mask-sub">{{ batch.current }}</p>
+            <div class="batch__mask-stats">
+              <span class="batch__mask-ok">成功 {{ batch.succeeded || 0 }}</span>
+              <span v-if="batch.failed" class="batch__mask-fail">失败 {{ batch.failed || 0 }}</span>
+            </div>
+          </div>
+        </Transition>
+      </el-card>
+    </Transition>
 
     <!-- 单卡参数编辑 -->
     <el-dialog v-model="editCardVisible" :title="`编辑卡片 #${editCardIndex + 1} 的参数`" width="min(760px, calc(100vw - 32px))">
@@ -1121,6 +1232,174 @@ onUnmounted(stopPolling)
 </template>
 
 <style scoped>
+/* ---------- 批量任务进度与遮罩动画 ---------- */
+.batch__progress {
+  position: relative;
+  overflow: hidden;
+  margin-top: 16px;
+}
+
+.batch__proghead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.batch__progtitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.batch__progactions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+/* 状态点：运行时呼吸，结束变实心 */
+.batch__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #909399;
+  flex: none;
+}
+
+.batch__dot--live {
+  background: #409eff;
+  animation: batch-pulse 1.4s ease-out infinite;
+}
+
+.batch__dot--ok {
+  background: #67c23a;
+}
+
+.batch__dot--fail {
+  background: #f56c6c;
+}
+
+@keyframes batch-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(64, 158, 255, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(64, 158, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(64, 158, 255, 0);
+  }
+}
+
+/* 运行遮罩：盖住明细表格，只呈现整体进度 */
+.batch__mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(3px);
+  z-index: 3;
+}
+
+.batch__mask-ring {
+  animation: batch-breathe 2.6s ease-in-out infinite;
+}
+
+@keyframes batch-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.045);
+  }
+}
+
+.batch__mask-title {
+  margin: 6px 0 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text, #303133);
+  font-variant-numeric: tabular-nums;
+}
+
+.batch__mask-sub {
+  margin: 0;
+  max-width: 80%;
+  font-size: 12px;
+  color: #909399;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch__mask-stats {
+  display: flex;
+  gap: 14px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.batch__mask-ok {
+  color: #67c23a;
+}
+
+.batch__mask-fail {
+  color: #f56c6c;
+}
+
+/* 遮罩进出场 */
+.batch-mask-enter-active,
+.batch-mask-leave-active {
+  transition: opacity 0.28s ease;
+}
+
+.batch-mask-enter-from,
+.batch-mask-leave-to {
+  opacity: 0;
+}
+
+/* 卡片整体进出场 */
+.batch-fade-enter-active,
+.batch-fade-leave-active {
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+}
+
+.batch-fade-enter-from,
+.batch-fade-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.batch__error {
+  color: #f56c6c;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.batch__muted {
+  color: #c0c4cc;
+}
+
+/* 尊重系统的减少动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .batch__dot--live,
+  .batch__mask-ring {
+    animation: none;
+  }
+}
+
 .batch {
   display: flex;
   flex-direction: column;

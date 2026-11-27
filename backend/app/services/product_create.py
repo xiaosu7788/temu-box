@@ -624,11 +624,15 @@ def _batch_key(user_id: int) -> int:
 
 
 def _same_shop(state: dict, account_hash: str) -> bool:
-    """状态记录是否属于当前店铺。老数据没有 account_hash 时按「同店」处理，避免直接失效。"""
+    """状态记录是否属于当前店铺。
+
+    老记录（没有 account_hash）一律视为「不属于任何店铺」，避免跨店可见；
+    需要清理时点一次「清空记录」即可。
+    """
     if not account_hash:
         return True
     saved = str(state.get("account_hash") or "")
-    return not saved or saved == account_hash
+    return saved == account_hash
 
 
 def batch_status(user_id: int, account_hash: str = "") -> dict:

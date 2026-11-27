@@ -954,6 +954,20 @@ def store_product_batch_start(payload: dict, request: Request, user: dict = Depe
     return state
 
 
+@app.get("/api/store/product-logs")
+def store_product_logs(
+    status: str = "",
+    keyword: str = "",
+    page: int = 1,
+    size: int = 20,
+    user: dict = Depends(store_user),
+):
+    """建品记录（操作记录页「商品创建」标签）。"""
+    return database.list_product_create_logs(
+        user["id"], status=status, keyword=keyword, page=page, size=size
+    )
+
+
 @app.delete("/api/store/products/batch")
 def store_product_batch_clear(user: dict = Depends(store_user)):
     """清空已结束的批量任务记录。"""

@@ -468,6 +468,32 @@ export async function startProductBatch(items: Array<Record<string, unknown>>, d
 }
 
 /** 清空已结束的批量任务记录（正在跑的不让清） */
+/** 建品记录（操作记录页「商品创建」标签） */
+export async function getProductLogs(params: {
+  status?: string
+  keyword?: string
+  page?: number
+  size?: number
+}) {
+  const { data } = await http.get<{
+    items: Array<{
+      id: number
+      product_name: string
+      status: string
+      error: string
+      product_id: number | null
+      batch: boolean
+      created_at: string
+    }>
+    total: number
+    ok: number
+    failed: number
+    page: number
+    size: number
+  }>('/store/product-logs', { params })
+  return data
+}
+
 export async function clearProductBatch() {
   const { data } = await http.delete<{ status: string }>('/store/products/batch')
   return data

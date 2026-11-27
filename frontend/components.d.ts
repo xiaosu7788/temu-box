@@ -80,6 +80,8 @@ declare module 'vue' {
     StoreKefuActionsPanel: typeof import('./src/components/StoreKefuActionsPanel.vue')['default']
     StoreKefuPanel: typeof import('./src/components/StoreKefuPanel.vue')['default']
     StoreProductCreate: typeof import('./src/components/StoreProductCreate.vue')['default']
+    StoreProductLogsPanel: typeof import('./src/components/StoreProductLogsPanel.vue')['default']
+    StoreRecordsPanel: typeof import('./src/components/StoreRecordsPanel.vue')['default']
     TemuCategoryPicker: typeof import('./src/components/TemuCategoryPicker.vue')['default']
     VersionDialog: typeof import('./src/components/VersionDialog.vue')['default']
   }
