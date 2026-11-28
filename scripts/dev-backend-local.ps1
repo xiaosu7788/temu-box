@@ -48,4 +48,6 @@ New-Item -ItemType Directory -Force -Path (Join-Path $Root 'data\logs') | Out-Nu
 Set-Location (Join-Path $Root 'backend')
 # 日志按天分文件：固定文件名会被上一个实例占住，导致新实例启动即失败
 $logFile = Join-Path $Root ("data\logs\dev-backend-" + (Get-Date -Format 'yyyyMMdd') + ".log")
-& .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port $Port --reload *>> $logFile
+# --reload-dir app：只监控应用代码。默认监控整个 backend/ 时，
+# 改测试或日志文件也会触发 reload，正在跑的任务会被打断。
+& .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port $Port --reload --reload-dir app *>> $logFile

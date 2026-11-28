@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.database import create_activity_job, create_user, update_activity_job
+from app.database import create_activity_job, create_user, update_activity_job, update_user_credentials
 from app.main import app
 from app.services.auth import hash_password
 from app.services.tasks import task_manager
@@ -161,3 +161,29 @@ def test_user_tasks_are_scoped_and_admin_uses_admin_endpoints_for_all_tasks():
         other = create_user("task_other", hash_password("otherpass123"), status="approved", categories=["A"])
         client.post("/api/auth/login", json={"username": "task_other", "password": "otherpass123"})
         assert client.get("/api/admin/tasks").status_code == 403
+
+def test_login_returns_permission_snapshot():
+    """登录响应必须带模块权限，否则前端登录后菜单是空的。
+
+    曾经 /api/auth/login 只返回 public_user(user)（不含 modules），
+    普通用户登录后 allowedModules 为空 → 左侧导航全空，
+    只有手动刷新页面（重新走 /api/auth/me）才恢复。
+    管理员不受影响（前端对其恒全开），所以这个坑只在普通账号上暴露。
+    """
+    with TestClient(app) as client:
+        user = create_user("perm_snapshot_user", hash_password("permsnap123"), status="approved", categories=["A"])
+        update_user_credentials(user["id"], modules=["orders", "inventory"], store_modules=["goods"])
+
+        login = client.post("/api/auth/login", json={"username": "perm_snapshot_user", "password": "permsnap123"})
+        assert login.status_code == 200
+        data = login.json()
+
+        assert "modules" in data, "登录响应缺少 modules，前端导航栏会全空"
+        assert data["modules"] == ["orders", "inventory"]
+        assert data["store_modules"] == ["goods"]
+        assert data["is_admin"] is False
+
+        # 与 /api/auth/me 保持同构
+        me = client.get("/api/auth/me").json()
+        assert data["modules"] == me["modules"]
+        assert data["store_modules"] == me["store_modules"]

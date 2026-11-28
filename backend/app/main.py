@@ -247,7 +247,11 @@ def login(request: LoginRequest, http_request: Request, response: Response):
         raise
     response.set_cookie(SESSION_COOKIE_NAME, make_session(user["id"]), max_age=SESSION_MAX_AGE, httponly=True, samesite="lax", secure=COOKIE_SECURE)
     audit.record(user, "auth.login", "user", user["username"], "登录成功", http_request)
-    return public_user(user)
+    # 必须带上权限快照，和 /api/auth/me 保持同构：
+    # 前端登录后直接用这个对象刷菜单，缺 modules 会让普通用户登录后导航栏全空，
+    # 只有手动刷新页面（重新走 /api/auth/me）才恢复。管理员不受影响（恒全开），
+    # 所以这个坑只在普通账号上暴露。
+    return {**public_user(user), **permissions.apply_to_form(user)}
 
 
 @app.post("/api/auth/logout")
