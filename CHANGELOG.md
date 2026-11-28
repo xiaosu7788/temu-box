@@ -5,6 +5,15 @@
 
 条目分类：**新增**（功能）、**优化**（性能与体验）、**修复**（缺陷）。
 
+## 0.17.3 - 2026-11-28
+
+### 新增
+- `scripts/dev-bridge-local.ps1`：本地启动店铺 bridge 的正式入口。
+  bridge 是零依赖的（`package.json` 的 `dependencies` 为空），不需要 `npm install`，
+  但没有启动脚本时每次都要手动拼 `BRIDGE_TOKEN`，漏了就报「店铺管理服务暂不可用」
+  （bridge 未运行）或 403（token 不对）。
+  脚本读取 `.env` 的 `STORE_BRIDGE_TOKEN` 注入 `BRIDGE_TOKEN`，清理端口后启动 `node server.js`。
+
 ## 0.17.2 - 2026-11-28
 
 ### 修复
