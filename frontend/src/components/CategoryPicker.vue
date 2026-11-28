@@ -16,6 +16,11 @@ async function load() {
   try {
     // filterByRegion：只显示对当前区域开放的品类（减半名单等与区域无关的页面不过滤）
     categories.value = await getCategories(props.filterByRegion ? selectedRegionCode.value || undefined : undefined)
+    if (!categories.value.length) {
+      // 一个品类都没有（管理员未配置权限）：清空选中，页面自然显示空
+      if (props.modelValue) emit('update:modelValue', '')
+      return
+    }
     if (!categories.value.some((item) => item.code === props.modelValue)) {
       const fallback = categories.value.find((item) => item.is_default) || categories.value[0]
       if (fallback) emit('update:modelValue', fallback.code)
@@ -39,7 +44,13 @@ onMounted(load)
 <template>
   <div class="category-picker" :class="{ 'category-picker--compact': props.compact }">
     <span><el-icon><Goods /></el-icon>品类</span>
-    <el-select :model-value="modelValue" :loading="loading" placeholder="选择品类" @update:model-value="emit('update:modelValue', $event)">
+    <el-select
+      :model-value="modelValue"
+      :loading="loading"
+      :placeholder="categories.length ? '选择品类' : '未配置品类'"
+      :disabled="!loading && !categories.length"
+      @update:model-value="emit('update:modelValue', $event)"
+    >
       <el-option v-for="category in categories" :key="category.code" :label="category.name" :value="category.code" />
     </el-select>
   </div>

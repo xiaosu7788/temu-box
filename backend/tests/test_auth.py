@@ -39,7 +39,7 @@ def test_admin_can_see_new_registration():
 
 def test_admin_can_approve_user_and_change_settings():
     admin = create_user("admin_test", hash_password("adminpass123"), role="admin", status="approved")
-    user = create_user("approval_user", hash_password("userpass123"))
+    user = create_user("approval_user", hash_password("userpass123"), categories=["A"])
     with TestClient(app) as client:
         login = client.post("/api/auth/login", json={"username": "admin_test", "password": "adminpass123"})
         assert login.status_code == 200
@@ -57,7 +57,7 @@ def test_admin_can_approve_user_and_change_settings():
 
 
 def test_approved_user_can_view_but_not_update_cost_settings():
-    create_user("settings_reader", hash_password("readerpass123"), status="approved")
+    create_user("settings_reader", hash_password("readerpass123"), status="approved", categories=["A"])
     with TestClient(app) as client:
         login = client.post("/api/auth/login", json={"username": "settings_reader", "password": "readerpass123"})
         assert login.status_code == 200
@@ -88,7 +88,7 @@ def test_admin_can_manage_default_activity_skc_rules():
 
 
 def test_regular_user_cannot_update_default_activity_skc_rules():
-    create_user("activity_rules_user", hash_password("rulesuser123"), status="approved")
+    create_user("activity_rules_user", hash_password("rulesuser123"), status="approved", categories=["A"])
     with TestClient(app) as client:
         client.post("/api/auth/login", json={"username": "activity_rules_user", "password": "rulesuser123"})
         rules = client.get("/api/settings").json()["activity"]["default_skc_rules"]
@@ -96,7 +96,7 @@ def test_regular_user_cannot_update_default_activity_skc_rules():
 
 def test_admin_can_update_and_delete_regular_users():
     admin = create_user("user_manager", hash_password("managerpass123"), role="admin", status="approved")
-    target = create_user("managed_user", hash_password("oldpassword123"), status="approved")
+    target = create_user("managed_user", hash_password("oldpassword123"), status="approved", categories=["A"])
     with TestClient(app) as client:
         login = client.post("/api/auth/login", json={"username": admin["username"], "password": "managerpass123"})
         assert login.status_code == 200
@@ -128,7 +128,7 @@ def test_task_history_is_scoped_to_owner():
 
 def test_user_tasks_are_scoped_and_admin_uses_admin_endpoints_for_all_tasks():
     admin = create_user("task_admin", hash_password("adminpass123"), role="admin", status="approved")
-    user = create_user("task_owner", hash_password("userpass123"), status="approved")
+    user = create_user("task_owner", hash_password("userpass123"), status="approved", categories=["A"])
     task = task_manager.create("sales-delete.xlsx", "delivery-delete.xlsx", None, user["id"])
     task_manager._update(task["id"], status="completed", progress=100, message="处理完成")
     admin_order_task = task_manager.create("sales-admin-delete.xlsx", "delivery-admin-delete.xlsx", None, user["id"])
@@ -158,6 +158,6 @@ def test_user_tasks_are_scoped_and_admin_uses_admin_endpoints_for_all_tasks():
         assert activity_task["id"] not in {item["id"] for item in client.get("/api/admin/activity-tasks").json()["items"]}
 
         client.post("/api/auth/logout")
-        other = create_user("task_other", hash_password("otherpass123"), status="approved")
+        other = create_user("task_other", hash_password("otherpass123"), status="approved", categories=["A"])
         client.post("/api/auth/login", json={"username": "task_other", "password": "otherpass123"})
         assert client.get("/api/admin/tasks").status_code == 403

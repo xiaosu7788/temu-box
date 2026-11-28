@@ -45,7 +45,7 @@ def bridge(monkeypatch):
 
 
 def _client_for(username: str, password: str, *, store_access: bool = True) -> TestClient:
-    create_user(username, hash_password(password), status="approved", store_access=store_access)
+    create_user(username, hash_password(password), status="approved", store_access=store_access, categories=["A"])
     client = TestClient(app)
     client.__enter__()
     response = client.post("/api/auth/login", json={"username": username, "password": password})
@@ -223,7 +223,7 @@ def test_expired_cooldown_is_healed_to_logged_out():
     """冷却到期必须复位：否则 status 停在 cooldown，前端永久禁用登录、倒计时显示 0 分 00 秒。"""
     from datetime import datetime, timedelta, timezone
 
-    user = create_user("cooldown_heal", hash_password("pass-heal-1"), status="approved", store_access=True)
+    user = create_user("cooldown_heal", hash_password("pass-heal-1"), status="approved", store_access=True, categories=["A"])
     upsert_temu_session(
         user["id"],
         account="heal@example.com",
@@ -245,7 +245,7 @@ def test_expired_cooldown_is_healed_to_logged_out():
 def test_active_cooldown_is_not_healed():
     from datetime import datetime, timedelta, timezone
 
-    user = create_user("cooldown_alive", hash_password("pass-heal-2"), status="approved", store_access=True)
+    user = create_user("cooldown_alive", hash_password("pass-heal-2"), status="approved", store_access=True, categories=["A"])
     upsert_temu_session(
         user["id"],
         account="alive@example.com",

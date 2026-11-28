@@ -66,7 +66,7 @@ def test_changelog_covers_current_version():
 def test_version_endpoint_requires_admin():
     with TestClient(app) as client:
         create_user("version_admin", hash_password("verpass123"), role="admin", status="approved")
-        create_user("version_reader", hash_password("verread123"), role="user", status="approved")
+        create_user("version_reader", hash_password("verread123"), role="user", status="approved", categories=["A"])
 
         assert client.get("/api/health").json()["version"] == version()
 

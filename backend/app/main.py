@@ -272,26 +272,30 @@ def status(user: dict = Depends(current_user)):
     }
 
 
-def allowed_category_codes(user: dict) -> list[str]:
+def allowed_category_codes(user: dict) -> Optional[list[str]]:
     """用户有权限的品类 code 列表。
 
-    空列表 = 全部品类（老用户与管理员的默认行为）。
+    - None：管理员，不受限；
+    - []  ：普通用户但一个品类都没配 → 任何品类都不可用（不是"全部"）。
     """
     if user.get("role") == "admin":
-        return []
+        return None
     return [str(x).strip() for x in (user.get("categories") or []) if str(x).strip()]
 
 
 def guard_category(user: dict, code: Optional[str]) -> Optional[str]:
     """校验品类权限。
 
-    - 无权限配置（空列表）→ 原样返回；
-    - 有配置但没传 code → 落到第一个有权限的品类；
-    - 传了但不在白名单 → 403。
+    - 管理员（None）：原样返回；
+    - 普通用户一个品类都没配：403，页面据此显示空；
+    - 有权限但没传 code：落到第一个有权限的；
+    - 传了但不在白名单：403。
     """
     allowed = allowed_category_codes(user)
-    if not allowed:
+    if allowed is None:
         return code
+    if not allowed:
+        raise HTTPException(status_code=403, detail="未配置品类权限")
     if not code:
         return allowed[0]
     if str(code) not in allowed:
@@ -305,8 +309,8 @@ def allowed_inventory_categories(user: dict) -> list[str]:
     品类通过 Category.inventory_category 绑定库存类目；空列表 = 不限。
     """
     codes = allowed_category_codes(user)
-    if not codes:
-        return []
+    if codes is None:
+        return []          # 管理员：不限
     out: list[str] = []
     for c in list_categories():
         if str(c.get("code")) in codes:
@@ -319,8 +323,12 @@ def allowed_inventory_categories(user: dict) -> list[str]:
 def guard_inventory_category(user: dict, inventory_category: Optional[str]) -> str:
     """校验库存类目访问权限，返回实际要用的库存类目。"""
     ic = (inventory_category or "").strip() or "A"
+    if user.get("role") == "admin":
+        return ic
     allowed = allowed_inventory_categories(user)
-    if allowed and ic not in allowed:
+    if not allowed:
+        raise HTTPException(status_code=403, detail="未配置品类权限")
+    if ic not in allowed:
         raise HTTPException(status_code=403, detail=f"没有库存类目 {ic} 的权限")
     return ic
 
@@ -329,7 +337,7 @@ def guard_inventory_category(user: dict, inventory_category: Optional[str]) -> s
 def public_categories(region_code: Optional[str] = Query(None, max_length=16), _user: dict = Depends(current_user)):
     items = list_categories(region_code=region_code)
     allowed = allowed_category_codes(_user)
-    if allowed:
+    if allowed is not None:
         items = [c for c in items if str(c.get("code")) in allowed]
     return {"items": items}
 

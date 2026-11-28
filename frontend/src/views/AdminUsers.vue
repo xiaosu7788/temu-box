@@ -422,7 +422,7 @@ onMounted(() => {
           </el-checkbox-group>
           <span v-else class="perm-empty">还没有品类，请先在「品类管理」里新建</span>
           <p class="perm-hint">
-            不勾 = 全部品类；勾了就只能在所选品类下做订单计算、看对应库存、报名活动、维护头程名单
+            不勾 = 没有任何品类权限，订单计算/库存/报名活动都是空的
           </p>
         </el-form-item>
       </el-form>

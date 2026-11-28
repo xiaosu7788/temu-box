@@ -14,7 +14,7 @@ def _login(client: TestClient, username: str, password: str) -> None:
 
 def test_store_module_is_hidden_until_admin_grants_access():
     admin = create_user("store_access_admin", hash_password("pass-admin-1"), role="admin", status="approved")
-    user = create_user("store_access_user", hash_password("pass-user-1"), status="approved")
+    user = create_user("store_access_user", hash_password("pass-user-1"), status="approved", categories=["A"])
     assert user["store_access"] is False
 
     with TestClient(app) as client:
@@ -53,7 +53,7 @@ def test_admin_always_has_store_access_even_if_flag_is_false():
 
 def test_revoking_access_forces_store_logout_and_clears_credentials(monkeypatch):
     admin = create_user("store_access_admin3", hash_password("pass-admin-3"), role="admin", status="approved")
-    user = create_user("store_access_user3", hash_password("pass-user-3"), status="approved", store_access=True)
+    user = create_user("store_access_user3", hash_password("pass-user-3"), status="approved", store_access=True, categories=["A"])
 
     # 伪造一个活跃会话，验证关闭权限时会强制退出
     upsert_temu_session(
@@ -85,8 +85,8 @@ def test_revoking_access_forces_store_logout_and_clears_credentials(monkeypatch)
 
 def test_bulk_grant_and_revoke_reports_revoked_sessions(monkeypatch):
     admin = create_user("store_access_admin4", hash_password("pass-admin-4"), role="admin", status="approved")
-    first = create_user("store_access_bulk1", hash_password("pass-bulk-1"), status="approved")
-    second = create_user("store_access_bulk2", hash_password("pass-bulk-2"), status="approved", store_access=True)
+    first = create_user("store_access_bulk1", hash_password("pass-bulk-1"), status="approved", categories=["A"])
+    second = create_user("store_access_bulk2", hash_password("pass-bulk-2"), status="approved", store_access=True, categories=["A"])
 
     for user in (first, second):
         upsert_temu_session(
@@ -126,7 +126,7 @@ def test_bulk_grant_and_revoke_reports_revoked_sessions(monkeypatch):
 
 def test_bulk_update_requires_at_least_one_field():
     admin = create_user("store_access_admin5", hash_password("pass-admin-5"), role="admin", status="approved")
-    target = create_user("store_access_user5", hash_password("pass-user-5"), status="approved")
+    target = create_user("store_access_user5", hash_password("pass-user-5"), status="approved", categories=["A"])
     with TestClient(app) as client:
         _login(client, "store_access_admin5", "pass-admin-5")
         response = client.patch("/api/admin/users/bulk", json={"user_ids": [target["id"]]})

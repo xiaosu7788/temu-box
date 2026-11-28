@@ -33,7 +33,7 @@ def test_admin_can_create_and_update_half_headcost_but_user_cannot():
     from app.services.auth import hash_password
 
     create_user("halfcost_admin", hash_password("halfcostadmin123"), role="admin", status="approved")
-    create_user("halfcost_user", hash_password("halfcostuser123"), status="approved")
+    create_user("halfcost_user", hash_password("halfcostuser123"), status="approved", categories=["A"])
 
     with TestClient(app) as client:
         assert client.post("/api/auth/login", json={"username": "halfcost_user", "password": "halfcostuser123"}).status_code == 200

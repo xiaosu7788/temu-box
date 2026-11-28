@@ -17,7 +17,7 @@ ACCOUNT = "goods-demo@example.com"
 
 
 def _make_client(username: str, password: str) -> TestClient:
-    user = create_user(username, hash_password(password), status="approved", store_access=True)
+    user = create_user(username, hash_password(password), status="approved", store_access=True, categories=["A"])
     upsert_temu_session(
         user["id"],
         account=ACCOUNT,
@@ -180,7 +180,7 @@ def bridge(monkeypatch):
 
 
 def test_goods_requires_active_session():
-    create_user("goods_no_session", hash_password("pass-no-session"), status="approved", store_access=True)
+    create_user("goods_no_session", hash_password("pass-no-session"), status="approved", store_access=True, categories=["A"])
     client = TestClient(app)
     with client:
         assert client.post("/api/auth/login", json={"username": "goods_no_session", "password": "pass-no-session"}).status_code == 200

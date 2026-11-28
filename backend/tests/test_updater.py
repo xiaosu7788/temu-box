@@ -130,7 +130,7 @@ def test_sidecar_rejection_keeps_status_and_message(monkeypatch):
 def test_update_endpoints_require_admin_and_start_job(sidecar):
     with TestClient(app) as client:
         create_user("hotupdate_admin", hash_password("hotpass123"), role="admin", status="approved")
-        create_user("hotupdate_reader", hash_password("hotreader123"), role="user", status="approved")
+        create_user("hotupdate_reader", hash_password("hotreader123"), role="user", status="approved", categories=["A"])
 
         assert client.post("/api/auth/login", json={"username": "hotupdate_reader", "password": "hotreader123"}).status_code == 200
         assert client.get("/api/admin/update/status").status_code == 403

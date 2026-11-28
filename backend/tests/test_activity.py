@@ -358,7 +358,7 @@ def test_preview_custom_activity_rules():
 
 
 def test_activity_preview_endpoint_uses_custom_rules():
-    create_user("activity_preview_user", hash_password("previewpass123"), status="approved")
+    create_user("activity_preview_user", hash_password("previewpass123"), status="approved", categories=["A"])
     workbook = Workbook()
     sheet = workbook.active
     sheet.append(["SKC货号", "活动申报价格"])
@@ -387,7 +387,7 @@ def test_activity_preview_endpoint_uses_custom_rules():
 
 
 def test_activity_task_is_visible_after_submission():
-    create_user("activity_owner", hash_password("activitypass123"), status="approved")
+    create_user("activity_owner", hash_password("activitypass123"), status="approved", categories=["A"])
     workbook = Workbook()
     sheet = workbook.active
     sheet.append(["SKC货号", "活动申报价格"])
@@ -411,7 +411,7 @@ def test_activity_task_is_visible_after_submission():
 
 
 def test_custom_uplift_does_not_change_default_settings():
-    create_user("custom_uplift_user", hash_password("custompass123"), status="approved")
+    create_user("custom_uplift_user", hash_password("custompass123"), status="approved", categories=["A"])
     workbook = Workbook()
     sheet = workbook.active
     sheet.append(["SKC货号", "活动申报价格"])
@@ -434,7 +434,7 @@ def test_custom_uplift_does_not_change_default_settings():
 
 def test_admin_frontend_activity_list_is_scoped_but_admin_list_includes_all_jobs():
     create_user("activity_admin", hash_password("activityadmin123"), role="admin", status="approved")
-    create_user("activity_user", hash_password("activityuser123"), status="approved")
+    create_user("activity_user", hash_password("activityuser123"), status="approved", categories=["A"])
     workbook = Workbook()
     sheet = workbook.active
     sheet.append(["SKC货号", "活动申报价格"])
@@ -587,7 +587,7 @@ def test_preview_includes_id_profit_rule_in_base_price():
 
 
 def test_activity_preview_endpoint_paginates_and_rejects_bad_filter():
-    create_user("activity_page_user", hash_password("pagepass123"), status="approved")
+    create_user("activity_page_user", hash_password("pagepass123"), status="approved", categories=["A"])
     content = make_paged_activity_workbook(12)
 
     with TestClient(app) as client:
@@ -992,7 +992,7 @@ def test_normalize_drop_skc_list_rules():
 def test_bulk_activity_endpoint_applies_user_drop_selection():
     import time
 
-    create_user("activity_drop_user", hash_password("droppass123"), status="approved")
+    create_user("activity_drop_user", hash_password("droppass123"), status="approved", categories=["A"])
     content = make_unrecognized_activity_workbook()
     files = {
         "file": ("activity.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -1053,7 +1053,7 @@ def _run_activity_job(client, content: bytes, data=None) -> dict:
 
 
 def test_bulk_activity_endpoint_defaults_to_dropping_unrecognized_rows():
-    create_user("activity_default_drop", hash_password("defaultdrop123"), status="approved")
+    create_user("activity_default_drop", hash_password("defaultdrop123"), status="approved", categories=["A"])
 
     with TestClient(app) as client:
         login = client.post("/api/auth/login", json={"username": "activity_default_drop", "password": "defaultdrop123"})
@@ -1075,7 +1075,7 @@ def test_bulk_activity_endpoint_defaults_to_dropping_unrecognized_rows():
 
 
 def test_bulk_activity_endpoint_keeps_unrecognized_rows_when_disabled():
-    create_user("activity_keep_unrecognized", hash_password("keepunreg123"), status="approved")
+    create_user("activity_keep_unrecognized", hash_password("keepunreg123"), status="approved", categories=["A"])
 
     with TestClient(app) as client:
         login = client.post("/api/auth/login", json={"username": "activity_keep_unrecognized", "password": "keepunreg123"})

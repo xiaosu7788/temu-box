@@ -199,7 +199,7 @@ def test_inventory_categories_endpoint_and_isolation(tmp_path, monkeypatch):
 
 def test_inventory_items_endpoint_filters_and_paginates(monkeypatch):
     from app.services.auth import current_user
-    app.dependency_overrides[current_user] = lambda: {"id": 1, "role": "user", "status": "approved"}
+    app.dependency_overrides[current_user] = lambda: {"id": 1, "role": "user", "status": "approved", "categories": ["A"]}
     monkeypatch.setattr(
         "app.main.load_price_catalog",
         lambda category="A": {
@@ -243,7 +243,7 @@ def test_admin_can_create_and_update_inventory_item_but_user_cannot():
     from app.services.auth import hash_password
 
     admin = create_user("inventory_admin", hash_password("inventoryadmin123"), role="admin", status="approved")
-    user = create_user("inventory_user", hash_password("inventoryuser123"), status="approved")
+    user = create_user("inventory_user", hash_password("inventoryuser123"), status="approved", categories=["A", "B", "C"])
     with TestClient(app) as client:
         assert client.post("/api/auth/login", json={"username": "inventory_user", "password": "inventoryuser123"}).status_code == 200
         assert client.post("/api/admin/inventory/items", json={"sku": "MB131-DENIED", "price": 1, "set_type": "单品"}).status_code == 403
@@ -266,7 +266,7 @@ def test_admin_can_create_and_update_inventory_item_but_user_cannot():
 
 def test_inventory_items_support_multi_condition_filters(monkeypatch):
     from app.services.auth import current_user
-    app.dependency_overrides[current_user] = lambda: {"id": 1, "role": "user", "status": "approved"}
+    app.dependency_overrides[current_user] = lambda: {"id": 1, "role": "user", "status": "approved", "categories": ["A"]}
     monkeypatch.setattr(
         "app.main.load_price_catalog",
         lambda category="A": {
@@ -304,7 +304,7 @@ def test_inventory_items_support_multi_condition_filters(monkeypatch):
 def test_single_query_matches_sku_or_set_type(monkeypatch):
     """单一搜索框：query 同时匹配 SKU 与类型，命中其一即返回。"""
     from app.services.auth import current_user
-    app.dependency_overrides[current_user] = lambda: {"id": 1, "role": "user", "status": "approved"}
+    app.dependency_overrides[current_user] = lambda: {"id": 1, "role": "user", "status": "approved", "categories": ["A"]}
     monkeypatch.setattr(
         "app.main.load_price_catalog",
         lambda category="A": {

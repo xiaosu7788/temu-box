@@ -46,7 +46,7 @@ def test_region_snapshot_does_not_change_after_update():
 def test_public_region_endpoints_only_return_enabled_regions():
     username = "region_api_user"
     try:
-        create_user(username, hash_password("regionpass123"), status="approved")
+        create_user(username, hash_password("regionpass123"), status="approved", categories=["A"])
     except Exception:
         pass
     with TestClient(app) as client:
@@ -61,7 +61,7 @@ def test_public_region_endpoints_only_return_enabled_regions():
 def test_activity_submission_keeps_selected_region_snapshot():
     username = "region_task_user"
     try:
-        create_user(username, hash_password("regiontask123"), status="approved")
+        create_user(username, hash_password("regiontask123"), status="approved", categories=["A"])
     except Exception:
         pass
     code = "TASK_TEST"

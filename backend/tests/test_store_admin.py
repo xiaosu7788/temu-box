@@ -16,7 +16,7 @@ def _admin_client(username: str, password: str) -> TestClient:
 
 
 def test_store_logs_are_admin_only():
-    create_user("p4_normal", hash_password("pass-p4-normal"), status="approved", store_access=True)
+    create_user("p4_normal", hash_password("pass-p4-normal"), status="approved", store_access=True, categories=["A"])
     with TestClient(app) as client:
         assert client.post("/api/auth/login", json={"username": "p4_normal", "password": "pass-p4-normal"}).status_code == 200
         assert client.get("/api/admin/store-logs").status_code == 403
@@ -40,7 +40,7 @@ def test_admin_sees_login_logs_with_actions():
 
 
 def test_admin_session_overview_and_forced_logout():
-    user = create_user("p4_session_user", hash_password("pass-p4-session"), status="approved", store_access=True)
+    user = create_user("p4_session_user", hash_password("pass-p4-session"), status="approved", store_access=True, categories=["A"])
     upsert_temu_session(
         user["id"],
         account="p4-session@example.com",
@@ -74,7 +74,7 @@ def test_admin_session_overview_and_forced_logout():
 def test_admin_kefu_actions_carry_operator_info():
     from app.database import create_kefu_action
 
-    owner = create_user("p4_action_owner", hash_password("pass-p4-owner"), display_name="运营小张", status="approved", store_access=True)
+    owner = create_user("p4_action_owner", hash_password("pass-p4-owner"), display_name="运营小张", status="approved", store_access=True, categories=["A"])
     create_kefu_action(
         "p4-action-1",
         user_id=owner["id"],

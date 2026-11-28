@@ -14,7 +14,7 @@ def _login(client: TestClient, username: str, password: str) -> None:
 
 def test_admin_can_edit_display_name_and_private_note():
     admin = create_user("user_note_admin", hash_password("{{SECRET_E7hN1x9Q}}"), role="admin", status="approved")
-    target = create_user("user_note_target", hash_password("{{SECRET_G4pL8v2M}}"), display_name="旧名", status="approved")
+    target = create_user("user_note_target", hash_password("{{SECRET_G4pL8v2M}}"), display_name="旧名", status="approved", categories=["A"])
     with TestClient(app) as client:
         _login(client, admin["username"], "{{SECRET_E7hN1x9Q}}")
         response = client.patch(
@@ -37,8 +37,8 @@ def test_admin_can_edit_display_name_and_private_note():
 
 def test_admin_bulk_update_disable_and_delete_are_atomic():
     admin = create_user("user_bulk_admin", hash_password("{{SECRET_T8bQ4m6C}}"), role="admin", status="approved")
-    first = create_user("user_bulk_first", hash_password("{{SECRET_R2nV5x8D}}"), status="approved")
-    second = create_user("user_bulk_second", hash_password("{{SECRET_P6cK9w3A}}"), status="pending")
+    first = create_user("user_bulk_first", hash_password("{{SECRET_R2nV5x8D}}"), status="approved", categories=["A"])
+    second = create_user("user_bulk_second", hash_password("{{SECRET_P6cK9w3A}}"), status="pending", categories=["A"])
     with TestClient(app) as client:
         _login(client, admin["username"], "{{SECRET_T8bQ4m6C}}")
         updated = client.patch(

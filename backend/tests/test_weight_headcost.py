@@ -82,7 +82,7 @@ def test_admin_can_manage_weight_headcost_but_user_cannot():
     admin_password = "weightcost-admin-pass"
     user_password = "weightcost-user-pass"
     create_user("weightcost_admin", hash_password(admin_password), role="admin", status="approved")
-    create_user("weightcost_user", hash_password(user_password), status="approved")
+    create_user("weightcost_user", hash_password(user_password), status="approved", categories=["A"])
 
     with TestClient(app) as client:
         assert client.post("/api/auth/login", json={"username": "weightcost_user", "password": user_password}).status_code == 200

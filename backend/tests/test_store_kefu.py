@@ -24,7 +24,7 @@ DOWNGRADE_REASONS = [
 
 
 def _client(username: str, password: str, *, with_session: bool = True) -> TestClient:
-    user = create_user(username, hash_password(password), status="approved", store_access=True)
+    user = create_user(username, hash_password(password), status="approved", store_access=True, categories=["A"])
     if with_session:
         upsert_temu_session(
             user["id"],

@@ -49,7 +49,7 @@ def _run_sync(monkeypatch):
 
 
 def _client(username: str, password: str) -> TestClient:
-    user = create_user(username, hash_password(password), status="approved", store_access=True)
+    user = create_user(username, hash_password(password), status="approved", store_access=True, categories=["A"])
     upsert_temu_session(
         user["id"],
         account=ACCOUNT,

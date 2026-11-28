@@ -131,7 +131,7 @@ def test_admin_can_view_and_update_system_settings_with_live_pool_apply():
 
 
 def test_regular_user_cannot_access_system_admin_endpoints():
-    create_user("system_reader", hash_password("readerpass123"), status="approved")
+    create_user("system_reader", hash_password("readerpass123"), status="approved", categories=["A"])
     with TestClient(app) as client:
         assert client.post("/api/auth/login", json={"username": "system_reader", "password": "readerpass123"}).status_code == 200
         assert client.get("/api/admin/system-settings").status_code == 403
