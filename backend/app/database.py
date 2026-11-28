@@ -594,6 +594,80 @@ def _ensure_temu_schema() -> None:
             ))
 
 
+def _safe_add_column_sql(table_name: str, column) -> Optional[str]:
+    """把一列翻译成可在 SQLite/PostgreSQL 上安全执行的 ADD COLUMN。
+
+    只处理「新增普通列」；主键、唯一列、无默认值的 NOT NULL 一律跳过，
+    这些属于结构性变更，交给 Alembic。
+    """
+    if column.primary_key or column.unique:
+        return None
+    try:
+        type_sql = column.type.compile(engine.dialect)
+    except Exception:  # noqa: BLE001 - 方言编译不了就不补
+        return None
+
+    default = column.server_default
+    default_sql = ""
+    if default is not None:
+        arg = getattr(default, "arg", None)
+        if isinstance(arg, str):
+            default_sql = f"DEFAULT {arg}"
+        elif isinstance(arg, (int, float)):
+            default_sql = f"DEFAULT {arg}"
+        elif isinstance(arg, bool):
+            default_sql = f"DEFAULT {int(arg)}"
+
+    if not column.nullable:
+        if not default_sql:
+            # 没有默认值的 NOT NULL 无法直接加列，用类型兜底值
+            fallback = {"TEXT": "''", "VARCHAR": "''", "BOOLEAN": "0", "INTEGER": "0", "FLOAT": "0"}
+            for prefix, value in fallback.items():
+                if type_sql.upper().startswith(prefix):
+                    default_sql = f"DEFAULT {value}"
+                    break
+            else:
+                return None      # DATETIME 之类没有安全兜底，跳过
+        return f"ALTER TABLE {table_name} ADD COLUMN {column.name} {type_sql} {default_sql} NOT NULL".replace("  ", " ")
+
+    parts = [f"ALTER TABLE {table_name} ADD COLUMN {column.name} {type_sql}"]
+    if default_sql:
+        parts.append(default_sql)
+    return " ".join(parts)
+
+
+def _ensure_all_columns() -> None:
+    """通用补列器：对比模型与实际表结构，补齐 CREATE TABLE 之后新增的列。
+
+    解决「create_all 不给已有表加列」这个反复踩的问题——
+    以后给模型加字段不用再逐个写补列函数。
+
+    只加不删、不改类型、不加约束；做不到的情况打日志跳过，交给 Alembic。
+    """
+    with engine.begin() as connection:
+        inspector = sa_inspect(connection)
+        existing = set(inspector.get_table_names())
+        added = 0
+        for table_name, table in Base.metadata.tables.items():
+            if table_name not in existing:
+                continue
+            actual = {c["name"] for c in inspector.get_columns(table_name)}
+            missing = [c for c in table.columns if c.name not in actual]
+            for column in missing:
+                ddl = _safe_add_column_sql(table_name, column)
+                if not ddl:
+                    logger.warning("跳过补列 %s.%s（需要 Alembic 处理）", table_name, column.name)
+                    continue
+                try:
+                    connection.execute(text(ddl))
+                    logger.info("已补列 %s.%s", table_name, column.name)
+                    added += 1
+                except Exception:  # noqa: BLE001 - 单列失败不影响其它列
+                    logger.warning("补列失败 %s.%s", table_name, column.name, exc_info=True)
+        if added:
+            logger.info("本地补列完成：共 %s 列", added)
+
+
 def init_database() -> None:
     """Schema ownership:
     - Production (Docker) sets TEMUBOX_AUTO_CREATE_TABLES=0: Alembic owns the
@@ -609,6 +683,8 @@ def init_database() -> None:
         _ensure_inventory_item_schema()
         _ensure_template_schema()
         _ensure_temu_schema()
+        # 兜底：模型里新加、但上面几个函数没覆盖到的列
+        _ensure_all_columns()
     with SessionLocal.begin() as session:
         if session.scalar(select(InventoryItem.sku).limit(1)) is None:
             cache = _json(PRICE_CACHE_PATH, {})
