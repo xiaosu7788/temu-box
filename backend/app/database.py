@@ -548,6 +548,17 @@ def _ensure_user_schema() -> None:
             connection.execute(text("ALTER TABLE users ADD COLUMN categories TEXT NOT NULL DEFAULT '[]'"))
 
 
+def _ensure_inventory_item_schema() -> None:
+    """为 inventory_items 补后加的列（本地 create_all 环境；生产由 Alembic 负责）。"""
+    with engine.begin() as connection:
+        inspector = sa_inspect(connection)
+        if not inspector.has_table("inventory_items"):
+            return
+        columns = {c["name"] for c in inspector.get_columns("inventory_items")}
+        if "manual_combo" not in columns:
+            connection.execute(text("ALTER TABLE inventory_items ADD COLUMN manual_combo TEXT NOT NULL DEFAULT ''"))
+
+
 def _ensure_template_schema() -> None:
     """为 product_form_templates 补 account_hash（模板与店铺绑定）。"""
     with engine.begin() as connection:
@@ -595,6 +606,7 @@ def init_database() -> None:
         Base.metadata.create_all(engine)
         _ensure_category_schema()
         _ensure_user_schema()
+        _ensure_inventory_item_schema()
         _ensure_template_schema()
         _ensure_temu_schema()
     with SessionLocal.begin() as session:

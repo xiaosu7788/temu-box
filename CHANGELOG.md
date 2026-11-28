@@ -5,6 +5,16 @@
 
 条目分类：**新增**（功能）、**优化**（性能与体验）、**修复**（缺陷）。
 
+## 0.16.6 - 2026-11-28
+
+### 修复
+- **本地库存管理 500**：`InventoryItem` 模型有 `manual_combo` 列，但本地
+  `data/temubox.db` 的 `inventory_items` 表没有（create_all 不给已有表加列），
+  查询直接 `sqlite3.OperationalError: no such column`。
+  新增 `_ensure_inventory_item_schema()` 补这一列，重启后端自动生效。
+
+  与品类权限无关——是本地表结构落后于模型的老问题，只是这次翻库存页面才暴露。
+
 ## 0.16.5 - 2026-11-27
 
 ### 变更（语义反转）
