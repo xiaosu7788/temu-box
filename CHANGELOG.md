@@ -5,6 +5,20 @@
 
 条目分类：**新增**（功能）、**优化**（性能与体验）、**修复**（缺陷）。
 
+## 0.17.1 - 2026-11-28
+
+### 修复
+- **「记住密码」一直报未配置 `CREDENTIAL_KEY`**：`.env` 里的 `CREDENTIAL_KEY` 是
+  base64，结尾带 `=` 填充；用 cmd 的 `for /f delims==` 解析 `.env` 会把它截成 43 字符，
+  base64 解码失败 → `credential_cipher.enabled()` 返回 False。
+  `dev-backend-local.ps1` 改用 PowerShell 正则（贪婪匹配值部分）解析，能保留 `=`。
+- **启动脚本的日志文件被上一个实例占用**，导致新实例启动即失败。
+  日志改为按天分文件（`dev-backend-YYYYMMDD.log`）。
+
+### 新增
+- `dev-backend-local.ps1` 支持 `-Port` 参数；启动时打印 `CREDENTIAL_KEY` 长度，
+  一眼能看出是否加载正确（44 为正常）。
+
 ## 0.17.0 - 2026-11-28
 
 ### 新增
