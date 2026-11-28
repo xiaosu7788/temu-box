@@ -14,7 +14,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8089',
+        // 后端端口：默认 8089，本机被占用时可设 VITE_API_PORT 换端口
+        target: `http://127.0.0.1:${process.env.VITE_API_PORT || '8089'}` ,
         changeOrigin: true,
       },
     },
