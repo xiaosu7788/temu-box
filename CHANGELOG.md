@@ -5,6 +5,15 @@
 
 条目分类：**新增**（功能）、**优化**（性能与体验）、**修复**（缺陷）。
 
+## 0.17.2 - 2026-11-28
+
+### 修复
+- **`kill-backend-port.ps1` 输出乱码**：Windows PowerShell 5.1 按 ANSI 读取
+  UTF-8 无 BOM 文件，中文全成乱码。两个本地脚本改为 UTF-8 with BOM。
+- **`Get-NetTCPConnection` 在无匹配结果时抛 CIM 异常**（`MSFT_NetTCPConnection
+  找不到任何匹配的对象`），`-ErrorAction SilentlyContinue` 挡不住，脚本会红一片。
+  改用 `netstat -ano | Select-String`，无结果时就是空，不抛异常。
+
 ## 0.17.1 - 2026-11-28
 
 ### 修复

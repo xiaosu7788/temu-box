@@ -1,33 +1,35 @@
-# 清理本地后端端口占用（需要管理员权限）
+﻿# 清理本地后端端口占用（建议用管理员权限运行）
 #
-# 背景：Windows 上 `uvicorn --reload` 的父进程被杀后，multiprocessing 的 worker
-# 会继续占着端口。如果这个 worker 是在提权会话里起的，普通用户权限的
-# Stop-Process / taskkill 都杀不掉，表现为：
-#   - 新实例启动失败，旧代码继续响应（改了代码没生效）
-#   - 旧 worker 没读到新的 .env（报「未配置 CREDENTIAL_KEY」「店铺管理服务未配置」）
+# 背景：Windows 上 uvicorn --reload 的父进程被杀后，multiprocessing 的 worker
+# 会继续占着端口。如果这个 worker 在提权会话里，普通权限的 taskkill 也杀不掉。
 #
-# 用法：右键「以管理员身份运行 PowerShell」，然后执行本脚本。
+# 用法：右键「以管理员身份运行」PowerShell，然后执行本脚本。
+#
+# 注意：这里刻意不用 Get-NetTCPConnection —— 它在没有匹配结果时会抛
+# CIM 异常（而不是返回空数组），-ErrorAction SilentlyContinue 也挡不住。
 
 $ErrorActionPreference = 'SilentlyContinue'
-$ports = @(8089, 8090, 8091)
+$ports = @(8089, 8090, 8091, 5173)
 
 Write-Host "== 清理本地后端端口占用 ==" -ForegroundColor Cyan
 
 foreach ($port in $ports) {
-    $conns = Get-NetTCPConnection -LocalPort $port -State Listen
-    if (-not $conns) {
-        Write-Host "  ${port}: 未被占用"
+    # netstat 不会抛异常，稳定用于探测
+    $lines = netstat -ano | Select-String ":$port\s.*LISTENING"
+    if (-not $lines) {
+        Write-Host "  ${port}: not used"
         continue
     }
-    foreach ($conn in $conns) {
-        $procId = $conn.OwningProcess
-        $proc = Get-Process -Id $procId
+    foreach ($line in $lines) {
+        $procId = ($line.ToString() -split '\s+')[-1]
+        if (-not $procId -or $procId -eq '0') { continue }
+        $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
         if ($proc) {
-            Write-Host "  ${port}: 结束 PID=$procId ($($proc.ProcessName))"
-            & taskkill /F /T /PID $procId 2>&1 | Out-Null
+            Write-Host "  ${port}: killing PID=$procId ($($proc.ProcessName))"
+            taskkill /F /T /PID $procId 2>&1 | Out-Null
         } else {
-            Write-Host "  ${port}: PID=$procId 在进程表中查不到（提权会话），尝试 wmic 终止" -ForegroundColor Yellow
-            & wmic process where "processid=$procId" delete 2>&1 | Out-Null
+            Write-Host "  ${port}: PID=$procId not visible in this session (elevated?), trying wmic" -ForegroundColor Yellow
+            wmic process where "processid=$procId" delete 2>&1 | Out-Null
         }
     }
 }
@@ -38,15 +40,16 @@ Write-Host ""
 Write-Host "== 残留检查 ==" -ForegroundColor Cyan
 $left = $false
 foreach ($port in $ports) {
-    if (Get-NetTCPConnection -LocalPort $port -State Listen) {
-        Write-Host "  ${port}: 仍占用（如果 wmic 也失败，请重启机器）" -ForegroundColor Red
+    if (netstat -ano | Select-String ":$port\s.*LISTENING") {
+        Write-Host "  ${port}: STILL LISTENING - if wmic also failed, reboot is the only fix" -ForegroundColor Red
         $left = $true
+    } else {
+        Write-Host "  ${port}: free"
     }
 }
 
 if (-not $left) {
-    Write-Host "  端口已全部释放" -ForegroundColor Green
     Write-Host ""
-    Write-Host "现在可以启动后端：" -ForegroundColor Green
+    Write-Host "端口已全部释放，现在可以启动后端：" -ForegroundColor Green
     Write-Host "  .\scripts\dev-backend-local.ps1"
 }
