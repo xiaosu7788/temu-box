@@ -243,13 +243,8 @@ onMounted(bootstrap)
         <el-tag v-if="user.role === 'admin' && !inventoryPage" class="role-tag" type="warning">管理员</el-tag>
       </header>
       <main class="page-content" :class="{ 'page-content--fixed': fixedDataPage, 'page-content--inventory': inventoryPage }">
-        <!-- 一个模块都没开：给明确提示，否则会白屏（路由守卫也会把任何地址弹回首页） -->
-        <div v-if="!menuItems.length" class="no-access">
-          <el-empty description="当前账号还没有任何模块权限">
-            <p class="no-access__hint">请联系管理员在「用户管理 → 编辑 → 模块权限」里勾选需要的模块</p>
-          </el-empty>
-        </div>
-        <router-view v-else />
+        <!-- 页面本身按权限渲染，不再整页替换（无权限的地址由路由守卫处理） -->
+        <router-view />
       </main>
     </div>
     <button v-if="mobileMenu" class="sidebar-backdrop" type="button" @click="mobileMenu = false" />
@@ -305,15 +300,5 @@ onMounted(bootstrap)
   color: #fff;
 }
 
-.no-access {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 60vh;
-}
 
-.no-access__hint {
-  color: var(--muted, #9ca3af);
-  font-size: 13px;
-}
 </style>
